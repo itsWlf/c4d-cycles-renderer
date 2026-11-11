@@ -4,7 +4,7 @@ A render engine plugin for Cinema 4D 2027 that renders the Cinema 4D scene with 
 
 ![The example scene rendered with Cycles Render](examples/cycles_render_examples.png)
 
-> **Status: pre-release (0.1.0 in preparation).** Final frames and the live render window work end to end on Windows. Some features are approximations and a few are missing; see [docs/roadmap.md](docs/roadmap.md).
+> **Status: pre-release (current: 0.1.0).** Final frames and the live render window work end to end on Windows. Some features are approximations and a few are missing; see [docs/roadmap.md](docs/roadmap.md).
 >
 > **Windows only.** The plugin has not been built or tested for macOS.
 
