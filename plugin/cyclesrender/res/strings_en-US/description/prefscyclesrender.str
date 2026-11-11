@@ -1,0 +1,9 @@
+STRINGTABLE Prefscyclesrender
+{
+	Prefscyclesrender             "Cycles Render";
+
+	PREF_CYCLES_MAIN_GROUP        "Blender";
+	PREF_CYCLES_BLENDER_PATH      "Blender Executable";
+	PREF_CYCLES_BLENDER_STATUS    "Status";
+	PREF_CYCLES_DETECT            "Detect Blender";
+}

@@ -1,0 +1,8 @@
+STRINGTABLE Mcyclesnative
+{
+	Mcyclesnative        "Cycles Native Material";
+
+	CYCLESNATIVE_GROUP   "Blender Material";
+	CYCLESNATIVE_OPEN    "Open in Blender's Shader Editor";
+	CYCLESNATIVE_INFO    "";
+}

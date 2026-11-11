@@ -1,0 +1,31 @@
+# What Blender needs to know to install the bridge as an extension
+# (Edit > Preferences > Get Extensions > Install from Disk).
+#
+# `id` is also the name of the folder Blender unpacks the extension into, and the Cinema 4D
+# plugin looks for that folder (FindBridgeScript in plugin/cyclesrender/source/session/
+# blender_install.cpp): do not change it.
+# `version` is the release's number. It also stands in c4d_bridge/__init__.py and in the
+# plugin's version.h; tools/make_release.ps1 checks the three against each other.
+
+schema_version = "1.0.0"
+
+id = "cycles_render_bridge"
+version = "0.1.0"
+name = "Cycles Render Bridge"
+tagline = "Lets the Cycles Render plugin of Cinema 4D render with Blender"
+maintainer = "Wolfnimations"
+type = "add-on"
+tags = ["Render"]
+
+# The bridge reaches into Blender in places that are not public API, so it runs on listed
+# versions only: SUPPORTED_BLENDER in c4d_bridge/__init__.py.
+blender_version_min = "5.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+# Window control and shared memory are implemented for Windows only so far.
+platforms = ["windows-x64"]
+
+[permissions]
+network = "Talks to Cinema 4D over a socket on this computer only"
+files = "Reads textures and volumes, writes edited materials"

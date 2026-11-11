@@ -1,0 +1,45 @@
+STRINGTABLE Tcyclesobject
+{
+	Tcyclesobject                         "Cycles Object";
+
+	CYCLESOBJECT_GROUP_VISIBILITY         "Visibility";
+	CYCLESOBJECT_VISIBILITY_ENABLE        "Override Visibility";
+	CYCLESOBJECT_VISIBILITY_CAMERA        "Camera (off: Indirect Only)";
+	CYCLESOBJECT_VISIBILITY_DIFFUSE       "Diffuse";
+	CYCLESOBJECT_VISIBILITY_GLOSSY        "Glossy";
+	CYCLESOBJECT_VISIBILITY_TRANSMISSION  "Transmission";
+	CYCLESOBJECT_VISIBILITY_VOLUME_SCATTER "Volume Scatter";
+	CYCLESOBJECT_VISIBILITY_SHADOW        "Shadow";
+	CYCLESOBJECT_VISIBILITY_HOLDOUT       "Holdout";
+	CYCLESOBJECT_VISIBILITY_SHADOW_CATCHER "Shadow Catcher";
+
+	CYCLESOBJECT_GROUP_LINKING            "Light Linking";
+	CYCLESOBJECT_LINKING_ENABLE           "Override Light Linking";
+	CYCLESOBJECT_LINKING_MODE             "Mode";
+	CYCLESOBJECT_LINKING_MODE_EXCLUDE     "Exclude: these lights do not light the object";
+	CYCLESOBJECT_LINKING_MODE_INCLUDE     "Include: only these lights light the object";
+	CYCLESOBJECT_LINKING_LIGHTS           "Lights";
+
+	CYCLESOBJECT_GROUP_INSTANCES          "Instances";
+	CYCLESOBJECT_INSTANCES_ENABLE         "Instance Objects on Particles or Matrices";
+	CYCLESOBJECT_INSTANCES_OBJECTS        "Objects";
+	CYCLESOBJECT_INSTANCES_SCALE          "Scale";
+	CYCLESOBJECT_INSTANCES_USE_RADIUS     "Scale by Particle Radius";
+
+	CYCLESOBJECT_GROUP_VOLUME             "Volume";
+	CYCLESOBJECT_VOLUME_ENABLE            "Override Volume Shading";
+	CYCLESOBJECT_VOLUME_DENSITY           "Density";
+	CYCLESOBJECT_VOLUME_COLOR             "Color";
+	CYCLESOBJECT_VOLUME_ANISOTROPY        "Anisotropy";
+	CYCLESOBJECT_VOLUME_EMISSION_STRENGTH "Emission Strength";
+	CYCLESOBJECT_VOLUME_EMISSION_COLOR    "Emission Color";
+	CYCLESOBJECT_VOLUME_FIRE_MODE         "Fire Grid Holds";
+	CYCLESOBJECT_VOLUME_FIRE_MODE_AUTO    "Automatic (by the grid's name)";
+	CYCLESOBJECT_VOLUME_FIRE_MODE_TEMPERATURE "A Temperature (blackbody)";
+	CYCLESOBJECT_VOLUME_FIRE_MODE_BRIGHTNESS "A Brightness (flames, heat)";
+	CYCLESOBJECT_VOLUME_BLACKBODY         "Fire Intensity";
+	CYCLESOBJECT_VOLUME_TEMPERATURE       "Temperature (K per grid value)";
+	CYCLESOBJECT_VOLUME_DENSITY_GRID      "Density Grid";
+	CYCLESOBJECT_VOLUME_TEMPERATURE_GRID  "Fire Grid";
+	CYCLESOBJECT_VOLUME_COLOR_GRID        "Color Grid";
+}

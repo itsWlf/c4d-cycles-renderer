@@ -1,0 +1,8 @@
+STRINGTABLE
+{
+	IDS_CYCLESRENDER_NAME "Cycles Render";
+	IDS_IPR_COMMAND_NAME "Cycles Render IPR";
+	IDS_OBJECT_TAG_NAME "Cycles Object";
+	IDS_CYCLES_MATERIAL_NAME "Cycles Material";
+	IDS_NATIVE_MATERIAL_NAME    "Cycles Native Material";
+}

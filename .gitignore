@@ -1,0 +1,37 @@
+# What the repository publishes: the two plugins (plugin/, bridge/), the protocol between them
+# (protocol/), the tools that build them (tools/), the documents (docs/, *.md) and the example
+# scene (examples/). Everything below stays on the developer's machine.
+
+# Build output: the configured SDK, object files, the plugin binary, logs.
+/build/
+
+# Packaged releases. They are uploaded to the Releases page of the repository, not committed.
+# Only the folder's README is tracked.
+/release/*
+!/release/README.md
+
+# Lookup material that is not this project's to publish: the Cinema 4D SDKs, the Blender
+# source and manual, design mockups, sample data.
+/references/
+
+# The test suite with its scenes and stored renders, and the throw-away prototype scripts that
+# proved the Blender mechanisms. Kept locally; see docs/development.md, "Tests".
+/tests/
+/prototypes/
+
+# Working notes and archived planning documents.
+/internal/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Editor and system files
+.vs/
+.vscode/
+.idea/
+.claude/settings.local.json
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store
