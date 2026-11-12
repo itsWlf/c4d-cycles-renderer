@@ -223,9 +223,10 @@ private:
 
 //----------------------------------------------------------------------------------------
 // The picture of a material: Cinema 4D asks for it (the thumbnail in the Material Manager and
-// the Attribute Manager, the preview on the Material Output node) and gets a ball rendered by
-// Blender (materials/material_preview.h). Initialize() runs while the graph may be read and
-// only writes the material down; the render happens in ComputeIteration(), on a job thread.
+// in the Attribute Manager's header, 90 x 90; the big preview in the Attribute Manager, 120 x
+// 120; the preview on the Material Output node) and gets a ball rendered by Blender
+// (materials/material_preview.h). Initialize() runs while the graph may be read and only
+// writes the material down; the render happens in ComputeIteration(), on a job thread.
 //----------------------------------------------------------------------------------------
 class CyclesPreviewProvider : public maxon::Component<CyclesPreviewProvider, maxon::nodes::PreviewImageProviderInterface>
 {
@@ -238,6 +239,11 @@ public:
 		_size = request.Get(maxon::nodes::PREVIEWIMAGEREQUEST::TEXTURESIZE, maxon::IntVector2d());
 		_done = false;
 		_result = nullptr;
+		// The SDK says the flip of a request for a flipped picture "is performed automatically on
+		// the provided buffer". In Cinema 4D 2027.0 it is not: the Attribute Manager's big preview
+		// (120 x 120, the only request seen with the flag) showed the ball upside down while the
+		// thumbnails (90 x 90, without it) were right. So the provider flips it itself.
+		_flip = request.Get(maxon::nodes::PREVIEWIMAGEREQUEST::FLIPVERTICALLY, false);
 		const maxon::GraphNode subject = request.Get(maxon::nodes::PREVIEWIMAGEREQUEST::SUBJECT, maxon::GraphNode());
 		if (!subject.IsValid() || _size.x <= 0 || _size.y <= 0)
 			return maxon::IllegalArgumentError(MAXON_SOURCE_LOCATION, "a preview was asked for without a node or a size"_s);
@@ -269,7 +275,9 @@ public:
 		samples->Resize(_size.x * _size.y) iferr_return;
 		for (maxon::Int y = 0; y < _size.y; ++y)
 		{
-			const maxon::Int sourceY = maxon::ClampValue(y * side / _size.y, maxon::Int(0), side - 1);
+			// The top row first; the bottom row first for a request for a flipped picture (Initialize()).
+			const maxon::Int pictureY = _flip ? _size.y - 1 - y : y;
+			const maxon::Int sourceY = maxon::ClampValue(pictureY * side / _size.y, maxon::Int(0), side - 1);
 			for (maxon::Int x = 0; x < _size.x; ++x)
 			{
 				const maxon::Int sourceX = maxon::ClampValue(x * side / _size.x, maxon::Int(0), side - 1);
@@ -317,6 +325,7 @@ private:
 	}
 
 	maxon::IntVector2d _size;
+	maxon::Bool _flip = false;	///< the request asks for the picture upside down (PREVIEWIMAGEREQUEST::FLIPVERTICALLY)
 	maxon::StrongRef<MaterialPreview> _preview;
 	maxon::nodes::SamplesFloat32Ref _result;
 	maxon::Bool _done = false;
