@@ -153,8 +153,11 @@ public:
 			DrawSetPen(bar);
 			DrawRectangle(0, 0, filled, height);
 		}
-		// The text sits on the bar where the bar is, and on the background beyond it.
-		DrawSetTextCol(cinema::Vector(0.9), filled > 10 ? bar : background);
+		// The text sits on the bar where the bar is, and on the background beyond it. Drawn with
+		// an opaque background, the text would paint its whole box in one of the two colours:
+		// wherever the bar ended inside the text, its rows showed the bar ending somewhere else
+		// than the rows above them (seen: the bar reached to the end of the text there).
+		DrawSetTextCol(cinema::Vector(0.9), COLOR_TRANS);
 		DrawText(_text, 8, height / 2, DRAWTEXT_HALIGN_LEFT | DRAWTEXT_VALIGN_CENTER);
 	}
 
