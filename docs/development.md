@@ -64,20 +64,28 @@ Cinema 4D's console (*Extensions > Console*) shows `Cycles Render <version>: mod
 
 ## Tests
 
-The test suite lives in `tests/` and is **kept locally: it is not part of the repository** (nor are the stored renders and test scenes it uses). If you have it, this is the baseline to run before starting work, so that a later failure is known to be yours:
+The test suite lives in `tests/` and is **kept locally: it is not part of the repository** (nor are the stored renders and test scenes it uses). If you have it:
 
 ```powershell
-.\tools\run_tests.ps1                      # build, 8 bridge tests, 36 Cinema 4D tests; about 25 minutes
+.\tools\run_tests.ps1 -Changed             # the tests for what differs from the last commit
+.\tools\run_tests.ps1 -Changed -DryRun     # only print what it would run, and why
+.\tools\run_tests.ps1                      # the whole baseline: build, 8 bridge tests, 36 Cinema 4D tests; about 14 minutes
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 ```
 
-It prints one line per test and "N of N passed", and fails when a Blender started during the run is still running at the end. Two tests open a Blender window for a few seconds, and the last two open the regular Cinema 4D for half a minute each (`baked_files_window` with a preferences folder of its own, made fresh in `%TEMP%\cyclesrender_c4d_tests`). `test_viewport` and `render_cancel` depend on timing and can fail under load; run a failed test alone before looking for a cause. If you do not have the tests, check a change by hand as described under [Adding a feature](#adding-a-feature) and say so in the pull request.
+**When to run which.** For every piece of work: the tests for what changed (`-Changed`). The whole baseline: once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release, on every supported Blender and Cinema 4D version once there is more than one. A typical selected run takes one and a half to four minutes (measured: a bridge file 97 s, an exporter file 230 s with the build, a file the map does not know, which runs the core set, 203 s); the baseline about 14 minutes (820 s; with one start of Cinema 4D per test it was 940 s).
+
+**How `-Changed` chooses.** It takes the files that differ from the last commit (staged or not, and new files git does not ignore) and, because `tests/` is not in git, the files in `tests/` written since the last commit was made. A map in `tools/run_tests.ps1` (the field `Covers` of each test, next to the test list) says which tests check which paths. A few files are everybody's (the scene walk and writer, the session layer, the videopost, the bridge's server and protocol, the runner itself): a change in one of them runs a named core set of twelve tests, and the script says next to the list why that set is enough. Every run of `-Changed` also includes an always-run set (`test_protocol`, `session_selftest`, `coords`: about a minute). A file the map does not know runs the core set and is named as unmapped; a change of documents only runs nothing. The script prints which tests it chose for which file. A selected run can miss a fault in code the map does not connect to the change: that is what the sprint's full run is for, and when it finds such a fault, the connection goes into the map in the same piece of work.
+
+**Several tests in one start of Cinema 4D.** Tests that need the same start settings (the `g_cyclesRender...` settings of [Development settings](#development-settings), which Cinema 4D reads once at start) share one start of `c4dpy` and run one after another in a fixed order that the script prints. Each starts from a known state (`tests/c4d/lib/crrun.py`: no IPR, one new empty document, the capture file emptied), has its own result and time, and must pass alone as well as in its group: a test reads counters as differences and the log through `crtest.log_lines()`. A test that needs the end of the session for its verdict comes last in its start. When `c4dpy` ends before every test of a start has reported, the test that was running fails and the ones not yet run are run again, each alone. `-Alone` runs every test in a start of its own, as before.
+
+It prints one line per test and "N of N passed", and fails when a Blender started during the run is still running at the end. Two tests open a Blender window for a few seconds, and the last two open the regular Cinema 4D for half a minute each, each with a preferences folder of its own, made fresh in `%TEMP%\cyclesrender_c4d_tests`. `test_viewport` and `render_cancel` depend on timing and can fail under load; run a failed test alone (`-Only <name>`) before looking for a cause. If you do not have the tests, check a change by hand as described under [Adding a feature](#adding-a-feature) and say so in the pull request.
 
 What the suite consists of, for whoever writes or restores tests:
 
 - **Bridge tests** (`tests/bridge`, plain Python plus Blender, no Cinema 4D): a small client speaks the protocol to a Blender started with the bridge. They cover the protocol, every scene builder, both drivers and the native material.
   `python tests\bridge\test_scene.py "<blender.exe>"`
-- **Cinema 4D tests** (`tests/c4d`): one Python script per feature, run inside Cinema 4D by `tests\c4d\run_c4d_test.ps1`. With `-Headless` the script runs in `c4dpy` (no window, 10 to 30 s); without it the regular Cinema 4D starts with a small harness plugin, runs the script and quits, which is needed for anything with a window.
+- **Cinema 4D tests** (`tests/c4d`): one Python script per feature, run inside Cinema 4D by `tests\c4d\run_c4d_test.ps1`, which takes one script or several (comma-separated) for one start. With `-Headless` the scripts run in `c4dpy` (no window); without it the regular Cinema 4D starts with a small harness plugin, runs the scripts and quits, which is needed for anything with a window.
   `.\tests\c4d\run_c4d_test.ps1 -Headless -Script tests\c4d\lights.py -ModulePath build\plugin\bin\Release\plugins`
 - **Comparison tests** are most of the Cinema 4D tests: a script builds a small scene, renders it with Cinema 4D's Standard renderer and with Cycles Render, and compares the pictures. Things to know when writing one:
   - Render with `RENDERFLAGS_OCIO_RAW_RENDERING`. Without it Cinema 4D's own renderers bake the view transform into the pixels and no number is comparable.
@@ -85,7 +93,7 @@ What the suite consists of, for whoever writes or restores tests:
   - The Standard renderer's picture sits about 0.3 px to the lower right of the exact projection, and it smooths edges differently. Compare centres of gravity, sizes and block averages; pixel-exact overlap of thin shapes is not reachable.
   - A Sphere primitive has "Render Perfect" on by default, which only Cinema 4D's own renderers honour. Switch it off in test scenes.
   - A primitive created from Python has no Phong tag and is flat shaded in both renderers.
-- **Rules for tests:** run Cinema 4D tests one after another, never in parallel. A test in the regular Cinema 4D runs with the user's own preferences and layout and must change neither. Never end a Blender process by name: a test ends only the Blender it started.
+- **Rules for tests:** run Cinema 4D tests one after another, never in parallel. A test in the regular Cinema 4D runs with a preferences folder of its own (`-Settings @{ g_prefsPath = "<empty folder>" }`), so that the user's preferences and layout stay untouched. Never end a Blender process by name: a test ends only the Blender it started, and the runner, after a start that crashed or was stopped, only the Blenders that start had started (found by their parent process).
 
 ## Development settings
 
