@@ -18,7 +18,9 @@ namespace cyclesrender
 /// With a Sky object, its material's luminance channel (or colour channel, if luminance is
 /// off) becomes the world: a bitmap there is used as a spherical panorama, turned with the
 /// Sky object. Without a Sky object the world is the plain @p defaultColor at
-/// @p defaultStrength from the render settings.
+/// @p defaultStrength from the render settings. Colours go through the document's colour
+/// settings (MaterialExporter::GetColors) like any other colour parameter; a Redshift dome's
+/// are sent as stored.
 ///
 /// @param[in] sky          The Sky object, or nullptr.
 /// @param[in] skyMg        Its global matrix.

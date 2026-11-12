@@ -96,7 +96,7 @@ static maxon::Result<maxon::Bool> ReadCloneColors(cinema::BaseObject* op, maxon:
 }
 
 SceneExporter::SceneExporter(cinema::BaseDocument* doc, const ExportSettings& settings)
-	: _doc(doc), _settings(settings), _coords(Coords::FromDocument(doc))
+	: _doc(doc), _colors(doc), _settings(settings), _coords(Coords::FromDocument(doc))
 {
 }
 
@@ -971,9 +971,7 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 		if (!_ocioTried)
 		{
 			_ocioTried = true;
-			cinema::GeData management;
-			if (_doc->GetParameter(ConstDescIDLevel(cinema::DOCUMENT_COLOR_MANAGEMENT), management, cinema::DESCFLAGS_GET::NONE) &&
-				management.GetInt32() == cinema::DOCUMENT_COLOR_MANAGEMENT_OCIO)
+			if (_colors.IsOcio())
 			{
 				iferr (_ocio = cinema::OcioConverter::Init(_doc, nullptr))
 					_ocio = nullptr;
@@ -983,17 +981,19 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 		{
 			_ocio->TransformColors(converted.GetFirst(), count, cinema::COLORSPACETRANSFORMATION::OCIO_SRGB_TO_RENDERING);
 		}
+		else if (_colors.IsOcio())
+		{
+			// No converter could be made: at least the transfer curve is undone.
+			for (cinema::Vector32& color : converted)
+				color = cinema::Vector32(maxon::Float32(SrgbToLinear(color.x)), maxon::Float32(SrgbToLinear(color.y)), maxon::Float32(SrgbToLinear(color.z)));
+		}
 		else
 		{
-			// Without OCIO the render space is linear sRGB: only the transfer curve is undone.
+			// "Basic" colour management: a colour parameter like any other. With Linear Workflow
+			// the sRGB curve is undone, without it the colour is used as it is (DocumentColors::Input;
+			// assumed from the other colour parameters, not measured with clones).
 			for (cinema::Vector32& color : converted)
-			{
-				for (maxon::Int channel = 0; channel < 3; ++channel)
-				{
-					const maxon::Float32 value = color[channel];
-					color[channel] = value <= 0.04045f ? value / 12.92f : maxon::Pow((value + 0.055f) / 1.055f, 2.4f);
-				}
-			}
+				color = cinema::Vector32(_colors.Input(cinema::Vector(color)));
 		}
 
 		maxon::Float32* const outColors = writer.AllocFloats(count * 4, colorsBlob) iferr_return;
@@ -1180,7 +1180,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			continue;
 		LightLinking linking;
 		const maxon::Bool linked = GetLightLinking(leaf, itemIds, linking) iferr_return;
-		ExportLight(writer, _coords, leaf.object, leaf.mg, KeyId("light_", leaf.key), _settings.lightMultiplier, linked ? &linking : nullptr) iferr_return;
+		ExportLight(writer, _coords, _colors, leaf.object, leaf.mg, KeyId("light_", leaf.key), _settings.lightMultiplier, linked ? &linking : nullptr) iferr_return;
 	}
 
 	for (maxon::Int i = 0; i < volumes.GetCount(); ++i)

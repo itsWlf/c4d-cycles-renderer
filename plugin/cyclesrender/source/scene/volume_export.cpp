@@ -15,6 +15,7 @@
 #include "../ids.h"
 #include "../materials/node_graph.h"
 #include "../tags/object_tag.h"
+#include "document_colors.h"
 #include "parameters.h"
 #include "volume_export.h"
 
@@ -251,17 +252,19 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 	if (colorGrid.IsEmpty())
 		colorGrid = has("color") ? "color"_s : (has("Cd") ? "Cd"_s : maxon::String());
 
+	// The tag's colours are colour parameters like a material's (DocumentColors::Input).
+	const DocumentColors colors(doc);
 	NodeGraph graph;
 	const maxon::Int shader = graph.Add("ShaderNodeVolumePrincipled") iferr_return;
 	const maxon::Int output = graph.Add("ShaderNodeOutputMaterial") iferr_return;
 	graph.SetInputJson(shader, "Density Attribute", JsonText(densityGrid));
 	graph.SetInputJson(shader, "Color Attribute", JsonText(colorGrid));
 	graph.SetInput(shader, "Density", GetFloatParameter(tag, CYCLESOBJECT_VOLUME_DENSITY, 1.0));
-	graph.SetInput(shader, "Color", GetVectorParameter(tag, CYCLESOBJECT_VOLUME_COLOR, cinema::Vector(0.5)));
+	graph.SetInput(shader, "Color", colors.Input(GetVectorParameter(tag, CYCLESOBJECT_VOLUME_COLOR, cinema::Vector(0.5))));
 	graph.SetInput(shader, "Anisotropy", GetFloatParameter(tag, CYCLESOBJECT_VOLUME_ANISOTROPY, 0.0));
 	const maxon::Float64 emission = GetFloatParameter(tag, CYCLESOBJECT_VOLUME_EMISSION_STRENGTH, 0.0);
 	graph.SetInput(shader, "Emission Strength", emission);
-	graph.SetInput(shader, "Emission Color", GetVectorParameter(tag, CYCLESOBJECT_VOLUME_EMISSION_COLOR, cinema::Vector(1.0)));
+	graph.SetInput(shader, "Emission Color", colors.Input(GetVectorParameter(tag, CYCLESOBJECT_VOLUME_EMISSION_COLOR, cinema::Vector(1.0))));
 
 	// Fire. A real temperature (Blender's own smoke: the grid times "Temperature" is kelvin) glows
 	// as a black body. The fire grids of other programs (EmberGen's "flames", 0 to about 4) say

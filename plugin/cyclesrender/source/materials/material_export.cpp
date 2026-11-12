@@ -29,8 +29,8 @@
 namespace cyclesrender
 {
 
-// Blender's names for the two ways an image file is read.
-static const maxon::Char* const COLORSPACE_COLOR = "sRGB";
+// Blender's names for two ways an image file is read; which one colours take is the
+// document's business (DocumentColors::ImageColorSpace).
 static const maxon::Char* const COLORSPACE_LINEAR_COLOR = "Linear Rec.709";
 static const maxon::Char* const COLORSPACE_DATA = "Non-Color";
 
@@ -159,7 +159,8 @@ maxon::Result<void> ClassicMaterialGraph::ColorChannel(const maxon::Char* socket
 {
 	iferr_scope;
 
-	cinema::Vector color = GetVectorParameter(_material, colorId, cinema::Vector(1.0)) * GetFloatParameter(_material, brightnessId, 1.0);
+	// The brightness counts before the document's colour conversion (measured, DocumentColors::Input).
+	cinema::Vector color = _exporter.GetColors().Input(GetVectorParameter(_material, colorId, cinema::Vector(1.0)) * GetFloatParameter(_material, brightnessId, 1.0));
 	color = color * (1.0 - tintAmount) + tintTowards * tintAmount;
 
 	const NodeOutput texture = Texture(GetShaderParameter(_material, shaderId, _exporter.GetDocument()), true, channel) iferr_return;
@@ -273,8 +274,8 @@ maxon::Result<void> ClassicMaterialGraph::Reflectance()
 		const maxon::Float64 roughness = maxon::Clamp01(GetFloatParameter(_material, base + REFLECTION_LAYER_MAIN_VALUE_ROUGHNESS, 0.5));
 		const maxon::Float64 reflection = maxon::Clamp01(GetFloatParameter(_material, base + REFLECTION_LAYER_MAIN_VALUE_REFLECTION, 1.0));
 		const maxon::Float64 specular = GetFloatParameter(_material, base + REFLECTION_LAYER_MAIN_VALUE_SPECULAR, 0.2);
-		const cinema::Vector layerColor = GetVectorParameter(_material, base + REFLECTION_LAYER_COLOR_COLOR, cinema::Vector(1.0)) *
-			GetFloatParameter(_material, base + REFLECTION_LAYER_COLOR_BRIGHTNESS, 1.0);
+		const cinema::Vector layerColor = _exporter.GetColors().Input(GetVectorParameter(_material, base + REFLECTION_LAYER_COLOR_COLOR, cinema::Vector(1.0)) *
+			GetFloatParameter(_material, base + REFLECTION_LAYER_COLOR_BRIGHTNESS, 1.0));
 
 		_graph.SetInput(_bsdf, "Roughness", roughness);
 		const NodeOutput roughnessTexture = Texture(GetShaderParameter(_material, base + REFLECTION_LAYER_MAIN_SHADER_ROUGHNESS, _exporter.GetDocument()),
@@ -791,7 +792,7 @@ maxon::Result<maxon::String> MaterialExporter::GetPixelImageId(const maxon::Base
 	return id;
 }
 
-maxon::Result<maxon::String> MaterialExporter::GetFileImageId(const maxon::String& path, maxon::Bool colorData)
+maxon::Result<maxon::String> MaterialExporter::GetFileImageId(const maxon::String& path, maxon::Bool colorData, maxon::Int32 bitmapProfile)
 {
 	iferr_scope;
 
@@ -853,6 +854,19 @@ static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema:
 			memory->GetData(data, size, false);
 			if (data && size > 0)
 				hash = HashBytes(static_cast<const maxon::Char*>(data), size, hash);
+		}
+	}
+	if (shader->GetType() == Xbitmap)
+	{
+		const cinema::Filename name = GetFilenameParameter(shader, BITMAPSHADER_FILENAME);
+		cinema::Filename resolved;
+		cinema::LocalFileTime changed;
+		changed.Init();
+		if (name.IsPopulated() && cinema::GenerateTexturePath(doc->GetDocumentPath(), name, cinema::Filename(), &resolved) &&
+			cinema::GeGetFileTime(resolved, GE_FILETIME_MODIFIED, &changed))
+		{
+			const maxon::UInt16 parts[6] = { changed.year, changed.month, changed.day, changed.hour, changed.minute, changed.second };
+			hash = HashBytes(reinterpret_cast<const maxon::Char*>(parts), SIZEOF(parts), hash);
 		}
 	}
 	for (cinema::BaseShader* first : { shader->GetFirstShader(), shader->GetDown() })

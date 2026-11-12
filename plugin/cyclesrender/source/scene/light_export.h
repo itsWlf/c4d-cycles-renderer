@@ -7,6 +7,7 @@
 #include "c4d.h"
 
 #include "coords.h"
+#include "document_colors.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -33,10 +34,12 @@ struct LightLinking
 /// A Redshift light (Orslight) is physical and converts exactly: infinite, point, spot and
 /// area lights in the unit "Image" (light_export.cpp, ExportRedshiftLight).
 ///
+/// @param[in] colors      The document's colour settings: a standard light's colour is a colour
+///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored.
 /// @param[in] multiplier  The "Light Multiplier" render setting, applied to every light.
 /// @return  False when the light emits nothing and was skipped.
 //----------------------------------------------------------------------------------------
-maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const cinema::BaseObject* light,
+maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking = nullptr);
 
 } // namespace cyclesrender

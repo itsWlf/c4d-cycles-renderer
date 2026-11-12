@@ -10,6 +10,7 @@
 
 #include "../materials/node_graph.h"
 #include "curves_export.h"
+#include "document_colors.h"
 #include "parameters.h"
 
 namespace cyclesrender
@@ -69,10 +70,12 @@ maxon::Result<maxon::Bool> ExportHair(SceneWriter& writer, const Coords& coords,
 		const cinema::GeData gradientData = GetParameterData(material, HAIRMATERIAL_COLOR_GRADIENT);
 		const cinema::Gradient* const gradient = static_cast<const cinema::Gradient*>(gradientData.GetCustomDataTypeI(CUSTOMDATATYPE_GRADIENT));
 		const maxon::Int32 knots = gradient ? gradient->GetKnotCount() : 0;
+		const DocumentColors colors(doc);
 		for (maxon::Int32 i = 0; i < knots; ++i)
 		{
 			const maxon::GradientKnot knot = gradient->GetKnot(i);
-			const cinema::Vector color(knot.col.r * knot.brightness, knot.col.g * knot.brightness, knot.col.b * knot.brightness);
+			// A knot is a colour parameter (DocumentColors::Input; measured for the Gradient shader's).
+			const cinema::Vector color = colors.Input(cinema::Vector(knot.col.r, knot.col.g, knot.col.b) * knot.brightness);
 			// The knots are not sorted: take the ones nearest to the two ends.
 			if (i == 0 || knot.pos <= gradient->GetKnot(0).pos)
 				rootColor = color;

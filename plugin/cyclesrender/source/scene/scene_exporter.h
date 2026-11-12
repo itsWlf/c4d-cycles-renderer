@@ -8,6 +8,7 @@
 #include "maxon/hashmap.h"
 
 #include "coords.h"
+#include "document_colors.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -222,6 +223,7 @@ private:
 		const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const Visibility& visibility);
 
 	cinema::BaseDocument* _doc;
+	DocumentColors _colors;                    ///< the document's colour settings, for colours written here (lights, MoGraph)
 	ExportSettings _settings;
 	Coords _coords;
 	maxon::BaseArray<Leaf> _leaves;

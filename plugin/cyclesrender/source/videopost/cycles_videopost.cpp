@@ -18,6 +18,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../scene/document_colors.h"
 #include "../scene/scene_exporter.h"
 #include "../scene/scene_writer.h"
 #include "../session/capture.h"
@@ -74,26 +75,20 @@ void CyclesVideoPost::AllocateBuffers(cinema::BaseVideoPost* node, cinema::Rende
 // a colour chart (tests\c4d\colour.py).
 enum class OUTPUTCOLORS
 {
-	RENDER_SPACE,   ///< the values as rendered: OCIO documents, where Cinema 4D shows and saves them through the view transform itself
+	RENDER_SPACE,   ///< the values as rendered: OCIO documents, where Cinema 4D shows and saves them through the view transform itself, and "Basic" ones without the curve
 	VIEW,           ///< OCIO documents asked to bake the view transform into the picture (RDATA_BAKE_OCIO_VIEW_TRANSFORM_RENDER)
-	SRGB_CURVE      ///< "Basic" colour management: the picture is stored with the sRGB curve applied
+	SRGB_CURVE      ///< "Basic" colour management with Linear Workflow: the picture is stored with the sRGB curve applied (DocumentColors::CurveInPicture)
 } MAXON_ENUM_LIST(OUTPUTCOLORS);
 
 static OUTPUTCOLORS GetOutputColors(const cinema::BaseDocument* doc, const cinema::BaseContainer& renderData)
 {
-	const cinema::BaseContainer& documentData = doc->GetDataInstanceRef();
-	if (documentData.GetInt32(cinema::DOCUMENT_COLOR_MANAGEMENT) == cinema::DOCUMENT_COLOR_MANAGEMENT_OCIO)
+	const DocumentColors colors(doc);
+	if (colors.IsOcio())
 		return renderData.GetBool(RDATA_BAKE_OCIO_VIEW_TRANSFORM_RENDER, true) ? OUTPUTCOLORS::VIEW : OUTPUTCOLORS::RENDER_SPACE;
-
-	// Basic colour management renders in linear sRGB ("Linear Workflow") and stores the picture
-	// in the image colour profile of the Render Settings, sRGB unless the user chose linear.
-	if (!documentData.GetBool(cinema::DOCUMENT_LINEARWORKFLOW, true))
-		return OUTPUTCOLORS::RENDER_SPACE;
-	const cinema::ColorProfile* const profile = renderData.GetCustomDataType<cinema::ColorProfile>(RDATA_IMAGECOLORPROFILE);
-	const cinema::ColorProfile* const linear = cinema::ColorProfile::GetDefaultLinearRGB();
-	if (profile && linear && *profile == *linear)
-		return OUTPUTCOLORS::RENDER_SPACE;
-	return OUTPUTCOLORS::SRGB_CURVE;
+	// "Basic": Blender calculated with the numbers Cinema 4D calculates with, linear with
+	// Linear Workflow and the sRGB numbers without; the buffer wants the curve on the linear
+	// ones, unless Multi-Pass is on (measured: docs/reference/c4d-sdk.md, "Colour management").
+	return colors.CurveInPicture(renderData) ? OUTPUTCOLORS::SRGB_CURVE : OUTPUTCOLORS::RENDER_SPACE;
 }
 
 // Writes RGBA float pixels, top row first, into one of Cinema 4D's buffers.
@@ -144,10 +139,7 @@ static maxon::Result<void> FillBuffer(cinema::VPBuffer* buffer, const Blob& pixe
 				for (maxon::Int32 c = 0; c < 3; ++c)
 				{
 					maxon::Float32& value = line[maxon::Int(x) * targetChannels + c];
-					if (value <= 0.0031308f)
-						value = value * 12.92f;
-					else
-						value = 1.055f * maxon::Pow(value, 1.0f / 2.4f) - 0.055f;
+					value = LinearToSrgb(value);
 				}
 			}
 		}
@@ -428,7 +420,10 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 		return maxon::UnexpectedError(MAXON_SOURCE_LOCATION, "Blender's reply holds no pixels."_s);
 
 	// The reply's rows run top to bottom, like Cinema 4D's buffer.
-	// Only the picture itself is converted; the passes stay as rendered.
+	// Only the picture itself is converted; the passes stay as rendered. With "Basic" colour
+	// management that is what the Standard renderer's own layers hold too: linear values with
+	// Linear Workflow (measured: Multi-Pass on makes even its picture linear), the sRGB numbers
+	// calculated with without it.
 	const OUTPUTCOLORS colors = GetOutputColors(vps->doc, renderData);
 	cinema::OcioConverter* converter = nullptr;
 	finally

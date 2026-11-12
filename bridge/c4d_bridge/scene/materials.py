@@ -19,7 +19,17 @@ def build_image(scene, item, blobs):
         scene.warn(f"Texture file not found: {path}")
         scene.images[item["id"]] = None
         return
-    image = bpy.data.images.load(path, check_existing=True)
+    # One image per item. The plugin sends one item per file and colour space, so one file can
+    # come as two items (a texture as colour and as bump heights, or a bitmap whose colour
+    # profile differs from another's); with check_existing both would share one image, and the
+    # later item's colour space would apply to both.
+    image = scene.images.get(item["id"])
+    if image is not None and image.filepath != path:
+        if image not in native.protected():
+            bpy.data.images.remove(image)
+        image = None
+    if image is None:
+        image = bpy.data.images.load(path, check_existing=False)
     colorspace = item.get("colorspace")
     if colorspace:
         try:

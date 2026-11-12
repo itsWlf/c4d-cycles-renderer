@@ -8,6 +8,7 @@
 #include "maxon/parallelfor.h"
 
 #include "../scene/camera_export.h"
+#include "../scene/document_colors.h"
 #include "ipr_image_area.h"
 
 namespace cyclesrender
@@ -48,8 +49,6 @@ IprImageArea::IprImageArea()
 IprImageArea::~IprImageArea()
 {
 	cinema::BaseBitmap::Free(_display);
-	if (_converter)
-		DeleteObj(_converter);
 }
 
 cinema::Bool IprImageArea::GetMinSize(cinema::Int32& w, cinema::Int32& h)
@@ -125,16 +124,27 @@ static inline maxon::Float32 LutPosition(maxon::Float32 value)
 	return maxon::Log2(value * LUT_SCALE + 1.0f) / LUT_LOG_RANGE;
 }
 
-maxon::Result<void> IprImageArea::UpdateLut(cinema::BaseDocument* doc)
+DisplayTransform::~DisplayTransform()
+{
+	if (_converter)
+		DeleteObj(_converter);
+}
+
+maxon::Result<void> DisplayTransform::Update(cinema::BaseDocument* doc)
 {
 	iferr_scope;
 
-	cinema::GeData management;
-	const maxon::Bool ocio = doc && doc->GetParameter(ConstDescIDLevel(cinema::DOCUMENT_COLOR_MANAGEMENT), management, cinema::DESCFLAGS_GET::NONE) &&
-		management.GetInt32() == cinema::DOCUMENT_COLOR_MANAGEMENT_OCIO;
+	// Without a document: as for "Basic" colour management with Linear Workflow, which is what
+	// this did for every document without OCIO before.
+	const DocumentColors colors(doc);
+	const maxon::Bool ocio = doc && colors.IsOcio();
+	// "Basic" colour management: the frame holds the numbers Cinema 4D calculates with. The
+	// Picture Viewer shows a final frame of them through the sRGB curve with Linear Workflow on
+	// and as they are with it off (measured); the window does the same.
+	const maxon::Bool curve = !doc || colors.CurveOnScreen();
 
 	// Rebuild only when the document's colour settings changed.
-	maxon::String key = "srgb"_s;
+	maxon::String key = curve ? "srgb"_s : "plain"_s;
 	if (ocio)
 	{
 		maxon::CString render;
@@ -144,7 +154,7 @@ maxon::Result<void> IprImageArea::UpdateLut(cinema::BaseDocument* doc)
 		doc->GetActiveOcioColorSpacesNames(render, display, view, thumbnails);
 		key = FormatString("@|@|@", render, display, view);
 	}
-	if (key == _lutKey && _lut.GetCount() == LUT_SIZE * LUT_SIZE * LUT_SIZE)
+	if (key == _key && _lut.GetCount() == LUT_SIZE * LUT_SIZE * LUT_SIZE)
 		return maxon::OK;
 
 	_lut.Resize(LUT_SIZE * LUT_SIZE * LUT_SIZE) iferr_return;
@@ -170,13 +180,42 @@ maxon::Result<void> IprImageArea::UpdateLut(cinema::BaseDocument* doc)
 	{
 		_converter->TransformColors(_lut.GetFirst(), _lut.GetCount(), cinema::COLORSPACETRANSFORMATION::OCIO_RENDERING_TO_VIEW);
 	}
-	else
+	else if (ocio || curve)
 	{
 		for (cinema::Vector32& color : _lut)
 			color = cinema::Vector32(LinearToSrgb(color.x), LinearToSrgb(color.y), LinearToSrgb(color.z));
 	}
-	_lutKey = key;
+	_key = key;
 	return maxon::OK;
+}
+
+void DisplayTransform::Apply(const maxon::Float32* rgb, maxon::UChar* out) const
+{
+	// Trilinear interpolation in the table.
+	const cinema::Vector32* const lut = _lut.GetFirst();
+	const maxon::Float32 last = maxon::Float32(LUT_SIZE - 1);
+	const maxon::Float32 pr = LutPosition(rgb[0]) * last;
+	const maxon::Float32 pg = LutPosition(rgb[1]) * last;
+	const maxon::Float32 pb = LutPosition(rgb[2]) * last;
+	const maxon::Int ir = maxon::Min(maxon::Int(pr), LUT_SIZE - 2);
+	const maxon::Int ig = maxon::Min(maxon::Int(pg), LUT_SIZE - 2);
+	const maxon::Int ib = maxon::Min(maxon::Int(pb), LUT_SIZE - 2);
+	const maxon::Float32 fr = pr - maxon::Float32(ir);
+	const maxon::Float32 fg = pg - maxon::Float32(ig);
+	const maxon::Float32 fb = pb - maxon::Float32(ib);
+	const cinema::Vector32* const cell = lut + (ib * LUT_SIZE + ig) * LUT_SIZE + ir;
+	const maxon::Int stepG = LUT_SIZE;
+	const maxon::Int stepB = LUT_SIZE * LUT_SIZE;
+	const cinema::Vector32 c00 = cell[0] + (cell[1] - cell[0]) * fr;
+	const cinema::Vector32 c10 = cell[stepG] + (cell[stepG + 1] - cell[stepG]) * fr;
+	const cinema::Vector32 c01 = cell[stepB] + (cell[stepB + 1] - cell[stepB]) * fr;
+	const cinema::Vector32 c11 = cell[stepB + stepG] + (cell[stepB + stepG + 1] - cell[stepB + stepG]) * fr;
+	const cinema::Vector32 c0 = c00 + (c10 - c00) * fg;
+	const cinema::Vector32 c1 = c01 + (c11 - c01) * fg;
+	const cinema::Vector32 color = c0 + (c1 - c0) * fb;
+	out[0] = ToByte(color.x);
+	out[1] = ToByte(color.y);
+	out[2] = ToByte(color.z);
 }
 
 void IprImageArea::Convert(cinema::BaseDocument* doc)
@@ -199,44 +238,20 @@ void IprImageArea::Convert(cinema::BaseDocument* doc)
 	}
 	iferr (_bytes.Resize(maxon::Int(width) * height * 3, maxon::COLLECTION_RESIZE_FLAGS::POD_UNINITIALIZED))
 		return;
-	iferr (UpdateLut(doc))
+	iferr (_transform.Update(doc))
 		return;
 
 	const maxon::Float32* const source = _frame.pixels.GetFirst();
 	maxon::UChar* const target = _bytes.GetFirst();
-	const cinema::Vector32* const lut = _lut.GetFirst();
+	const DisplayTransform& transform = _transform;
 	maxon::Int32 cameraX0, cameraY0, cameraX1, cameraY1;
 	GetCameraRect(cameraX0, cameraY0, cameraX1, cameraY1);
-	auto convertRow = [source, target, width, lut, cameraX0, cameraY0, cameraX1, cameraY1](maxon::Int y)
+	auto convertRow = [source, target, width, &transform, cameraX0, cameraY0, cameraX1, cameraY1](maxon::Int y)
 	{
 		const maxon::Float32* in = source + y * width * 4;
 		maxon::UChar* out = target + y * width * 3;
-		const maxon::Float32 last = maxon::Float32(LUT_SIZE - 1);
 		for (maxon::Int x = 0; x < width; ++x, in += 4, out += 3)
-		{
-			const maxon::Float32 pr = LutPosition(in[0]) * last;
-			const maxon::Float32 pg = LutPosition(in[1]) * last;
-			const maxon::Float32 pb = LutPosition(in[2]) * last;
-			const maxon::Int ir = maxon::Min(maxon::Int(pr), LUT_SIZE - 2);
-			const maxon::Int ig = maxon::Min(maxon::Int(pg), LUT_SIZE - 2);
-			const maxon::Int ib = maxon::Min(maxon::Int(pb), LUT_SIZE - 2);
-			const maxon::Float32 fr = pr - maxon::Float32(ir);
-			const maxon::Float32 fg = pg - maxon::Float32(ig);
-			const maxon::Float32 fb = pb - maxon::Float32(ib);
-			const cinema::Vector32* const cell = lut + (ib * LUT_SIZE + ig) * LUT_SIZE + ir;
-			const maxon::Int stepG = LUT_SIZE;
-			const maxon::Int stepB = LUT_SIZE * LUT_SIZE;
-			const cinema::Vector32 c00 = cell[0] + (cell[1] - cell[0]) * fr;
-			const cinema::Vector32 c10 = cell[stepG] + (cell[stepG + 1] - cell[stepG]) * fr;
-			const cinema::Vector32 c01 = cell[stepB] + (cell[stepB + 1] - cell[stepB]) * fr;
-			const cinema::Vector32 c11 = cell[stepB + stepG] + (cell[stepB + stepG + 1] - cell[stepB + stepG]) * fr;
-			const cinema::Vector32 c0 = c00 + (c10 - c00) * fg;
-			const cinema::Vector32 c1 = c01 + (c11 - c01) * fg;
-			const cinema::Vector32 color = c0 + (c1 - c0) * fb;
-			out[0] = ToByte(color.x);
-			out[1] = ToByte(color.y);
-			out[2] = ToByte(color.z);
-		}
+			transform.Apply(in, out);
 		// Outside the camera's picture: darkened.
 		maxon::UChar* const row = target + y * width * 3;
 		const maxon::Bool inside = y >= cameraY0 && y < cameraY1;
@@ -260,8 +275,15 @@ cinema::BaseBitmap* IprImageArea::CreateFloatBitmap(cinema::BaseDocument* doc) c
 		return nullptr;
 	maxon::Int32 x0, y0, x1, y1;
 	GetCameraRect(x0, y0, x1, y1);
+	return CreateFrameBitmap(_frame, x0, y0, x1, y1, doc);
+}
+
+cinema::BaseBitmap* CreateFrameBitmap(const Frame& frame, maxon::Int32 x0, maxon::Int32 y0, maxon::Int32 x1, maxon::Int32 y1, cinema::BaseDocument* doc)
+{
 	const maxon::Int32 width = x1 - x0;
 	const maxon::Int32 height = y1 - y0;
+	if (width < 1 || height < 1 || x0 < 0 || y0 < 0 || x1 > frame.width || y1 > frame.height)
+		return nullptr;
 
 	cinema::BaseBitmap* bitmap = cinema::BaseBitmap::Alloc();
 	if (!bitmap || bitmap->Init(width, height, 96) != cinema::IMAGERESULT::OK)
@@ -269,10 +291,38 @@ cinema::BaseBitmap* IprImageArea::CreateFloatBitmap(cinema::BaseDocument* doc) c
 		cinema::BaseBitmap::Free(bitmap);
 		return nullptr;
 	}
+	const DocumentColors colors(doc);
+	if (doc && !colors.IsOcio())
+	{
+		// "Basic" colour management. Measured: the Picture Viewer shows a float bitmap without a
+		// profile as it is, so the frame's linear values looked too dark there, and Cinema 4D's
+		// own EXR of a final frame holds linear values with Linear Workflow on and off. Linear
+		// values with the linear profile are what its multi-pass render hands over.
+		maxon::BaseArray<maxon::Float32> line;
+		iferr (line.Resize(maxon::Int(width) * 3))
+		{
+			cinema::BaseBitmap::Free(bitmap);
+			return nullptr;
+		}
+		const maxon::Bool linear = colors.IsLinear();
+		for (maxon::Int32 y = 0; y < height; ++y)
+		{
+			const maxon::Float32* const row = frame.pixels.GetFirst() + (maxon::Int(y + y0) * frame.width + x0) * 4;
+			for (maxon::Int x = 0; x < width; ++x)
+			{
+				for (maxon::Int c = 0; c < 3; ++c)
+					line[x * 3 + c] = linear ? row[x * 4 + c] : maxon::Float32(SrgbToLinear(row[x * 4 + c]));
+			}
+			bitmap->SetPixelCnt(0, y, width, reinterpret_cast<maxon::UChar*>(line.GetFirst()), 12, cinema::COLORMODE::RGBf, cinema::PIXELCNT::NONE);
+		}
+		bitmap->SetColorProfile(cinema::ColorProfile::GetDefaultLinearRGB(), cinema::BaseBitmap::COLORPROFILE_INDEX_IMAGE);
+		return bitmap;
+	}
+
 	for (maxon::Int32 y = 0; y < height; ++y)
 	{
 		// 16 bytes from one pixel to the next: the alpha value is skipped.
-		bitmap->SetPixelCnt(0, y, width, reinterpret_cast<maxon::UChar*>(const_cast<maxon::Float32*>(_frame.pixels.GetFirst() + (maxon::Int(y + y0) * _frame.width + x0) * 4)),
+		bitmap->SetPixelCnt(0, y, width, reinterpret_cast<maxon::UChar*>(const_cast<maxon::Float32*>(frame.pixels.GetFirst() + (maxon::Int(y + y0) * frame.width + x0) * 4)),
 			16, cinema::COLORMODE::RGBf, cinema::PIXELCNT::NONE);
 	}
 

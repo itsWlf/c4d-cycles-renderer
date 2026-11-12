@@ -7,6 +7,7 @@
 #include "c4d.h"
 #include "maxon/hashmap.h"
 
+#include "../scene/document_colors.h"
 #include "../scene/scene_writer.h"
 #include "node_graph.h"
 
@@ -126,6 +127,8 @@ public:
 	void Warn(const maxon::String& message);
 	SceneWriter& GetWriter() { return _writer; }
 	cinema::BaseDocument* GetDocument() const { return _doc; }
+	/// The document's colour settings: every colour parameter goes through Input() on its way out.
+	const DocumentColors& GetColors() const { return _colors; }
 
 private:
 	maxon::Result<void> WriteLayers(const maxon::BaseArray<MaterialLayer>& layers, const maxon::String& id);
@@ -133,6 +136,7 @@ private:
 
 	SceneWriter& _writer;
 	cinema::BaseDocument* _doc;
+	DocumentColors _colors;
 	maxon::Int32 _bakeResolution;
 	maxon::HashMap<maxon::String, maxon::String> _materials;   ///< what a material item was made from -> its id
 	maxon::HashMap<maxon::String, maxon::String> _images;

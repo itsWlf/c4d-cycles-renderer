@@ -157,7 +157,7 @@ static maxon::Result<maxon::Bool> ExportRedshiftLight(SceneWriter& writer, const
 	return true;
 }
 
-maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const cinema::BaseObject* light,
+maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking)
 {
 	if (light->GetType() == Orslight)
@@ -172,7 +172,7 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 	}
 
 	const maxon::Float64 brightness = GetFloatParameter(light, LIGHT_BRIGHTNESS, 1.0) * multiplier;
-	const cinema::Vector color = GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0));
+	const cinema::Vector color = colors.Input(GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0)));
 	if (brightness <= 0.0)
 		return false;
 

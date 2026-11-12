@@ -136,7 +136,7 @@ maxon::Result<NodeOutput> ShaderTranslator::PlainColor(cinema::BaseShader* shade
 {
 	iferr_scope;
 
-	const cinema::Vector color = GetVectorParameter(shader, COLORSHADER_COLOR, cinema::Vector(1.0)) * GetFloatParameter(shader, COLORSHADER_BRIGHTNESS, 1.0);
+	const cinema::Vector color = _exporter.GetColors().Input(GetVectorParameter(shader, COLORSHADER_COLOR, cinema::Vector(1.0)) * GetFloatParameter(shader, COLORSHADER_BRIGHTNESS, 1.0));
 	const maxon::Int node = _graph.Add("ShaderNodeCombineColor") iferr_return;
 	_graph.SetInput(node, "Red", color.x);
 	_graph.SetInput(node, "Green", color.y);
@@ -169,8 +169,9 @@ maxon::Result<NodeOutput> ShaderTranslator::Checkerboard(cinema::BaseShader* sha
 	_graph.Link(NodeOutput { scale, "Vector"_s }, checker, "Vector") iferr_return;
 	_graph.SetInput(checker, "Scale", 1.0);
 	// Measured: the field at the top left shows Cinema 4D's first colour, and Blender's second.
-	_graph.SetInput(checker, "Color2", GetVectorParameter(shader, CHECKERBOARDSHADER_COLOR1, cinema::Vector(0.0)));
-	_graph.SetInput(checker, "Color1", GetVectorParameter(shader, CHECKERBOARDSHADER_COLOR2, cinema::Vector(1.0)));
+	const DocumentColors& colors = _exporter.GetColors();
+	_graph.SetInput(checker, "Color2", colors.Input(GetVectorParameter(shader, CHECKERBOARDSHADER_COLOR1, cinema::Vector(0.0))));
+	_graph.SetInput(checker, "Color1", colors.Input(GetVectorParameter(shader, CHECKERBOARDSHADER_COLOR2, cinema::Vector(1.0))));
 	return NodeOutput { checker, "Color"_s };
 }
 
@@ -307,7 +308,9 @@ maxon::Result<NodeOutput> ShaderTranslator::Ramp(cinema::BaseShader* shader, max
 	ramp.BeginArray("elements");
 	for (const maxon::GradientKnot& knot : knots)
 	{
-		const maxon::Float64 element[5] = { knot.pos, knot.col.r * knot.brightness, knot.col.g * knot.brightness, knot.col.b * knot.brightness, 1.0 };
+		// A knot is a colour parameter like any other (measured with a stepped gradient in "Basic" mode).
+		const cinema::Vector color = _exporter.GetColors().Input(cinema::Vector(knot.col.r, knot.col.g, knot.col.b) * knot.brightness);
+		const maxon::Float64 element[5] = { knot.pos, color.x, color.y, color.z, 1.0 };
 		ramp.Floats(nullptr, element, 5);
 	}
 	ramp.EndArray();

@@ -9,6 +9,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../scene/document_colors.h"
 #include "../session/capture.h"
 #include "../session/json.h"
 #include "render_settings_map.h"
@@ -159,11 +160,10 @@ void InitRenderSettings(cinema::BaseContainer& data)
 // warning) when Blender has no working space to match.
 static maxon::String BlenderWorkingSpace(const cinema::BaseDocument* doc, maxon::BaseArray<maxon::String>& warnings)
 {
-	cinema::GeData management;
-	const maxon::Bool ocio = doc->GetParameter(ConstDescIDLevel(cinema::DOCUMENT_COLOR_MANAGEMENT), management, cinema::DESCFLAGS_GET::NONE) &&
-		management.GetInt32() == cinema::DOCUMENT_COLOR_MANAGEMENT_OCIO;
-	if (!ocio)
-		return "Linear Rec.709"_s;	// "Basic" colour management renders in linear sRGB
+	// "Basic" colour management calculates in linear sRGB, or without Linear Workflow on the
+	// sRGB numbers themselves, which Blender is given as if they were linear (DocumentColors).
+	if (!DocumentColors(doc).IsOcio())
+		return "Linear Rec.709"_s;
 
 	maxon::CString render;
 	maxon::CString display;

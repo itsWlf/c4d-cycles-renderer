@@ -21,10 +21,49 @@ enum
 };
 
 //----------------------------------------------------------------------------------------
-/// Frames arrive as scene-linear floats in the document's render space. For display they are
-/// converted with the document's OCIO view transform (or to sRGB when the document does not
-/// use OCIO) into an 8-bit bitmap; the floats are kept for snapshots and saving. Scene values
-/// above 32 clip to the brightest display colour.
+/// How the IPR shows a frame's values on the screen: the document's OCIO view transform, or
+/// with "Basic" colour management what the Picture Viewer does with a final frame (the sRGB
+/// curve with Linear Workflow on, nothing with it off; DocumentColors::CurveOnScreen). The
+/// transform is sampled into a table once per colour setting (ipr_image_area.cpp). Used by
+/// the window's picture, and by the test hook without a window.
+//----------------------------------------------------------------------------------------
+class DisplayTransform
+{
+	MAXON_DISALLOW_COPY_AND_ASSIGN(DisplayTransform);
+
+public:
+	DisplayTransform() = default;
+	~DisplayTransform();
+
+	/// Builds the table for @p doc's colour settings, unless it was built for these already.
+	/// Without a document: the sRGB curve.
+	maxon::Result<void> Update(cinema::BaseDocument* doc);
+	/// One pixel's RGB values to display values 0..255. Update() first.
+	void Apply(const maxon::Float32* rgb, maxon::UChar* out) const;
+
+private:
+	cinema::OcioConverter* _converter = nullptr;
+	maxon::BaseArray<cinema::Vector32> _lut;	///< the transform sampled on a 3D grid
+	maxon::String _key;												///< the colour settings the table was built for
+};
+
+//----------------------------------------------------------------------------------------
+/// A float bitmap of the part [x0, x1) x [y0, y1) of @p frame, for the Picture Viewer and for
+/// saving; the caller owns it, null when the part is empty or outside. With OCIO it holds the
+/// render-space values and carries @p doc's colour profiles. With "Basic" colour management it
+/// holds linear values and the linear profile, as Cinema 4D's own multi-pass render does: the
+/// Picture Viewer shows them through the sRGB curve and an EXR keeps them as they are (what
+/// Cinema 4D writes for a final frame, measured); without Linear Workflow the frame's sRGB
+/// numbers are linearised for that. Used by the window (IprImageArea::CreateFloatBitmap) and
+/// by the test hook.
+//----------------------------------------------------------------------------------------
+cinema::BaseBitmap* CreateFrameBitmap(const Frame& frame, maxon::Int32 x0, maxon::Int32 y0, maxon::Int32 x1, maxon::Int32 y1, cinema::BaseDocument* doc);
+
+//----------------------------------------------------------------------------------------
+/// Frames arrive as scene-linear floats in the document's render space (with "Basic" colour
+/// management: the numbers Cinema 4D calculates with). For display they are converted by a
+/// DisplayTransform into an 8-bit bitmap; the floats are kept for snapshots and saving. Scene
+/// values above 32 clip to the brightest display colour.
 ///
 /// Zoom 1 shows one render pixel per screen pixel. The view is described by the zoom and the
 /// image point that sits in the middle of the area, so resizing the window keeps the picture
@@ -68,9 +107,8 @@ public:
 	/// Centres the picture, at full size if that fits into the area and scaled down to fit otherwise.
 	void FrameImage();
 
-	/// A float bitmap of the camera's picture in the current frame, carrying the document's
-	/// colour profiles, for the Picture Viewer and for saving. The caller owns it. Null when
-	/// there is no frame.
+	/// A float bitmap of the camera's picture in the current frame, for the Picture Viewer and
+	/// for saving (CreateFrameBitmap). The caller owns it. Null when there is no frame.
 	cinema::BaseBitmap* CreateFloatBitmap(cinema::BaseDocument* doc) const;
 
 	/// Milliseconds the last conversion for display took.
@@ -78,16 +116,13 @@ public:
 
 private:
 	void Convert(cinema::BaseDocument* doc);
-	maxon::Result<void> UpdateLut(cinema::BaseDocument* doc);
 	void ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::Float64 areaY);
 	void NotifyParent(cinema::Int32 what);
 
 	Frame _frame;
 	cinema::BaseBitmap* _display = nullptr;	///< 8-bit, view transform applied
 	maxon::BaseArray<maxon::UChar> _bytes;		///< scratch for the conversion
-	cinema::OcioConverter* _converter = nullptr;
-	maxon::BaseArray<cinema::Vector32> _lut;	///< the view transform sampled on a 3D grid; see Convert()
-	maxon::String _lutKey;										///< the colour settings the table was built for
+	DisplayTransform _transform;
 	maxon::String _message;
 
 	maxon::Float64 _zoom = 1.0;

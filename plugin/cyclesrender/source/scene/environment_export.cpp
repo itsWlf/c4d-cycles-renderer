@@ -7,6 +7,7 @@
 #include "drsfile.h"
 #include "mmaterial.h"
 #include "orslight.h"
+#include "xbitmap.h"
 
 #include "environment_export.h"
 #include "parameters.h"
@@ -117,8 +118,10 @@ maxon::Result<void> ExportWorld(MaterialExporter& materials, const cinema::BaseO
 	iferr_scope;
 
 	SceneWriter& writer = materials.GetWriter();
+	const DocumentColors& colors = materials.GetColors();
+	// The default colour is a colour parameter of the Render Settings, read as Cinema 4D reads any.
 	if (!sky)
-		return WritePlainWorld(writer, defaultColor, defaultStrength);
+		return WritePlainWorld(writer, colors.Input(defaultColor), defaultStrength);
 	if (!skyMaterial || skyMaterial->GetType() != Mmaterial)
 	{
 		// Cinema 4D renders a Sky without a material as plain white.
@@ -129,12 +132,18 @@ maxon::Result<void> ExportWorld(MaterialExporter& materials, const cinema::BaseO
 
 	// The sky shows the material's luminance channel, or its colour channel when luminance is off.
 	const maxon::Bool luminance = GetBoolParameter(skyMaterial, MATERIAL_USE_LUMINANCE, false);
-	const cinema::Vector color = luminance
+	const cinema::Vector color = colors.Input(luminance
 		? GetVectorParameter(skyMaterial, MATERIAL_LUMINANCE_COLOR, cinema::Vector(1.0)) * GetFloatParameter(skyMaterial, MATERIAL_LUMINANCE_BRIGHTNESS, 1.0)
-		: GetVectorParameter(skyMaterial, MATERIAL_COLOR_COLOR, cinema::Vector(1.0)) * GetFloatParameter(skyMaterial, MATERIAL_COLOR_BRIGHTNESS, 1.0);
+		: GetVectorParameter(skyMaterial, MATERIAL_COLOR_COLOR, cinema::Vector(1.0)) * GetFloatParameter(skyMaterial, MATERIAL_COLOR_BRIGHTNESS, 1.0));
 	cinema::BaseShader* const shader = GetShaderParameter(skyMaterial, luminance ? MATERIAL_LUMINANCE_SHADER : MATERIAL_COLOR_SHADER, materials.GetDocument());
 
-	const maxon::String image = materials.GetImageId(shader, true) iferr_return;
+	maxon::String image = materials.GetImageId(shader, true) iferr_return;
+	if (image.IsEmpty() && shader && shader->GetType() == Xbitmap && GetFilenameParameter(shader, BITMAPSHADER_FILENAME).IsPopulated())
+	{
+		// A file Blender cannot load as the document's colour settings read it (a linear
+		// panorama without Linear Workflow): baked, the picture holds what Cinema 4D uses.
+		image = materials.GetBakedImageId(shader) iferr_return;
+	}
 	if (image.IsEmpty())
 	{
 		if (shader)
