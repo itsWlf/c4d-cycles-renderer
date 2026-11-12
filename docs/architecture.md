@@ -85,6 +85,8 @@ plugin/cyclesrender/            the Cinema 4D module
       scene_writer              one `scene` request under construction: items, blobs, warnings; reduces it
                                 to what changed (SyncState)
       coords                    Cinema 4D's axes and units to Blender's
+      document_colors           the document's colour management: how colours are read, which colour space
+                                an image is loaded in, whether the picture gets the sRGB curve
       parameters.h              reading parameters with GetParameter (always use these helpers)
       mesh_export, camera_export, light_export, environment_export
                                 one kind of item each
@@ -93,12 +95,16 @@ plugin/cyclesrender/            the Cinema 4D module
       scene_dump                development aid: a listing of what would be exported
     materials/
       material_export           which translator a material goes to; the classic material as a Principled
-                                BSDF graph; image items; the cache of baked shaders
+                                BSDF graph; image items; what a baked shader's id depends on
+      baked_files               the files of baked shaders: reused within a session, owned by documents,
+                                deleted when the documents are closed and no Blender reads them
       shader_translate          a Cinema 4D shader as Blender nodes, or baked to a texture
       node_graph                a Blender node graph under construction
       redshift_material         the Redshift Standard Material, option by option
       exchange_material         other node materials through Cinema 4D's material exchange (approximation)
       cycles_node_material      a material of Cycles nodes, written node for node
+      cycles_curves             the curves of RGB Curves, Vector Curves and Float Curve: a Cinema 4D spline
+                                sampled into the points of Blender's curve
       cycles_material           the command "Cycles Material"
       material_preview          the thumbnail of a material of Cycles nodes: a ball rendered by a Blender of its own
       native_material           the Cycles Native Material: a Blender material kept as bytes, its command,
@@ -124,10 +130,13 @@ plugin/cyclesrender/            the Cinema 4D module
                                 engine, latency measurement
       ipr_worker                a thread that owns one windowed Blender and sends every request
       ipr_dialog                the IPR window and the command that opens it
-      ipr_image_area            the picture: view transform, zoom, pan
-      ipr_testhook              lets test scripts drive the IPR
+      ipr_image_area            the picture: view transform (DisplayTransform), zoom, pan; the float bitmap
+                                for snapshots and saving
+      ipr_testhook              lets test scripts drive the IPR (and set curves of Cycles nodes, which
+                                Python cannot make)
     platform/                   everything specific to the operating system (Windows only so far):
-                                sockets, shared memory and events, process statistics, environment
+                                sockets, shared memory and events, process statistics, environment,
+                                a lock file
   res/
     description/                vpcyclesrender (the Render Settings page, generated), prefscyclesrender,
                                 tcyclesobject, mcyclesnative
@@ -171,7 +180,7 @@ Each decision is stated with its reason, so that it can be revisited when the re
 
 7. **Scene updates are deltas keyed by stable identity, found by fingerprint.** Sending a whole scene on each edit would ruin the IPR's latency. Identity comes from Cinema 4D's object GUIDs. After a change the whole scene is exported into memory, every item is hashed (its text and its blobs), and only items whose hash differs from what Blender holds are sent. This is right by construction, with no bookkeeping of what Cinema 4D may have touched, and costs a few milliseconds for small scenes. Its price is exporting unchanged meshes; when large scenes make that too slow, the export of objects whose dirty counters did not move can be skipped (the counters are listed in the SDK reference).
 
-8. **Blender works in the document's render colour space.** The plugin sends the document's render space (ACEScg by default) and Blender switches to it, so colour values pass through unchanged and sRGB textures are converted exactly as Cinema 4D converts them. Pixels come back scene-linear and Cinema 4D applies its own view transform, for the IPR and final frames alike. This keeps the IPR, the Picture Viewer and saved files consistent.
+8. **Blender calculates with the numbers Cinema 4D calculates with.** With OCIO the plugin sends the document's render space (ACEScg by default) and Blender switches to it, so colour values pass through unchanged and sRGB textures are converted exactly as Cinema 4D converts them. Pixels come back scene-linear and Cinema 4D applies its own view transform, for the IPR and final frames alike. This keeps the IPR, the Picture Viewer and saved files consistent. With "Basic" colour management (the render space "Legacy (sRGB linear workflow)") Blender works in linear Rec.709 and the plugin converts what Cinema 4D would convert, in one place (`scene/document_colors`): colours typed into Cinema 4D are linearised with Linear Workflow on, images get the colour space that gives Cinema 4D's values, and the picture gets the sRGB curve where Cinema 4D's own picture has it. With Linear Workflow off Cinema 4D calculates on the stored sRGB numbers themselves; Blender is given those numbers as if they were linear and they go back unchanged, which is exactly Cinema 4D's arithmetic. *Rejected:* letting Blender convert at the edges in that mode (linear inside, curve at the end): light added on sRGB numbers is not the same as light added linearly.
 
 9. **One coordinate module.** Cinema 4D is left-handed, Y up, in centimetres; Blender is right-handed, Z up, in metres; cameras and lights also look along different local axes. All conversion lives in `scene/coords`.
 
@@ -211,7 +220,7 @@ Each decision is stated with its reason, so that it can be revisited when the re
 - **Motion blur:** the renderer evaluates the render document also at the moments the shutter opens and closes. Objects, the camera and deforming meshes carry where they are at those moments. Blender always renders with a shutter of two frames around keys one frame apart; the real shutter time is decided by the moments the plugin reads the scene at.
 - **Render passes** travel back with the picture and are written into named post-effect buffers, which Cinema 4D shows as layers and saves with the multi-pass file. Switching a pass on enables Multi-Pass with a "Post Effects" entry, without which Cinema 4D creates no such buffers.
 - **The render region** of the Render Settings becomes Blender's render border.
-- **Colours:** for an OCIO document the picture is written in the render space (Cinema 4D converts for display and saving), with the view transform applied when the render settings ask for that. For "Basic" colour management it is written with the sRGB curve. Passes are always written as rendered.
+- **Colours:** for an OCIO document the picture is written in the render space (Cinema 4D converts for display and saving), with the view transform applied when the render settings ask for that. For "Basic" colour management it is written with the sRGB curve when Linear Workflow is on and Multi-Pass is off, and as rendered otherwise (with Multi-Pass on Cinema 4D's own picture is linear and the Picture Viewer applies the curve). Passes are always written as rendered.
 - Cycles' pixels are read in memory; Eevee renders into a temporary EXR that the bridge reads back.
 - Cancelling, or any error, ends that Blender at once; the next render starts a new one.
 
@@ -264,7 +273,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
 
 - **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
 - **Toolbar, left to right:** start or stop, pause, reload; the camera list with the lock; snapshot; the zoom percentage (it can be dragged and typed into) with the frame button; then, at the right, the pass list, the engine list and the settings button.
-- **Picture:** the frame with Cinema 4D's view transform, zoom around the cursor with the mouse wheel, drag to pan. With "Fit Window" the area outside the camera's picture is shown at 45 % brightness.
+- **Picture:** the frame with Cinema 4D's view transform (with "Basic" colour management: as the Picture Viewer shows a final frame, through the sRGB curve with Linear Workflow on and as it is with it off), zoom around the cursor with the mouse wheel, drag to pan. With "Fit Window" the area outside the camera's picture is shown at 45 % brightness. Snapshots and saved images carry the render-space values with the document's profiles (OCIO), or linear values with the linear profile ("Basic"), as Cinema 4D's own renders do.
 - **Status line:** time, RAM and VRAM of the Blender process, and a progress bar labelled with the samples.
 - The window's texts are English strings in the code, not yet in the string resources.
 
@@ -318,7 +327,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
 
 1. **A classic material** becomes a Principled BSDF graph, channel by channel (`ClassicMaterialGraph`). Its textures go through `ShaderTranslator`, which tries three ways in order:
    - *Nodes*, for shaders with an exact counterpart: bitmap, colour, checkerboard, gradient along U or V, colorizer, fresnel, fusion and layer in the blend modes Blender computes the same way, vertex map, MoGraph colour.
-   - *Baked*, for any other shader that depends only on the UV coordinates: Cinema 4D renders it over the UV square into a float EXR, once, and again only when its settings change.
+   - *Baked*, for any other shader that depends only on the UV coordinates: Cinema 4D renders it over the UV square into a float EXR, once per session, and again only when its settings, a texture file inside it or the document's colour settings change, or, for a shader that changes over time by itself, at another frame. Final renders and the IPR share the files. They live in a folder of the Cinema 4D session and are deleted when every document they were made for is closed and no Blender reads them any more, and at the end of the session (`materials/baked_files.h`).
    - *Neither*: the channel falls back to its plain value and the user is told.
 2. **A material of Cycles nodes** is written node for node, value for value and wire for wire. Nothing in Cinema 4D evaluates these nodes.
 3. **A Redshift material** whose output is a Standard Material node is read port by port.

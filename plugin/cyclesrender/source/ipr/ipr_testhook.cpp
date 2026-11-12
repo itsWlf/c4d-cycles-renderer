@@ -3,14 +3,23 @@
 // (ipr_testhook.h). Only active with the development setting g_cyclesRenderIprTest.
 
 #include "c4d.h"
+#include "c4d_basematerial.h"
 #include "maxon/configuration.h"
+#include "maxon/derived_nodeattributes.h"
 #include "maxon/file_utilities.h"
+#include "maxon/nodesgraph.h"
+#include "maxon/splinemapper.h"
 
 #include "../ids.h"
+#include "../materials/cycles_curves.h"
+#include "../nodespace/cycles_nodes.h"
 #include "../session/json_writer.h"
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
+#include "ipr_image_area.h"
 #include "ipr_testhook.h"
+#include "../materials/baked_files.h"
+#include "../materials/material_export.h"
 #include "../materials/native_material.h"
 
 MAXON_CONFIGURATION_BOOL(g_cyclesRenderIprTest, false, maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
@@ -81,6 +90,234 @@ static maxon::Result<void> SaveFrame(const Frame& frame, const maxon::String& pa
 	}
 	maxon::FileUtilities::WriteArray(maxon::Url(path), maxon::Block<maxon::Char>(bytes.GetFirst(), bytes.GetCount())) iferr_return;
 	return maxon::OK;
+}
+
+// The newest frame as the IPR window shows it (DisplayTransform for the active document, without
+// the window's darkened border), in the same file format with the display values 0..255 as 0..1.
+static maxon::Result<void> SaveDisplay(const Frame& frame, const maxon::String& path)
+{
+	iferr_scope;
+
+	DisplayTransform transform;
+	transform.Update(cinema::GetActiveDocument()) iferr_return;
+	Frame shown;
+	shown.width = frame.width;
+	shown.height = frame.height;
+	shown.frameId = frame.frameId;
+	const maxon::Int pixelCount = maxon::Int(frame.width) * frame.height;
+	shown.pixels.Resize(pixelCount * 4) iferr_return;
+	for (maxon::Int i = 0; i < pixelCount; ++i)
+	{
+		maxon::UChar bytes[3];
+		transform.Apply(frame.pixels.GetFirst() + i * 4, bytes);
+		for (maxon::Int c = 0; c < 3; ++c)
+			shown.pixels[i * 4 + c] = maxon::Float32(bytes[c]) / 255.0f;
+		shown.pixels[i * 4 + 3] = 1.0f;
+	}
+	return SaveFrame(shown, path);
+}
+
+// The newest frame as the window's "Save Image" writes it (CreateFrameBitmap, 32-bit EXR), for
+// the whole frame.
+static maxon::Result<void> SavePicture(const Frame& frame, const maxon::String& path)
+{
+	iferr_scope;
+
+	cinema::BaseBitmap* bitmap = CreateFrameBitmap(frame, 0, 0, frame.width, frame.height, cinema::GetActiveDocument());
+	if (!bitmap)
+		return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
+	const maxon::Bool saved = bitmap->Save(cinema::Filename(path), FILTER_EXR, nullptr, cinema::SAVEBIT::USE32BITCHANNELS) == cinema::IMAGERESULT::OK;
+	cinema::BaseBitmap::Free(bitmap);
+	if (!saved)
+		return maxon::IoError(MAXON_SOURCE_LOCATION, maxon::Url(path), "the picture could not be saved"_s);
+	return maxon::OK;
+}
+
+// The numbers of "a,b,c" (CurveCommand).
+static maxon::Result<maxon::BaseArray<maxon::Float>> Numbers(const maxon::String& text)
+{
+	iferr_scope;
+	maxon::BaseArray<maxon::Float> numbers;
+	text.Split(","_s, true, [&numbers](const maxon::String& part) -> maxon::Result<maxon::Bool>
+		{
+			iferr_scope;
+			const maxon::Float number = part.ToFloat() iferr_return;
+			numbers.Append(number) iferr_return;
+			return true;
+		}) iferr_return;
+	return numbers;
+}
+
+// "curve <node> <port> [<knots> [<range>]]" (ipr_testhook.h): sets and reads a curve setting of a
+// Cycles node, because Python cannot make a maxon::SplineMapper.
+static maxon::Result<maxon::String> CurveCommand(const maxon::String& argument)
+{
+	iferr_scope;
+	maxon::BaseArray<maxon::String> parts;
+	argument.Split(" "_s, true, [&parts](const maxon::String& part) -> maxon::Result<maxon::Bool>
+		{
+			iferr_scope;
+			if (part.IsPopulated())
+			{
+				parts.Append(part) iferr_return;
+			}
+			return true;
+		}) iferr_return;
+	if (parts.GetCount() < 2)
+		return "{\"problem\":\"curve <node> <port> [<knots> [<range>]]\"}"_s;
+	maxon::Id nodeId;
+	nodeId.Init(parts[0]) iferr_return;
+	maxon::Id portId;
+	portId.Init(parts[1]) iferr_return;
+
+	const maxon::Id space(CYCLES_NODESPACE_ID);
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	for (cinema::BaseMaterial* material = doc ? doc->GetFirstMaterial() : nullptr; material; material = material->GetNext())
+	{
+		if (!material->IsInstanceOf(Mmaterial))
+			continue;
+		const cinema::NodeMaterial* const nodeMaterial = static_cast<const cinema::NodeMaterial*>(material);
+		if (!nodeMaterial->HasSpace(space))
+			continue;
+		const maxon::nodes::NodesGraphModelRef model = nodeMaterial->GetGraph(space) iferr_return;
+		if (!model)
+			continue;
+		const maxon::GraphNode node = model.GetViewRoot().FindChild(nodeId) iferr_return;
+		if (!node.IsValid())
+			continue;
+		const maxon::GraphNode inputs = node.GetInputs() iferr_return;
+		const maxon::GraphNode port = inputs.FindChild(portId) iferr_return;
+		if (!port.IsValid())
+			continue;
+		const maxon::IdAndVersion asset = node.GetValue<decltype(maxon::nodes::AssetId)>().GetOrDefault() iferr_return;
+		const CyclesNode* const definition = FindCyclesNode(asset.Get<0>());
+		const CyclesProperty* property = nullptr;
+		for (maxon::Int i = 0; definition && i < definition->propertyCount; ++i)
+		{
+			if (definition->properties[i].kind == 'k' && maxon::CString(definition->properties[i].port) == portId.ToCString())
+				property = &definition->properties[i];
+		}
+		if (!property)
+			return "{\"problem\":\"that port is no curve of a Cycles node\"}"_s;
+		maxon::Vector2d areaMin;
+		maxon::Vector2d areaMax;
+		GetCyclesCurveArea(*property, areaMin, areaMax);
+
+		if (parts.GetCount() > 2)
+		{
+			// "x,y,kind[,left x,left y,right x,right y];..." with kind b (Bezier), l (linear) or c
+			// (cubic), or "none"; then the range "min x,min y,max x,max y" (0,0,1,1 if not given,
+			// the only one Cinema 4D's control keeps).
+			maxon::SplineMapper spline = maxon::SplineMapper::Create() iferr_return;
+			maxon::Vector2d min(0.0, 0.0);
+			maxon::Vector2d max(1.0, 1.0);
+			if (parts.GetCount() > 3)
+			{
+				const maxon::BaseArray<maxon::Float> range = Numbers(parts[3]) iferr_return;
+				if (range.GetCount() == 4)
+				{
+					min = maxon::Vector2d(range[0], range[1]);
+					max = maxon::Vector2d(range[2], range[3]);
+				}
+			}
+			spline.SetRange(min, max) iferr_return;
+			if (parts[2] != "none"_s)
+			{
+				maxon::Int index = 0;
+				parts[2].Split(";"_s, true, [&spline, &index](const maxon::String& text) -> maxon::Result<maxon::Bool>
+					{
+						iferr_scope;
+						// The third field is a letter, so the fields are read one by one.
+						maxon::BaseArray<maxon::String> fields;
+						text.Split(","_s, true, [&fields](const maxon::String& field) -> maxon::Result<maxon::Bool>
+							{
+								iferr_scope;
+								fields.Append(field) iferr_return;
+								return true;
+							}) iferr_return;
+						if (fields.GetCount() < 2)
+							return true;
+						maxon::SplineMapperKnot knot;
+						knot.position.x = fields[0].ToFloat() iferr_return;
+						knot.position.y = fields[1].ToFloat() iferr_return;
+						const maxon::String kind = fields.GetCount() > 2 ? fields[2] : "b"_s;
+						knot.interpolation = kind == "l"_s ? maxon::SPLINEMAPPER_KNOT_INTERPOLATION_TYPE::LINEAR
+							: kind == "c"_s ? maxon::SPLINEMAPPER_KNOT_INTERPOLATION_TYPE::CUBIC : maxon::SPLINEMAPPER_KNOT_INTERPOLATION_TYPE::BEZIER;
+						if (fields.GetCount() > 6)
+						{
+							knot.tangentLeft.x = fields[3].ToFloat() iferr_return;
+							knot.tangentLeft.y = fields[4].ToFloat() iferr_return;
+							knot.tangentRight.x = fields[5].ToFloat() iferr_return;
+							knot.tangentRight.y = fields[6].ToFloat() iferr_return;
+						}
+						++index;
+						knot.flags = maxon::SPLINEMAPPER_KNOT_FLAGS(index << 16);
+						spline.InsertKnot(index - 1, knot) iferr_return;
+						return true;
+					}) iferr_return;
+			}
+			maxon::GraphTransaction transaction = model.BeginTransaction() iferr_return;
+			port.SetPortValue(spline) iferr_return;
+			transaction.Commit() iferr_return;
+		}
+
+		// What the port holds now, how Cinema 4D evaluates it, and what the exporter sends.
+		const maxon::Opt<const maxon::SplineMapper&> value = port.GetEffectivePortValue<maxon::SplineMapper>() iferr_return;
+		if (!value)
+			return "{\"problem\":\"the port has no value\"}"_s;
+		maxon::SplineMapper sorted = *value;
+		sorted.SortKnots() iferr_return;
+		maxon::Vector2d min;
+		maxon::Vector2d max;
+		sorted.GetRange(min, max);
+		maxon::Float from = min.x;
+		maxon::Float to = max.x;
+		JsonWriter json;
+		json.BeginObject();
+		json.String("material", material->GetName());
+		const maxon::Float64 range[4] = { min.x, min.y, max.x, max.y };
+		json.Floats("range", range, 4);
+		const maxon::Float64 area[4] = { areaMin.x, areaMin.y, areaMax.x, areaMax.y };
+		json.Floats("area", area, 4);
+		json.Float("tension", sorted.GetTension());
+		json.BeginArray("knots");
+		for (const maxon::SplineMapperKnot& knot : sorted.GetKnots())
+		{
+			// x, y, interpolation (0 Bezier, 1 linear, 2 cubic), left tangent, right tangent, flags
+			const maxon::Float64 numbers[8] = { knot.position.x, knot.position.y, maxon::Float64(maxon::Int(knot.interpolation)), knot.tangentLeft.x,
+				knot.tangentLeft.y, knot.tangentRight.x, knot.tangentRight.y, maxon::Float64(maxon::Int(knot.flags)) };
+			json.Floats(nullptr, numbers, 8);
+			from = maxon::Min(from, knot.position.x);
+			to = maxon::Max(to, knot.position.x);
+		}
+		json.EndArray();
+		// Cinema 4D's own evaluation at 1001 even positions across the span (range and knots).
+		json.BeginArray("c4d");
+		for (maxon::Int i = 0; i <= 1000; ++i)
+		{
+			const maxon::Float x = from + (to - from) * maxon::Float(i) / 1000.0;
+			const maxon::Float64 point[2] = { x, sorted.GetPoint(x).y };
+			json.Floats(nullptr, point, 2);
+		}
+		json.EndArray();
+		CurvePoints sent;
+		maxon::BaseArray<maxon::String> problems;
+		SampleCurve(*value, areaMin, areaMax, sent, problems) iferr_return;
+		json.BeginArray("sent");
+		for (const maxon::Vector2d& point : sent.points)
+		{
+			const maxon::Float64 numbers[2] = { point.x, point.y };
+			json.Floats(nullptr, numbers, 2);
+		}
+		json.EndArray();
+		json.BeginArray("problems");
+		for (const maxon::String& problem : problems)
+			json.String(nullptr, problem);
+		json.EndArray();
+		json.EndObject();
+		return json.GetText();
+	}
+	return "{\"problem\":\"no Cycles node of that id with that port in the materials of the active document\"}"_s;
 }
 
 static maxon::String Execute(const maxon::String& commandLine)
@@ -206,15 +443,25 @@ static maxon::String Execute(const maxon::String& commandLine)
 			}
 		}
 	}
-	else if (command == "frame"_s)
+	else if (command == "frame"_s || command == "display"_s || command == "picture"_s)
 	{
 		if (frame.frameId == 0)
 		{
 			problem = "no frame yet"_s;
 		}
-		else
+		else if (command == "frame"_s)
 		{
 			iferr (SaveFrame(frame, argument))
+				problem = err.GetMessage();
+		}
+		else if (command == "display"_s)
+		{
+			iferr (SaveDisplay(frame, argument))
+				problem = err.GetMessage();
+		}
+		else
+		{
+			iferr (SavePicture(frame, argument))
 				problem = err.GetMessage();
 		}
 	}
@@ -224,6 +471,24 @@ static maxon::String Execute(const maxon::String& commandLine)
 		IprController::Free();
 		fetched = Frame();
 		return "{\"state\":\"freed\"}"_s;
+	}
+	else if (command == "curve"_s)
+	{
+		iferr (const maxon::String answer = CurveCommand(argument))
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		return answer;
+	}
+	else if (command == "bakes"_s)
+	{
+		// The baked files instead of the status; "bakes check" first compares the documents with
+		// the document list (as the message hook does), "bakes cleanup" first runs the clean-up of
+		// earlier sessions that runs at start-up.
+		if (argument == "check"_s)
+			CheckOpenDocuments();
+		else if (argument == "cleanup"_s)
+			RemoveBakedFilesOfEarlierSessions();
+		const maxon::String files = DescribeBakedFiles();
+		return FormatString("{\"bakes\":@,\"store\":@}", MaterialExporter::GetBakeCount(), files);
 	}
 	else if (command != "status"_s)
 	{
@@ -296,14 +561,17 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.Int("vram", memory.vram);
 	json.Int("vram_total", memory.vramTotal);
 	json.Floats("mean", mean, 3);
+	json.Int("bakes", MaterialExporter::GetBakeCount());
 	maxon::Float64 zoom = 0.0;
+	maxon::Float64 zoomField = 0.0;
 	maxon::Float64 convertMilliseconds = 0.0;
 	maxon::Bool windowOpen = false;
-	GetIprDialogInfo(zoom, convertMilliseconds, windowOpen);
+	GetIprDialogInfo(zoom, zoomField, convertMilliseconds, windowOpen);
 	json.Float("latency_ms", ipr.GetLastLatencyMilliseconds());
 	json.Floats("latency_parts_ms", ipr.GetLastLatencyParts(), 4);
 	json.Bool("window_open", windowOpen);
 	json.Float("zoom", zoom);
+	json.Float("zoom_field", zoomField);
 	json.Float("convert_ms", convertMilliseconds);
 	json.EndObject();
 	return json.GetText();

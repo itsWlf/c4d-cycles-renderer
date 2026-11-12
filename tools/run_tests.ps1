@@ -10,8 +10,9 @@ without them this script has nothing to run. See docs\development.md, "Tests".
   .\tools\run_tests.ps1 -Only lights,materials
 
 Bridge tests need only Blender. Cinema 4D tests run in c4dpy (no window) with the plugin from
-build\plugin and the bridge from the repository; the last one, ipr_window_checks, needs the IPR
-window and starts the regular Cinema 4D for about half a minute. Details of a failed test: run it alone with
+build\plugin and the bridge from the repository; the last two, ipr_window_checks and
+baked_files_window, need windows and start the regular Cinema 4D for about half a minute each
+(baked_files_window with a preferences folder of its own). Details of a failed test: run it alone with
 tests\c4d\run_c4d_test.ps1 (the command is in the test's first comment), or read its JSON
 result in %TEMP%\cyclesrender_c4d_tests\<name>.result.json. Preview pictures of the comparison
 tests are written to %TEMP%\cyclesrender_c4d_tests\images.
@@ -79,24 +80,40 @@ $c4dTests = @(
   @{ Name = "fire_vdb" },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" } },
   @{ Name = "redshift_dome" },
-  @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderCapture = (Join-Path $out "cycles_nodes_capture.txt") } },
+  @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = (Join-Path $out "cycles_nodes_capture.txt") } },
   @{ Name = "native_material"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" } },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = (Join-Path $out "ipr_capture.txt") } },
   @{ Name = "ipr_region"; Settings = @{ g_cyclesRenderIprTest = "true" } },
   @{ Name = "colour"; Settings = @{ g_cyclesRenderIprTest = "true" } },
   @{ Name = "denoise"; Settings = @{ g_cyclesRenderIprTest = "true" } },
+  # GoneAfter: the session's folder of baked textures, named in the result, must be gone once Cinema 4D has quit.
+  @{ Name = "baked_files"; Settings = @{ g_cyclesRenderIprTest = "true" }; GoneAfter = $true },
   # Needs the real window: runs in the regular Cinema 4D, which opens and closes on screen.
-  @{ Name = "ipr_window_checks"; Window = $true; Settings = @{ g_cyclesRenderIprTest = "true" } }
+  @{ Name = "ipr_window_checks"; Window = $true; Settings = @{ g_cyclesRenderIprTest = "true" } },
+  # With a preferences folder of its own (CleanPrefs), so that the user's preferences stay untouched.
+  @{ Name = "baked_files_window"; Window = $true; CleanPrefs = $true; GoneAfter = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender } }
 )
 foreach ($test in $c4dTests) {
   if (-not (Wanted $test.Name)) { continue }
-  $settings = if ($test.Settings) { $test.Settings } else { @{} }
+  $settings = if ($test.Settings) { $test.Settings.Clone() } else { @{} }
   foreach ($file in $settings.Values) { if ($file -like "$out*") { Remove-Item $file -ErrorAction SilentlyContinue } }
+  if ($test.CleanPrefs) {
+    $prefs = Join-Path $out "prefs_$($test.Name)"
+    if (Test-Path $prefs) { Remove-Item $prefs -Recurse -Force }
+    New-Item -ItemType Directory -Force $prefs | Out-Null
+    $settings.g_prefsPath = $prefs
+  }
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $arguments = @{ Headless = (-not $test.Window); Script = "tests\c4d\$($test.Name).py"; ModulePath = $plugins; TimeoutSec = 600; Settings = $settings }
   if ($test.ExpectLog) { $arguments.ExpectLog = $test.ExpectLog; $arguments.LogPattern = "Cycles Render self-test" }
   & "tests\c4d\run_c4d_test.ps1" @arguments *> (Join-Path $out "$($test.Name).txt")
-  Add-Result $test.Name ($LASTEXITCODE -eq 0) $watch.Elapsed.TotalSeconds
+  $passed = $LASTEXITCODE -eq 0
+  if ($passed -and $test.GoneAfter) {
+    $folder = (Get-Content (Join-Path $out "$($test.Name).result.json") -Raw | ConvertFrom-Json).notes.session_folder_to_be_gone_after_exit
+    $passed = [bool]$folder -and -not (Test-Path $folder)
+    if (-not $passed) { Add-Content (Join-Path $out "$($test.Name).txt") "the session folder is still there after the end: $folder" }
+  }
+  Add-Result $test.Name $passed $watch.Elapsed.TotalSeconds
 }
 
 $left = @(Get-Process blender -ErrorAction SilentlyContinue | Where-Object { $blenderBefore -notcontains $_.Id }).Count

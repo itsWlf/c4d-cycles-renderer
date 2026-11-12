@@ -67,11 +67,11 @@ Cinema 4D's console (*Extensions > Console*) shows `Cycles Render <version>: mod
 The test suite lives in `tests/` and is **kept locally: it is not part of the repository** (nor are the stored renders and test scenes it uses). If you have it, this is the baseline to run before starting work, so that a later failure is known to be yours:
 
 ```powershell
-.\tools\run_tests.ps1                      # build, 7 bridge tests, 34 Cinema 4D tests; about 25 minutes
+.\tools\run_tests.ps1                      # build, 8 bridge tests, 36 Cinema 4D tests; about 25 minutes
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 ```
 
-It prints one line per test and "N of N passed", and fails when a Blender started during the run is still running at the end. Two tests open a Blender window for a few seconds, and the last one opens the regular Cinema 4D for half a minute. `test_viewport` and `render_cancel` depend on timing and can fail under load; run a failed test alone before looking for a cause. If you do not have the tests, check a change by hand as described under [Adding a feature](#adding-a-feature) and say so in the pull request.
+It prints one line per test and "N of N passed", and fails when a Blender started during the run is still running at the end. Two tests open a Blender window for a few seconds, and the last two open the regular Cinema 4D for half a minute each (`baked_files_window` with a preferences folder of its own, made fresh in `%TEMP%\cyclesrender_c4d_tests`). `test_viewport` and `render_cancel` depend on timing and can fail under load; run a failed test alone before looking for a cause. If you do not have the tests, check a change by hand as described under [Adding a feature](#adding-a-feature) and say so in the pull request.
 
 What the suite consists of, for whoever writes or restores tests:
 
