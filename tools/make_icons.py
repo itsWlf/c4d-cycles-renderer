@@ -172,9 +172,24 @@ def app_grey(x, y):
     return (grey, grey, grey)
 
 
+def camera_tag(x, y):
+    """The Cycles Camera tag's icon (the maintainer's wish, 0.2.0): the plugin's hexagon in grey,
+    a dark background with a lighter circle, so it reads as the plugin's but not as a colour."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        shade = max(0.0, 1.0 - math.hypot(x - 0.42, y - 0.42) * 1.6)
+        grey = int(170 + 80 * shade)
+        return (grey, grey, grey)
+    return (72, 72, 72)
+
+
 if __name__ == "__main__":
     for icon_name, shape in (("play", play), ("stop", stop), ("pause", pause), ("pause_active", pause_active), ("reload", reload_icon),
                              ("lock_closed", lock(True)), ("lock_open", lock(False)), ("snapshot", snapshot),
-                             ("frame", frame), ("settings", gear), ("cyclesrender", app), ("cyclesrender_grey", app_grey)):
+                             ("frame", frame), ("settings", gear), ("cyclesrender", app), ("cyclesrender_grey", app_grey),
+                             ("camera_tag", camera_tag)):
         render(icon_name, shape)
     print("icons written to", os.path.normpath(OUT))

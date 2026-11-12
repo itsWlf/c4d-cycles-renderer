@@ -20,6 +20,7 @@ struct ExportSettings
 	maxon::Int32 width = 1280;                         ///< image size in pixels
 	maxon::Int32 height = 720;
 	maxon::Bool depthOfField = false;                  ///< send the camera's focus and f-stop
+	maxon::Bool eevee = false;                         ///< the engine is Eevee (no panoramic camera there)
 	maxon::Float64 lightMultiplier = 1.0;              ///< applied to every light
 	cinema::Vector worldColor = cinema::Vector(0.05);  ///< environment when the scene has no Sky object
 	maxon::Float64 worldStrength = 1.0;

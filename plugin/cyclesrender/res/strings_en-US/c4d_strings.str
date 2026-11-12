@@ -5,4 +5,5 @@ STRINGTABLE
 	IDS_OBJECT_TAG_NAME "Cycles Object";
 	IDS_CYCLES_MATERIAL_NAME "Cycles Material";
 	IDS_NATIVE_MATERIAL_NAME    "Cycles Native Material";
+	IDS_CAMERA_TAG_NAME "Cycles Camera";
 }

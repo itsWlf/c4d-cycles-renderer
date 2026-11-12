@@ -12,12 +12,13 @@ A render engine plugin for Cinema 4D 2027 that renders the Cinema 4D scene with 
 
 - **A renderer in the Render Settings.** Choose "Cycles Render", pick Cycles or Eevee, and render stills and animations to the Picture Viewer, with render passes as multi-pass layers, motion blur, the render region and denoising.
 - **A live render window (IPR).** It follows every change of the scene and sends only what changed. On a GPU a camera move reaches the screen in about 15 ms and an object edit in 20 to 70 ms (640 × 360).
-- **Your Cinema 4D scene as it is.** Meshes with normals, UV sets, vertex maps and vertex colours; materials per polygon selection; instances, Cloners and their clone colours; deformers and animation; cameras; standard and Redshift lights with their include and exclude lists; a Sky object or a Redshift dome light; volumes (Volume Builder, Volume Loader); hair; particles.
+- **Your Cinema 4D scene as it is.** Meshes with normals, UV sets, vertex maps and vertex colours; materials per polygon selection; instances, Cloners and their clone colours; deformers and animation; cameras in every projection, also the editor's views and the spherical camera; standard and Redshift lights with their include and exclude lists; a Sky object or a Redshift dome light; volumes (Volume Builder, Volume Loader); hair; particles.
 - **Materials three ways.**
   - Cinema 4D's classic materials and shaders are translated to Blender nodes, or baked to textures where Blender has no counterpart.
   - Redshift Standard Materials are read option by option.
   - **Cycles nodes**: a node space in Cinema 4D's Node Editor with one node per Blender shader node, carried to Blender one to one.
 - **A Cycles Object tag** for what Cinema 4D has no place for: ray visibility with holdout and shadow catcher, light linking, instances on particles and Matrix objects, and volume shading.
+- **A Cycles Camera tag** with Blender's depth of field (focus object, f-stop, aperture blades, rotation and ratio) and lens: perspective, orthographic or panoramic (equirectangular, fisheye and the other panoramas of Cycles).
 
 | Live render window | Render Settings | Cycles nodes |
 |---|---|---|

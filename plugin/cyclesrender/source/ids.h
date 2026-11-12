@@ -56,10 +56,12 @@ static const cinema::Int32 ID_NATIVE_MATERIAL = 1073916;
 /// (materials/native_material.cpp, "Editing").
 static const cinema::Int32 ID_NATIVE_MATERIAL_EDITS = 1073918;
 
+/// The "Cycles Camera" tag: depth of field and lens settings of a Blender camera, on a camera
+/// (tags/camera_tag.h). Stored in scene files.
+static const cinema::Int32 ID_CAMERA_TAG = 1073985;
+
 // Issued for hooks that are planned and not built yet. Once registered, each is stored in
 // scene files.
-/// The "Cycles Camera" tag: depth of field and lens settings of a Blender camera, on a camera.
-static const cinema::Int32 ID_CAMERA_TAG = 1073985;
 /// The "Cycles Light" tag: Blender's light settings, on one of Cinema 4D's lights.
 static const cinema::Int32 ID_LIGHT_TAG = 1073986;
 /// The "Cycles Light" object: a light with Blender's own types and settings.

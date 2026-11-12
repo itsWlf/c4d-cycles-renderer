@@ -81,6 +81,7 @@ $bridgeTests = @(
   @{ Name = "test_viewport"; Covers = @("${B}viewport/*") },
   @{ Name = "test_native"; Covers = @("${B}scene/native.py") },
   @{ Name = "test_preview"; Covers = @("${B}final/preview.py") },
+  @{ Name = "test_cameras"; Covers = @("${B}scene/cameras.py") },
   @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") }
 )
 
@@ -129,6 +130,9 @@ $c4dTests = @(
      Covers = @("${P}nodespace/*", "${P}materials/cycles_*", "${R}nodes/*", "tools/make_nodes.py", "tools/dump_blender_nodes.py", "${B}scene/materials.py", "${P}ipr/ipr_testhook.*") },
   @{ Name = "native_material"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" }
      Covers = @("${P}materials/native_material.*", "${B}scene/native.py", "${R}description/mcyclesnative.*", "${R}strings_en-US/description/mcyclesnative.str", "${R}native_default.preview", "tools/make_native_placeholder.py") },
+  @{ Name = "camera_tag"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}tags/camera_tag.*", "${R}description/tcyclescamera.*", "${R}strings_en-US/description/tcyclescamera.str", "${P}scene/camera_export.*",
+                "${B}scene/cameras.py", "${P}ipr/ipr_controller.*", "${R}icons/*", "tools/make_icons.py") },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}platform/process_stats*", "${B}viewport/*") },
   @{ Name = "ipr_region"; Settings = @{ g_cyclesRenderIprTest = "true" }; Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${B}viewport/*") },

@@ -24,7 +24,7 @@ Run from the repository root in PowerShell. Details and options are in `docs/dev
 ```powershell
 .\tools\build_plugin.ps1                  # build the plugin -> build\plugin\bin\Release\plugins\cyclesrender
 .\tools\run_tests.ps1 -Changed            # the tests for what differs from the last commit (needs the local tests folder)
-.\tools\run_tests.ps1                     # the whole test baseline, once per sprint, about 14 minutes
+.\tools\run_tests.ps1                     # the whole test baseline, once per sprint, about 16 minutes
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 .\tools\make_release.ps1 -Version 0.1.0   # both release packages -> release\0.1.0
 ```

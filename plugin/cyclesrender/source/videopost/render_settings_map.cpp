@@ -350,6 +350,7 @@ ExportSettings GetExportSettings(const cinema::BaseContainer& data, maxon::Int32
 	settings.width = width;
 	settings.height = height;
 	settings.depthOfField = GetValue(data, CYCLES_DEPTH_OF_FIELD) != 0.0;
+	settings.eevee = data.GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES) == CYCLES_ENGINE_EEVEE;
 	settings.lightMultiplier = GetValue(data, CYCLES_LIGHT_MULTIPLIER);
 	settings.worldColor = data.FindIndex(CYCLES_WORLD_COLOR) == NOTOK ? DEFAULT_WORLD_COLOR : data.GetVector(CYCLES_WORLD_COLOR);
 	settings.worldStrength = GetValue(data, CYCLES_WORLD_STRENGTH);

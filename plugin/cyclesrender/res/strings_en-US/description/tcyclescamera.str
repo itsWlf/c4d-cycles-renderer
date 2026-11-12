@@ -1,0 +1,47 @@
+STRINGTABLE Tcyclescamera
+{
+	Tcyclescamera                           "Cycles Camera";
+
+	CYCLESCAMERA_GROUP_DOF                  "Depth of Field";
+	CYCLESCAMERA_DOF_ENABLE                 "Depth of Field";
+	CYCLESCAMERA_DOF_FOCUS_OBJECT           "Focus Object";
+	CYCLESCAMERA_DOF_FOCUS_DISTANCE         "Focus Distance";
+	CYCLESCAMERA_DOF_FSTOP                  "F-Stop";
+	CYCLESCAMERA_GROUP_APERTURE             "Aperture";
+	CYCLESCAMERA_DOF_BLADES                 "Blades";
+	CYCLESCAMERA_DOF_ROTATION               "Rotation";
+	CYCLESCAMERA_DOF_RATIO                  "Ratio";
+
+	CYCLESCAMERA_GROUP_LENS                 "Lens";
+	CYCLESCAMERA_LENS_TYPE                  "Type";
+	CYCLESCAMERA_LENS_TYPE_CAMERA           "As the Camera's Projection";
+	CYCLESCAMERA_LENS_TYPE_PERSPECTIVE      "Perspective";
+	CYCLESCAMERA_LENS_TYPE_ORTHOGRAPHIC     "Orthographic";
+	CYCLESCAMERA_LENS_TYPE_PANORAMIC        "Panoramic (Cycles only)";
+	CYCLESCAMERA_LENS_ORTHO_SCALE           "Orthographic Scale";
+	CYCLESCAMERA_GROUP_PANORAMA             "Panorama";
+	CYCLESCAMERA_LENS_PANORAMA_TYPE         "Panorama Type";
+	CYCLESCAMERA_PANORAMA_EQUIRECTANGULAR   "Equirectangular";
+	CYCLESCAMERA_PANORAMA_EQUIANGULAR_CUBEMAP_FACE "Equiangular Cubemap Face";
+	CYCLESCAMERA_PANORAMA_MIRRORBALL        "Mirror Ball";
+	CYCLESCAMERA_PANORAMA_FISHEYE_EQUIDISTANT "Fisheye Equidistant";
+	CYCLESCAMERA_PANORAMA_FISHEYE_EQUISOLID "Fisheye Equisolid";
+	CYCLESCAMERA_PANORAMA_FISHEYE_LENS_POLYNOMIAL "Fisheye Lens Polynomial";
+	CYCLESCAMERA_PANORAMA_CENTRAL_CYLINDRICAL "Central Cylindrical";
+	CYCLESCAMERA_LENS_FISHEYE_LENS          "Lens (mm)";
+	CYCLESCAMERA_LENS_FISHEYE_FOV           "Field of View";
+	CYCLESCAMERA_LENS_LATITUDE_MIN          "Latitude Min";
+	CYCLESCAMERA_LENS_LATITUDE_MAX          "Latitude Max";
+	CYCLESCAMERA_LENS_LONGITUDE_MIN         "Longitude Min";
+	CYCLESCAMERA_LENS_LONGITUDE_MAX         "Longitude Max";
+	CYCLESCAMERA_LENS_POLYNOMIAL_K0         "K0";
+	CYCLESCAMERA_LENS_POLYNOMIAL_K1         "K1";
+	CYCLESCAMERA_LENS_POLYNOMIAL_K2         "K2";
+	CYCLESCAMERA_LENS_POLYNOMIAL_K3         "K3";
+	CYCLESCAMERA_LENS_POLYNOMIAL_K4         "K4";
+	CYCLESCAMERA_LENS_CYLINDER_V_MIN        "Height Min";
+	CYCLESCAMERA_LENS_CYLINDER_V_MAX        "Height Max";
+	CYCLESCAMERA_LENS_CYLINDER_U_MIN        "Longitude Min";
+	CYCLESCAMERA_LENS_CYLINDER_U_MAX        "Longitude Max";
+	CYCLESCAMERA_LENS_CYLINDER_RADIUS       "Cylinder Radius";
+}

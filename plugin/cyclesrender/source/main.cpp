@@ -18,6 +18,7 @@
 #include "scene/scene_dump.h"
 #include "scene/volume_export.h"
 #include "session/selftest.h"
+#include "tags/camera_tag.h"
 #include "tags/object_tag.h"
 #include "materials/cycles_material.h"
 #include "materials/material_preview.h"
@@ -39,6 +40,8 @@ cinema::Bool cinema::PluginStart()
 		ApplicationOutput("Cycles Render: could not register the Preferences page (id @).", cyclesrender::ID_PREFERENCES);
 	if (!cyclesrender::RegisterObjectTag())
 		ApplicationOutput("Cycles Render: could not register the Cycles Object tag (id @).", cyclesrender::ID_OBJECT_TAG);
+	if (!cyclesrender::RegisterCameraTag())
+		ApplicationOutput("Cycles Render: could not register the Cycles Camera tag (id @).", cyclesrender::ID_CAMERA_TAG);
 	if (!cyclesrender::RegisterCyclesMaterial())
 		ApplicationOutput("Cycles Render: could not register the Cycles Material command (id @).", cyclesrender::ID_CYCLES_MATERIAL);
 	if (!cyclesrender::RegisterNativeMaterial())

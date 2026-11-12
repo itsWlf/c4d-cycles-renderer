@@ -505,6 +505,7 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 
 	// The scene without its camera; SyncCamera() sends that.
 	_exportSettings = GetExportSettings(data, _width, _height);
+	_exportSettings.eevee = _engine == CYCLES_ENGINE_EEVEE;	// the IPR's engine menu may override the render settings
 	_exportSettings.camera = ResolveCamera(doc);
 	_exportSettings.writeCamera = false;
 
@@ -670,7 +671,8 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 		return maxon::OK;
 	}
 
-	// This camera needs a real camera object (depth of field, film offset, parallel projection).
+	// This camera needs a real camera object (depth of field, film offset, a parallel or
+	// panoramic lens).
 	IprTask* task = NewObj(IprTask) iferr_return;
 	finally
 	{
@@ -678,7 +680,10 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 	};
 	task->kind = IprTask::KIND::SCENE;
 	task->scene = NewObj(SceneWriter, false) iferr_return;
-	ExportCamera(*task->scene, Coords::FromDocument(doc), camera, _exportSettings.depthOfField, _framing) iferr_return;
+	ExportCamera(*task->scene, Coords::FromDocument(doc), camera, _exportSettings.depthOfField, _exportSettings.eevee, _framing) iferr_return;
+	// Said once per session, also when the camera itself did not change (another engine chosen).
+	for (const maxon::String& warning : task->scene->GetWarnings())
+		ReportOnce(warning);
 
 	const maxon::Int changes = task->scene->KeepChanges(_cameraState, true) iferr_return;
 	if (changes > 0 || !_sentView.IsEmpty())

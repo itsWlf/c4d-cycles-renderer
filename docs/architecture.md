@@ -88,8 +88,11 @@ plugin/cyclesrender/            the Cinema 4D module
       document_colors           the document's colour management: how colours are read, which colour space
                                 an image is loaded in, whether the picture gets the sRGB curve
       parameters.h              reading parameters with GetParameter (always use these helpers)
-      mesh_export, camera_export, light_export, environment_export
+      mesh_export, light_export, environment_export
                                 one kind of item each
+      camera_export             the camera: Cinema 4D's projections (the fixed views with their own
+                                axes, oblique ones slanted), its spherical camera, the Cycles Camera tag,
+                                clipping; or the free view of the IPR
       volume_export             Volume Loader, Volume Builder and Pyro grids as `volume` items
       curves_export             a Hair object as `curves`, a particle group as `pointcloud`
       scene_dump                development aid: a listing of what would be exported
@@ -115,6 +118,7 @@ plugin/cyclesrender/            the Cinema 4D module
       cycles_nodes              Blender's shader nodes as a table; which sockets show for which settings
       cycles_nodes_table.h      generated: that table
     tags/object_tag             the Cycles Object tag
+    tags/camera_tag             the Cycles Camera tag: depth of field and lens, Blender's settings
     prefs/                      the Preferences page, and the settings stored in Cinema 4D's preferences
     session/
       blender_install           finds Blender and the bridge installed in it; reads Blender's version
@@ -139,7 +143,7 @@ plugin/cyclesrender/            the Cinema 4D module
                                 a lock file
   res/
     description/                vpcyclesrender (the Render Settings page, generated), prefscyclesrender,
-                                tcyclesobject, mcyclesnative
+                                tcyclesobject, tcyclescamera, mcyclesnative
     nodes/                      generated: the description database of the Cycles nodes
     icons/                      drawn by tools/make_icons.py
     native_default.preview      generated: the picture of a native material that was never edited
@@ -153,7 +157,8 @@ bridge/                         the Blender extension
     protocol.py                 frame encoding and decoding (no bpy, so tests can use it)
     errors.py                   RequestError, raised by handlers to answer with an error reply
     scene/                      builders for scene items, one module per kind; native.py holds native
-                                materials and their editor window
+                                materials and their editor window; cameras.py hangs an oblique camera
+                                from an empty to keep its slant
     render/                     settings (engine, device, colour space, properties) and devices
     final/                      the final driver; preview.py renders material thumbnails
     viewport/                   the viewport driver: the Viewport class, the frame block, window control

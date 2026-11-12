@@ -92,6 +92,7 @@ class Scene:
         if old is None:
             return
         data = old.data
+        cameras.remove_shear_parent(old)
         bpy.data.objects.remove(old)
         # Lights and cameras belong to their object; meshes are items of their own.
         if isinstance(data, bpy.types.Light):

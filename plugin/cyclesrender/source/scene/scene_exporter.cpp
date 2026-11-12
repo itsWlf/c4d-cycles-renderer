@@ -146,7 +146,7 @@ maxon::Result<void> SceneExporter::GetMotionSample(MotionSample& sample) const
 	if (_camera)
 	{
 		sample.hasCamera = true;
-		sample.camera = _camera->GetMg();
+		sample.camera = CameraValues::Read(_camera).mg;	// the view's axes, as ExportCamera uses them
 	}
 	return maxon::OK;
 }
@@ -1199,7 +1199,8 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			cameraMotion[0] = _motionOpen->camera;
 			cameraMotion[1] = _motionClose->camera;
 		}
-		ExportCamera(writer, _coords, camera, _settings.depthOfField, CameraFraming::Full(_settings.width, _settings.height), moves ? cameraMotion : nullptr) iferr_return;
+		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee, CameraFraming::Full(_settings.width, _settings.height),
+			moves ? cameraMotion : nullptr) iferr_return;
 	}
 	// A Sky object comes first; then a Redshift dome light; then the plain world of the render settings.
 	if (!_sky && _dome)
