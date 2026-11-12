@@ -3,6 +3,7 @@
 
 #include "c4d.h"
 
+#include "../materials/baked_files.h"
 #include "../session/json.h"
 #include "scene_writer.h"
 
@@ -29,6 +30,18 @@ maxon::UInt64 HashBytes(const maxon::Char* data, maxon::Int count, maxon::UInt64
 
 SceneWriter::SceneWriter(maxon::Bool clear) : _clear(clear)
 {
+}
+
+SceneWriter::~SceneWriter()
+{
+	ReleaseBakedFiles(_bakedFiles);
+}
+
+maxon::Result<void> SceneWriter::HoldBakedFile(const maxon::String& id)
+{
+	iferr_scope;
+	_bakedFiles.Append(id) iferr_return;
+	return maxon::OK;
 }
 
 JsonWriter& SceneWriter::BeginItem(const maxon::Char* kind, const maxon::String& id)
@@ -212,6 +225,8 @@ maxon::Result<void> SceneWriter::Send(BridgeClient& client, cinema::BaseThread* 
 	}
 	request.EndArray();
 
+	// From now on this Blender may read the baked files; the removed items' files it drops.
+	NoteBakedFilesSent(&client, _bakedFiles, _removed, _clear);
 	const BridgeMessage reply = client.Request(request, BlobViews(views.GetFirst(), views.GetCount()), cancel) iferr_return;
 
 	// The bridge reports problems that do not stop the render, such as a missing texture file.

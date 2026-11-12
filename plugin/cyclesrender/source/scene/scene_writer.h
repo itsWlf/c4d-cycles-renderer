@@ -56,6 +56,8 @@ class SceneWriter
 public:
 	/// @param[in] clear  True to make the bridge drop everything sent before.
 	explicit SceneWriter(maxon::Bool clear);
+	/// Lets go of the baked files the request names (HoldBakedFile).
+	~SceneWriter();
 
 	/// Opens an item of the given kind and id and returns the writer for its other fields.
 	/// The reference is valid until EndItem().
@@ -73,6 +75,10 @@ public:
 	maxon::Result<maxon::Char*> AllocBytes(maxon::Int count, maxon::Int& blobIndex);
 
 	maxon::Int GetItemCount() const { return _items.GetCount(); }
+
+	/// For materials/baked_files.cpp: the request names the baked file of image item @p id. It
+	/// is not deleted while the writer exists, and Send() tells which Blender gets it.
+	maxon::Result<void> HoldBakedFile(const maxon::String& id);
 
 	/// Something the user should know about, shown in Cinema 4D's console after the export.
 	void Warn(const maxon::String& message);
@@ -109,6 +115,7 @@ private:
 	maxon::BaseArray<Blob> _blobs;
 	maxon::BaseArray<maxon::String> _removed;
 	maxon::BaseArray<maxon::String> _warnings;
+	maxon::BaseArray<maxon::String> _bakedFiles;   ///< image item ids of baked files the request names
 	maxon::Int _itemFirstBlob = 0;   ///< index of the first blob of the item being written
 	maxon::Bool _itemOpen = false;
 	JsonWriter _discarded;           ///< receives the fields of an item that could not be stored

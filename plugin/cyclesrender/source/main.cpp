@@ -9,7 +9,7 @@
 #include "c4d_resource.h"
 
 #include "ids.h"
-#include "materials/material_export.h"
+#include "materials/baked_files.h"
 #include "ipr/ipr_controller.h"
 #include "ipr/ipr_dialog.h"
 #include "ipr/ipr_testhook.h"
@@ -46,6 +46,8 @@ cinema::Bool cinema::PluginStart()
 			cyclesrender::ID_NATIVE_MATERIAL_EDITS);
 	if (!cyclesrender::RegisterIprCommand())
 		ApplicationOutput("Cycles Render: could not register the IPR command.");
+	if (!cyclesrender::RegisterBakedFilesWatch())
+		ApplicationOutput("Cycles Render: could not register the watch over closed documents; baked textures stay until Cinema 4D quits.");
 	ApplicationOutput("Cycles Render @: module loaded (renderer id @).", maxon::String(CYCLESRENDER_VERSION), cyclesrender::ID_CYCLES_VIDEOPOST);
 	return true;
 }
@@ -59,7 +61,8 @@ void cinema::PluginEnd()
 	cyclesrender::FreeMaterialPreviews();
 	// Ends the IPR's worker thread and its Blender.
 	cyclesrender::IprController::Free();
-	cyclesrender::FreeBakedShaders();
+	// Last, once no Blender the plugin started runs any more.
+	cyclesrender::FreeBakedFiles();
 	cyclesrender::FreeVolumeFiles();
 }
 
@@ -77,6 +80,8 @@ cinema::Bool cinema::PluginMessage(cinema::Int32 id, void* data)
 			// All plugins are registered and the preferences are loaded: a first start without a
 			// Blender chosen looks for one, so that rendering works without any setting up.
 			cyclesrender::DetectBlenderOnFirstStart();
+			// Baked textures a crashed session left behind; the preferences folder is known now.
+			cyclesrender::RemoveBakedFilesOfEarlierSessions();
 			return true;
 		}
 		case cyclesrender::ID_CYCLES_VIDEOPOST:

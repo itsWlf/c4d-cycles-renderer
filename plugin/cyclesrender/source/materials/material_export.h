@@ -67,7 +67,7 @@ class MaterialExporter
 public:
 	/// @param[in] bakeResolution  Side, in pixels, of the texture a shader is baked into.
 	MaterialExporter(SceneWriter& writer, cinema::BaseDocument* doc, maxon::Int32 bakeResolution = 1024)
-		: _writer(writer), _doc(doc), _bakeResolution(bakeResolution) { }
+		: _writer(writer), _doc(doc), _colors(doc), _bakeResolution(bakeResolution) { }
 
 	/// The id of the Blender material for @p material; for nullptr, of the default material
 	/// Cinema 4D gives to objects without a texture tag.
@@ -87,24 +87,37 @@ public:
 	/// True when @p material has an alpha channel that can let a material below show through.
 	static maxon::Bool HasAlpha(cinema::BaseMaterial* material);
 
+	//----------------------------------------------------------------------------------------
 	/// The id of the `image` item for a bitmap shader, or an empty string when @p shader is
-	/// not a bitmap shader with a file name.
+	/// not a bitmap shader with a file name. Empty as well for colours that Blender cannot load
+	/// as Cinema 4D reads them (DocumentColors::ImageColorSpace gives no colour space): bake
+	/// the shader instead (GetBakedImageId), which gives exactly what Cinema 4D calculates with.
 	/// @param[in] colorData  True for colours (colour-managed), false for data such as bump heights.
+	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::String> GetImageId(cinema::BaseShader* shader, maxon::Bool colorData);
 
 	//----------------------------------------------------------------------------------------
 	/// The id of the `image` item holding @p shader rendered by Cinema 4D over the UV square,
-	/// as float values in the render colour space. The file is written once and reused, by
-	/// this and later exports, until the shader or one of the shaders inside it changes
-	/// (GetBakeCount() tells how often baking really happened). Empty when baking failed.
+	/// as float values in the render colour space. The id follows from what the picture depends
+	/// on: the settings of the shader and of the shaders inside it, the time of a bitmap's file,
+	/// the material's name, the document's colour settings, the bake resolution, and the frame
+	/// only for a shader that changes over time by itself. A file baked for the same id before,
+	/// in this session and not deleted since (baked_files.h), is used again: by final renders
+	/// and the IPR alike (GetBakeCount() tells how often baking really happened). Empty when
+	/// baking failed.
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::String> GetBakedImageId(cinema::BaseShader* shader);
 
-	/// The id of the `image` item for an image file.
-	/// @param[in] colorData  True for colours (colour-managed), false for data.
-	maxon::Result<maxon::String> GetFileImageId(const maxon::String& path, maxon::Bool colorData);
+	//----------------------------------------------------------------------------------------
+	/// The id of the `image` item for an image file. Colours are loaded in the colour space the
+	/// document's colour settings call for (DocumentColors::ImageColorSpace); where Blender has
+	/// none for it, the file's values are used as they are, with a warning.
+	/// @param[in] colorData      True for colours (colour-managed), false for data.
+	/// @param[in] bitmapProfile  BITMAPSHADER_COLORPROFILE of the bitmap shader reading the file, or NOTOK.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<maxon::String> GetFileImageId(const maxon::String& path, maxon::Bool colorData, maxon::Int32 bitmapProfile = NOTOK);
 	/// The id of the `image` item for pixels in memory (RGBA, top row first, values as they
-	/// are to be used). They are written to a file in the folder of the baked shaders.
+	/// are to be used). They are written to a file kept like a baked shader's (baked_files.h).
 	maxon::Result<maxon::String> GetPixelImageId(const maxon::BaseArray<maxon::Vector4d32>& pixels, maxon::Int32 width, maxon::Int32 height);
 	maxon::Int32 GetBakeResolution() const { return _bakeResolution; }
 	/// Number of shaders baked by this process so far; for tests.
@@ -126,9 +139,6 @@ private:
 	maxon::HashMap<maxon::String, maxon::Bool> _imageAlpha;      ///< image file -> has an alpha channel
 	maxon::String _defaultId;
 };
-
-/// Forgets which shaders were baked. Call when the plugin is unloaded.
-void FreeBakedShaders();
 
 } // namespace cyclesrender
 

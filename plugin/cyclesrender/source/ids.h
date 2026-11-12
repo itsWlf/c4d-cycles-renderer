@@ -31,6 +31,11 @@ static const cinema::Int32 ID_IPR_COMMAND = ID_CYCLES_VIDEOPOST;
 /// arrived. Core messages are a namespace of their own, so the renderer's ID serves.
 static const cinema::Int32 ID_CORE_MESSAGE = ID_CYCLES_VIDEOPOST;
 
+/// The message plugin that watches Cinema 4D's document list to delete the baked textures of
+/// closed documents (materials/baked_files.h). A message plugin has no description and is the
+/// first of its type with this number, so the renderer's ID serves.
+static const cinema::Int32 ID_BAKED_FILES_WATCH = ID_CYCLES_VIDEOPOST;
+
 /// The Preferences page.
 static const cinema::Int32 ID_PREFERENCES = 1073900;
 

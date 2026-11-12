@@ -4,6 +4,7 @@
 #include "c4d.h"
 #include "maxon/atomictypes.h"
 
+#include "../materials/baked_files.h"
 #include "../version.h"
 #include "bridge_client.h"
 #include "capture.h"
@@ -32,6 +33,10 @@ BridgeClient::~BridgeClient()
 {
 	platform::SocketClose(_socket);
 	_socket = platform::NO_SOCKET;
+	// Blender ends here (if Shutdown() has not ended it already), and with it every hold it had
+	// on baked files.
+	_process.Kill();
+	ForgetBakedFileClient(this);
 }
 
 maxon::Result<void> BridgeClient::Open(BRIDGEMODE mode)

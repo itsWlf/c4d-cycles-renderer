@@ -22,6 +22,7 @@
 
 #include "../scene/coords.h"
 #include "../scene/parameters.h"
+#include "baked_files.h"
 #include "material_export.h"
 #include "native_material.h"
 
@@ -740,12 +741,11 @@ maxon::Result<maxon::String> MaterialExporter::GetImageId(cinema::BaseShader* sh
 	if (!cinema::GenerateTexturePath(_doc ? _doc->GetDocumentPath() : cinema::Filename(), name, cinema::Filename(), &resolved) || !resolved.IsPopulated())
 		resolved = name;
 
-	return GetFileImageId(resolved.GetString(), colorData);
-}
-
-static cinema::Filename BakeFolder()
-{
-	return cinema::GeGetC4DPath(C4D_PATH_PREFS) + cinema::Filename("cyclesrender"_s) + cinema::Filename("baked"_s);
+	// With "Basic" colour management the bitmap's own colour profile says what its values are.
+	const maxon::Int32 profile = GetIntParameter(shader, BITMAPSHADER_COLORPROFILE, BITMAPSHADER_COLORPROFILE_EMBEDDED);
+	if (colorData && !_colors.ImageColorSpace(IsLinearFile(resolved), profile))
+		return maxon::String();
+	return GetFileImageId(resolved.GetString(), colorData, profile);
 }
 
 maxon::Result<maxon::String> MaterialExporter::GetPixelImageId(const maxon::BaseArray<maxon::Vector4d32>& pixels, maxon::Int32 width, maxon::Int32 height)
@@ -760,12 +760,13 @@ maxon::Result<maxon::String> MaterialExporter::GetPixelImageId(const maxon::Base
 	if (_images.Find(id))
 		return id;
 
-	const cinema::Filename folder = BakeFolder();
-	if (!cinema::GeFExist(folder, true) && !cinema::GeFCreateDirRec(folder))
-		return maxon::String();
-	const cinema::Filename file = folder + cinema::Filename(id + ".exr"_s);
-	if (!cinema::GeFExist(file))
+	// The same pixels written before in this session are written again only if their file is gone.
+	maxon::String path = FindBakedFile(id, _doc, _writer) iferr_return;
+	if (path.IsEmpty())
 	{
+		const cinema::Filename file = NewBakedFileName(id);
+		if (!file.IsPopulated())
+			return maxon::String();
 		cinema::AutoAlloc<cinema::BaseBitmap> bitmap;
 		if (!bitmap || bitmap->Init(width, height, 96) != cinema::IMAGERESULT::OK)
 			return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
@@ -776,11 +777,15 @@ maxon::Result<maxon::String> MaterialExporter::GetPixelImageId(const maxon::Base
 				16, cinema::COLORMODE::RGBf, cinema::PIXELCNT::NONE);
 		}
 		if (bitmap->Save(file, FILTER_EXR, nullptr, cinema::SAVEBIT::USE32BITCHANNELS) != cinema::IMAGERESULT::OK)
+		{
+			cinema::GeFKill(file);   // what was written before saving failed; the name is this session's own
 			return maxon::String();
+		}
+		path = AddBakedFile(id, file, _doc, _writer) iferr_return;
 	}
 	_images.Insert(id, id) iferr_return;
 	JsonWriter& json = _writer.BeginItem("image", id);
-	json.String("path", file.GetString());
+	json.String("path", path);
 	json.String("colorspace", maxon::String(COLORSPACE_DATA));
 	_writer.EndItem();
 	return id;
@@ -791,7 +796,14 @@ maxon::Result<maxon::String> MaterialExporter::GetFileImageId(const maxon::Strin
 	iferr_scope;
 
 	const cinema::Filename resolved(path);
-	const maxon::Char* const colorspace = !colorData ? COLORSPACE_DATA : (IsLinearFile(resolved) ? COLORSPACE_LINEAR_COLOR : COLORSPACE_COLOR);
+	const maxon::Char* colorspace = colorData ? _colors.ImageColorSpace(IsLinearFile(resolved), bitmapProfile) : COLORSPACE_DATA;
+	if (!colorspace)
+	{
+		// A file without a bitmap shader to bake (a node material's, a Redshift dome's).
+		colorspace = COLORSPACE_LINEAR_COLOR;
+		_writer.Warn(FormatString("The image \"@\" holds linear values; with Linear Workflow off Cinema 4D renders them with the sRGB curve "
+			"applied, which Blender cannot do when it loads the file. Its values are used as they are, so it renders darker.", resolved.GetFileString()));
+	}
 	const maxon::String key = path + "|"_s + maxon::String(colorspace);
 	if (const auto* const known = _images.Find(key))
 		return known->GetValue();
@@ -807,11 +819,9 @@ maxon::Result<maxon::String> MaterialExporter::GetFileImageId(const maxon::Strin
 	return id;
 }
 
-// Baked shaders of this process: what was baked -> the file. Exports run on the main thread
-// (IPR) and on render threads, hence the lock.
+// Shaders baked by this process, for tests. Exports run on the main thread (IPR) and on
+// render threads, hence the lock.
 static maxon::Spinlock g_bakeLock;
-using BakedFiles = maxon::HashMap<maxon::UInt64, maxon::String>;
-static BakedFiles* g_bakedFiles = nullptr;
 static maxon::Int g_bakeCount = 0;
 
 maxon::Int MaterialExporter::GetBakeCount()
@@ -820,17 +830,12 @@ maxon::Int MaterialExporter::GetBakeCount()
 	return g_bakeCount;
 }
 
-void FreeBakedShaders()
-{
-	maxon::ScopedLock lock(g_bakeLock);
-	DeleteObj(g_bakedFiles);
-}
-
 // A fingerprint of the settings of the shader and of every shader inside it. It is made from
 // the settings themselves, as Cinema 4D would save them: the same shader in the copy of the
 // document that a render works on gives the same fingerprint, and two shaders of one kind in
-// one material do not. (Dirty counters fail on both counts.)
-static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, maxon::UInt64 hash)
+// one material do not. (Dirty counters fail on both counts.) A bitmap shader's picture counts
+// with the time its file was last changed, so that a texture edited on disk is baked again.
+static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash)
 {
 	hash = (hash ^ maxon::UInt64(shader->GetType())) * 0x100000001B3ull;
 	cinema::AutoAlloc<cinema::HyperFile> file;
@@ -853,9 +858,34 @@ static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, maxon::UInt64
 	for (cinema::BaseShader* first : { shader->GetFirstShader(), shader->GetDown() })
 	{
 		for (cinema::BaseShader* child = first; child; child = child->GetNext())
-			hash = ShaderFingerprint(child, hash);
+			hash = ShaderFingerprint(child, doc, hash);
 	}
 	return hash;
+}
+
+//----------------------------------------------------------------------------------------
+// True when the shader or one inside it gives another picture at another time with the same
+// settings: it says so itself (SHADERINFO::TIMEDEPENDENT, which the Noise shader reports when
+// its animation speed is not 0, measured), or it is a bitmap shader playing a movie or an
+// image sequence. A shader animated by keys needs no such care: its settings change, and with
+// them the fingerprint.
+//----------------------------------------------------------------------------------------
+static maxon::Bool IsTimeDependent(cinema::BaseShader* shader)
+{
+	if (shader->GetRenderInfo() & cinema::SHADERINFO::TIMEDEPENDENT)
+		return true;
+	if (shader->GetType() == Xbitmap &&
+		GetIntParameter(shader, BITMAPSHADER_TIMING_TO, 0) != GetIntParameter(shader, BITMAPSHADER_TIMING_FROM, 0))
+		return true;
+	for (cinema::BaseShader* first : { shader->GetFirstShader(), shader->GetDown() })
+	{
+		for (cinema::BaseShader* child = first; child; child = child->GetNext())
+		{
+			if (IsTimeDependent(child))
+				return true;
+		}
+	}
+	return false;
 }
 
 maxon::Result<maxon::String> MaterialExporter::GetBakedImageId(cinema::BaseShader* shader)
@@ -865,70 +895,62 @@ maxon::Result<maxon::String> MaterialExporter::GetBakedImageId(cinema::BaseShade
 	if (!shader || !_doc)
 		return maxon::String();
 
-	// The owner's name is part of the key: two materials may hold shaders that look alike to
-	// the fingerprint but differ in what they link to.
+	// What the picture depends on besides the shaders' settings. The owner's name: two
+	// materials may hold shaders that look alike to the fingerprint but differ in what they
+	// link to. The document's colour settings, which decide the values baked. The frame, only
+	// when the shader changes over time by itself: otherwise every frame of an animation would
+	// be baked again.
 	const cinema::BaseList2D* const owner = shader->GetMain();
-	maxon::UInt64 key = ShaderFingerprint(shader, maxon::UInt64(_bakeResolution) * 0x9E3779B97F4A7C15ull);
+	const cinema::BaseContainer& documentData = _doc->GetDataInstanceRef();
+	const maxon::Int32 colorProfile = documentData.GetInt32(cinema::DOCUMENT_COLORPROFILE, cinema::DOCUMENT_COLORPROFILE_SRGB);
+	const maxon::Bool linearWorkflow = documentData.GetBool(cinema::DOCUMENT_LINEARWORKFLOW, true);
+	maxon::UInt64 key = ShaderFingerprint(shader, _doc, maxon::UInt64(_bakeResolution) * 0x9E3779B97F4A7C15ull);
 	key = (key ^ maxon::UInt64(owner ? owner->GetName().GetHashCode() : 0)) * 0x100000001B3ull;
-	key = (key ^ maxon::UInt64(_doc->GetTime().GetFrame(_doc->GetFps()))) * 0x100000001B3ull;
+	key = (key ^ maxon::UInt64(colorProfile) ^ (maxon::UInt64(linearWorkflow) << 8) ^
+		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_COLOR_MANAGEMENT)) << 16) ^
+		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_OCIO_RENDER_COLORSPACE)) << 24)) * 0x100000001B3ull;
+	key = (key ^ maxon::UInt64(documentData.GetFilename(cinema::DOCUMENT_OCIO_CONFIG).GetString().GetHashCode())) * 0x100000001B3ull;
+	if (IsTimeDependent(shader))
+		key = (key ^ maxon::UInt64(_doc->GetTime().GetFrame(_doc->GetFps()) + 1)) * 0x100000001B3ull;
 	const maxon::String id = FormatString("image_baked_@", maxon::String::HexToString(key, false));
+	if (_images.Find(id))
+		return id;
 
-	maxon::String path;
-	{
-		maxon::ScopedLock lock(g_bakeLock);
-		if (g_bakedFiles)
-		{
-			if (const auto* const known = g_bakedFiles->Find(key))
-				path = known->GetValue();
-		}
-	}
-
+	// Baked before in this session (baked_files.h), or now.
+	maxon::String path = FindBakedFile(id, _doc, _writer) iferr_return;
 	if (path.IsEmpty())
 	{
-		const cinema::Filename folder = BakeFolder();
-		if (!cinema::GeFExist(folder, true) && !cinema::GeFCreateDirRec(folder))
+		const cinema::Filename file = NewBakedFileName(id);
+		if (!file.IsPopulated())
 		{
-			_writer.Warn(FormatString("The folder for baked shaders could not be created: @", folder.GetString()));
+			_writer.Warn("The folder for baked shaders could not be created in Cinema 4D's preferences folder."_s);
 			return maxon::String();
 		}
-		const cinema::Filename file = folder + cinema::Filename(id + ".exr"_s);
 
 		cinema::AutoAlloc<cinema::BaseBitmap> bitmap;
 		if (!bitmap || bitmap->Init(_bakeResolution, _bakeResolution, 96) != cinema::IMAGERESULT::OK)
 			return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
-		const cinema::BaseContainer& documentData = _doc->GetDataInstanceRef();
-		const maxon::Bool baked = shader->BakeShaderIntoBaseBitmap(*bitmap, *_doc, nullptr, false,
-			documentData.GetInt32(cinema::DOCUMENT_COLORPROFILE, cinema::DOCUMENT_COLORPROFILE_SRGB), documentData.GetBool(cinema::DOCUMENT_LINEARWORKFLOW, true),
+		const maxon::Bool baked = shader->BakeShaderIntoBaseBitmap(*bitmap, *_doc, nullptr, false, colorProfile, linearWorkflow,
 			true, 0, _bakeResolution - 1, 0, _bakeResolution - 1);
 		if (!baked || bitmap->Save(file, FILTER_EXR, nullptr, cinema::SAVEBIT::USE32BITCHANNELS) != cinema::IMAGERESULT::OK)
 		{
+			cinema::GeFKill(file);   // what was written before saving failed; the name is this session's own
 			_writer.Warn(FormatString("The @ shader \"@\" could not be baked into a texture.", shader->GetTypeName(), shader->GetName()));
 			return maxon::String();
 		}
-		path = file.GetString();
+		path = AddBakedFile(id, file, _doc, _writer) iferr_return;
 
 		maxon::ScopedLock lock(g_bakeLock);
-		if (!g_bakedFiles)
-		{
-			iferr (g_bakedFiles = NewObj(BakedFiles))
-				g_bakedFiles = nullptr;
-		}
-		if (g_bakedFiles)
-		{
-			g_bakedFiles->Insert(key, path) iferr_ignore("Without the entry the shader is baked again next time.");
-		}
 		++g_bakeCount;
 	}
 
-	if (!_images.Find(id))
-	{
-		_images.Insert(id, id) iferr_return;
-		// Baked values are already in the render colour space: no conversion on loading.
-		JsonWriter& json = _writer.BeginItem("image", id);
-		json.String("path", path);
-		json.String("colorspace", maxon::String(COLORSPACE_DATA));
-		_writer.EndItem();
-	}
+	_images.Insert(id, id) iferr_return;
+	// Baked values are already what Cinema 4D calculates with (the render space, or with
+	// "Basic" colour management the space Linear Workflow says): no conversion on loading.
+	JsonWriter& json = _writer.BeginItem("image", id);
+	json.String("path", path);
+	json.String("colorspace", maxon::String(COLORSPACE_DATA));
+	_writer.EndItem();
 	return id;
 }
 
