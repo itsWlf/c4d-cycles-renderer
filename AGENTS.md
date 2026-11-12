@@ -47,7 +47,7 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 - `prototypes/`: throw-away scripts that proved the Blender mechanisms.
 - `build/`: all build output.
 - `release/<version>/`: built packages.
-- `internal/`: working notes and archived planning documents. They are history, not instructions: the documents in `docs/` are what counts.
+- `internal/`: working notes and archived planning documents. The archive is history, not instructions: the documents in `docs/` are what counts. The one working file is the checklist of the release in preparation (`internal/roadmap-<version>.md`): if it is there, read it after `docs/roadmap.md`.
 
 ## Rules
 
@@ -60,6 +60,7 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 - **Parameter ids are stored in scene files.** Never renumber one and never reuse a retired number.
 - **The protocol document and both implementations change together.**
 - **Licensing questions, account choices, pushing and publishing belong to the maintainer.** Commit only when asked.
+- **New work goes on `main`.** A branch named after a version (`0.1.0`) is that release as it was published, and is locked: never commit to it.
 
 ## When is a change done
 
