@@ -192,6 +192,10 @@ public:
 	void SendSnapshot();
 	maxon::Bool SaveImage(const cinema::Filename& file);
 	void SetZoomPercent(maxon::Float64 percent);
+	/// For tests: puts @p percent into the zoom field and reacts as to a value the user typed.
+	void TypeZoomPercent(maxon::Float64 percent);
+	/// The value the zoom field holds (1 = 100 %).
+	maxon::Float64 GetZoomField() const;
 	/// For tests: the number of cameras the dropdown lists, and what choosing one of them does.
 	maxon::Int GetCameraCount() const { return _cameraIds.GetCount(); }
 	void PickCamera(maxon::Int index)
@@ -210,6 +214,7 @@ private:
 	void RefreshControls(maxon::Bool force);
 	void RefreshStatus();
 	void RefreshMenu();
+	void ShowZoom();
 
 	IprImageArea _image;
 	IprProgressArea _progress;
@@ -228,6 +233,7 @@ private:
 	maxon::String _shownTime;
 	maxon::String _shownRam;
 	maxon::String _shownVram;
+	maxon::Float64 _shownZoom = 0.0;	///< the zoom last written into the zoom field
 	maxon::Int _ticks = 0;
 };
 
@@ -328,7 +334,7 @@ cinema::Bool IprDialog::InitValues()
 {
 	AddChild(ID_COMBO_ENGINE, CYCLES_ENGINE_CYCLES, "Cycles"_s);
 	AddChild(ID_COMBO_ENGINE, CYCLES_ENGINE_EEVEE, "Eevee"_s);
-	SetPercent(ID_EDIT_ZOOM, _image.GetZoom(), 2.0, 6400.0, 5.0);
+	ShowZoom();
 
 	// Before the first start: show the engine and passes the Render Settings ask for.
 	IprController& ipr = IprController::Get();
@@ -482,6 +488,14 @@ void IprDialog::RefreshStatus()
 	_progress.Set(status.state == VIEWSTATE::STOPPED ? 0 : status.sample, status.state == VIEWSTATE::STOPPED ? 0 : status.samples);
 }
 
+// The field shows the picture's zoom, which the image area keeps in steps of 0.1 %
+// (IprImageArea::SetZoom), so the two always agree and the field shows at most one decimal.
+void IprDialog::ShowZoom()
+{
+	_shownZoom = _image.GetZoom();
+	SetPercent(ID_EDIT_ZOOM, _shownZoom, 2.0, 6400.0, 5.0);
+}
+
 void IprDialog::ShowNewFrame()
 {
 	IprController& ipr = IprController::Get();
@@ -509,6 +523,9 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 	RefreshControls(false);
 	RefreshPasses(false);
 	RefreshStatus();
+	// The area frames the picture anew by itself when the window or the frame changes size.
+	if (_image.GetZoom() != _shownZoom)
+		ShowZoom();
 	// The camera list follows the document; a few times a second is often enough.
 	if (++_ticks % 20 == 0)
 		RefreshCameras(false);
@@ -559,7 +576,20 @@ maxon::Bool IprDialog::SaveImage(const cinema::Filename& file)
 void IprDialog::SetZoomPercent(maxon::Float64 percent)
 {
 	_image.SetZoom(percent / 100.0);
-	SetPercent(ID_EDIT_ZOOM, _image.GetZoom(), 2.0, 6400.0, 5.0);
+	ShowZoom();
+}
+
+void IprDialog::TypeZoomPercent(maxon::Float64 percent)
+{
+	// What the field holds after typing, unrounded; then the message the field sends.
+	SetPercent(ID_EDIT_ZOOM, percent / 100.0, 2.0, 6400.0, 5.0);
+	Command(ID_EDIT_ZOOM, cinema::BaseContainer(cinema::BFM_ACTION));
+}
+
+maxon::Float64 IprDialog::GetZoomField() const
+{
+	maxon::Float value = 0.0;
+	return GetFloat(ID_EDIT_ZOOM, value) ? maxon::Float64(value) : 0.0;
 }
 
 cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& msg)
@@ -583,23 +613,30 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 		case ID_BUTTON_FRAME:
 		{
 			_image.FrameImage();
-			SetPercent(ID_EDIT_ZOOM, _image.GetZoom(), 2.0, 6400.0, 5.0);
+			ShowZoom();
 			break;
 		}
 		case ID_BUTTON_SETTINGS: cinema::CallCommand(COMMAND_EDIT_RENDER_SETTINGS); break;
 
 		case ID_EDIT_ZOOM:
 		{
+			// A typed 47.25 % becomes 47.3 % in the picture, and the field is set to what the picture
+			// uses. While the arrows are dragged the field is left alone, so that the drag goes on
+			// from its own value; the last message of a drag has BFM_ACTION_INDRAG false.
 			maxon::Float zoom = 1.0;
 			if (GetFloat(ID_EDIT_ZOOM, zoom))
 				_image.SetZoom(zoom);
+			if (msg.GetBool(cinema::BFM_ACTION_INDRAG))
+				_shownZoom = _image.GetZoom();	// keeps Timer() from setting the field meanwhile
+			else
+				ShowZoom();
 			break;
 		}
 		case ID_AREA_IMAGE:
 		{
 			const cinema::Int32 what = msg.GetInt32(cinema::BFM_ACTION_VALUE);
 			if (what == IPR_IMAGE_ZOOM_CHANGED)
-				SetPercent(ID_EDIT_ZOOM, _image.GetZoom(), 2.0, 6400.0, 5.0);
+				ShowZoom();
 			else if (what == IPR_IMAGE_CLICKED && ipr.GetState() == IPRSTATE::FAILED)
 				ipr.Start();
 			break;
@@ -756,10 +793,11 @@ const Frame* GetIprDialogFrame()
 	return g_dialog && g_dialog->IsOpen() ? &g_dialog->GetImage().GetFrame() : nullptr;
 }
 
-void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& convertMilliseconds, maxon::Bool& open)
+void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open)
 {
 	open = g_dialog && g_dialog->IsOpen();
 	zoom = g_dialog ? g_dialog->GetImage().GetZoom() : 0.0;
+	zoomField = open ? g_dialog->GetZoomField() : 0.0;
 	convertMilliseconds = g_dialog ? g_dialog->GetImage().GetLastConvertMilliseconds() : 0.0;
 }
 
@@ -770,7 +808,8 @@ maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::Strin
 		OpenIprDialog();
 		return true;
 	}
-	if (command != "zoom"_s && command != "fit"_s && command != "snapshot"_s && command != "save"_s && command != "click"_s && command != "pick_camera"_s)
+	if (command != "zoom"_s && command != "type_zoom"_s && command != "fit"_s && command != "snapshot"_s && command != "save"_s && command != "click"_s &&
+			command != "pick_camera"_s)
 		return false;
 	if (!g_dialog || !g_dialog->IsOpen())
 	{
@@ -796,12 +835,15 @@ maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::Strin
 		}
 		problem = "the window has no control of that name"_s;
 	}
-	else if (command == "zoom"_s)
+	else if (command == "zoom"_s || command == "type_zoom"_s)
 	{
 		maxon::Float64 percent = 100.0;
 		iferr (percent = argument.ToFloat())
 			percent = 100.0;
-		g_dialog->SetZoomPercent(percent);
+		if (command == "zoom"_s)
+			g_dialog->SetZoomPercent(percent);
+		else
+			g_dialog->TypeZoomPercent(percent);
 	}
 	else if (command == "pick_camera"_s)
 	{

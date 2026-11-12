@@ -16,17 +16,21 @@ namespace cyclesrender
 static const maxon::Float64 MIN_ZOOM = 0.02;
 static const maxon::Float64 MAX_ZOOM = 64.0;
 static const maxon::Float64 WHEEL_STEP = 1.15;	// zoom factor per wheel notch
+static const maxon::Float64 ZOOM_STEPS = 1000.0;	// the zoom is kept in steps of 0.1 %: 1 / ZOOM_STEPS
+
+// The zoom in whole steps of 0.1 %, within the limits. The window's zoom field shows the zoom,
+// and a zoom from the wheel (1.15 per notch) or from framing would otherwise show many
+// decimals there. @p down rounds down, so that a framed picture still fits into the area.
+static maxon::Float64 RoundZoom(maxon::Float64 zoom, maxon::Bool down = false)
+{
+	const maxon::Float64 steps = zoom * ZOOM_STEPS;
+	// The small tolerance keeps 0.333 (332.99999... steps) from becoming 0.332.
+	const maxon::Float64 rounded = down ? maxon::Floor(steps + 1e-6) : maxon::Floor(steps + 0.5);
+	return maxon::ClampValue(rounded / ZOOM_STEPS, MIN_ZOOM, MAX_ZOOM);
+}
 
 // Brightness left outside the camera's picture, in 1/256.
 static const maxon::Int BORDER_BRIGHTNESS = 115;
-
-// The sRGB transfer curve, for documents without OCIO colour management.
-static inline maxon::Float32 LinearToSrgb(maxon::Float32 value)
-{
-	if (value <= 0.0031308f)
-		return value * 12.92f;
-	return 1.055f * maxon::Pow(value, 1.0f / 2.4f) - 0.055f;
-}
 
 static inline maxon::UChar ToByte(maxon::Float32 value)
 {
@@ -314,7 +318,7 @@ void IprImageArea::SetMessage(const maxon::String& message)
 
 void IprImageArea::SetZoom(maxon::Float64 zoom)
 {
-	_zoom = maxon::ClampValue(zoom, MIN_ZOOM, MAX_ZOOM);
+	_zoom = RoundZoom(zoom);
 	_framed = false;
 	Redraw();
 }
@@ -325,7 +329,7 @@ void IprImageArea::FrameImage()
 	if (_frame.width > 0 && _frame.height > 0 && GetWidth() > 0 && GetHeight() > 0)
 	{
 		const maxon::Float64 fit = maxon::Min(maxon::Float64(GetWidth()) / _frame.width, maxon::Float64(GetHeight()) / _frame.height);
-		_zoom = maxon::ClampValue(_fill ? fit : maxon::Min(fit, 1.0), MIN_ZOOM, MAX_ZOOM);
+		_zoom = RoundZoom(_fill ? fit : maxon::Min(fit, 1.0), true);
 		_centerX = _frame.width * 0.5;
 		_centerY = _frame.height * 0.5;
 	}
@@ -334,7 +338,7 @@ void IprImageArea::FrameImage()
 
 void IprImageArea::ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::Float64 areaY)
 {
-	zoom = maxon::ClampValue(zoom, MIN_ZOOM, MAX_ZOOM);
+	zoom = RoundZoom(zoom);
 	// The image point under the cursor stays under the cursor.
 	const maxon::Float64 offsetX = areaX - GetWidth() * 0.5;
 	const maxon::Float64 offsetY = areaY - GetHeight() * 0.5;
@@ -372,7 +376,8 @@ void IprImageArea::DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2,
 			const maxon::Int32 dx1 = maxon::Int32(maxon::Floor(halfW + (sx1 - _centerX) * _zoom + 0.5));
 			const maxon::Int32 dy1 = maxon::Int32(maxon::Floor(halfH + (sy1 - _centerY) * _zoom + 0.5));
 			// Sampled scaling when the picture is shown smaller; plain pixels at 100 % and above.
-			const cinema::Int32 mode = _zoom < 0.999 ? cinema::BMP_NORMALSCALED : cinema::BMP_NORMAL;
+			// The zoom is exact in steps of 0.1 % (RoundZoom), so 99.9 % is smaller.
+			const cinema::Int32 mode = _zoom < 1.0 ? cinema::BMP_NORMALSCALED : cinema::BMP_NORMAL;
 			DrawBitmap(_display, dx0, dy0, dx1 - dx0, dy1 - dy0, sx0, sy0, sx1 - sx0, sy1 - sy0, mode);
 		}
 	}
@@ -405,7 +410,13 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 	if (channel == cinema::BFM_INPUT_MOUSEWHEEL)
 	{
 		const maxon::Float64 notches = msg.GetFloat(cinema::BFM_INPUT_VSCROLL) / 120.0;
-		ZoomAround(_zoom * maxon::Pow(WHEEL_STEP, notches), mouseX, mouseY);
+		// The wheel works on an exact zoom and the picture gets it rounded, so that the small
+		// steps a touchpad may send add up instead of each being rounded away at a low zoom.
+		// When the zoom was set some other way since, the wheel starts from that.
+		if (RoundZoom(_wheelZoom) != _zoom)
+			_wheelZoom = _zoom;
+		_wheelZoom = maxon::ClampValue(_wheelZoom * maxon::Pow(WHEEL_STEP, notches), MIN_ZOOM, MAX_ZOOM);
+		ZoomAround(_wheelZoom, mouseX, mouseY);
 		NotifyParent(IPR_IMAGE_ZOOM_CHANGED);
 		return true;
 	}

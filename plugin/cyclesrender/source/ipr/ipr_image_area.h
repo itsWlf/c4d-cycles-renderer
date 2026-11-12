@@ -28,7 +28,8 @@ enum
 ///
 /// Zoom 1 shows one render pixel per screen pixel. The view is described by the zoom and the
 /// image point that sits in the middle of the area, so resizing the window keeps the picture
-/// centred the same way.
+/// centred the same way. The zoom is always a whole number of tenths of a percent (0.473, not
+/// 0.4729), whichever way it was set, so that the window's zoom field can show it exactly.
 ///
 /// A frame can be larger than the camera's picture (the IPR's "Fit Window"). The part
 /// outside the camera's picture is shown darkened, like the border of Cinema 4D's views, and
@@ -60,7 +61,8 @@ public:
 	/// A line of text over the picture, for "starting" and error states. Empty: none.
 	void SetMessage(const maxon::String& message);
 
-	/// 1 = one render pixel per screen pixel.
+	/// 1 = one render pixel per screen pixel. Rounded to 0.1 % and kept between 2 % and 6400 %;
+	/// GetZoom() returns what was made of it.
 	void SetZoom(maxon::Float64 zoom);
 	maxon::Float64 GetZoom() const { return _zoom; }
 	/// Centres the picture, at full size if that fits into the area and scaled down to fit otherwise.
@@ -89,6 +91,7 @@ private:
 	maxon::String _message;
 
 	maxon::Float64 _zoom = 1.0;
+	maxon::Float64 _wheelZoom = 1.0;	///< the zoom the wheel aims at, before rounding; see InputEvent()
 	maxon::Float64 _centerX = 0.0;	///< image point shown in the middle of the area, in render pixels
 	maxon::Float64 _centerY = 0.0;
 	maxon::Bool _framed = true;			///< keep the picture framed until the user zooms or pans

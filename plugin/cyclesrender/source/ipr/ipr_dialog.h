@@ -23,7 +23,8 @@ void OpenIprDialog();
 
 //----------------------------------------------------------------------------------------
 /// For tests (ipr_testhook): what the window's own controls do.
-///   open, zoom <percent>, fit, snapshot, save <file>, pick_camera <position in the dropdown's list of cameras>,
+///   open, zoom <percent>, type_zoom <percent> (as if typed into the zoom field), fit, snapshot, save <file>,
+///   pick_camera <position in the dropdown's list of cameras>,
 ///   click start|pause|reload|lock|snapshot|frame|settings|close|restart_blender|show_blender|scale_50|scale_100
 /// @param[out] problem  Why the command could not be carried out.
 /// @return              False when @p command is not a window command.
@@ -36,8 +37,9 @@ maxon::Int GetIprDialogCameraCount();
 /// The frame the open window shows, or nullptr when the window is closed.
 const Frame* GetIprDialogFrame();
 
-/// Zoom of the window's picture (1 = 100 %) and the time the last display conversion took, for tests.
-void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& convertMilliseconds, maxon::Bool& open);
+/// Zoom of the window's picture and the value its zoom field holds (1 = 100 %; the field 0 when
+/// the window is closed), and the time the last display conversion took, for tests.
+void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open);
 
 } // namespace cyclesrender
 
