@@ -39,6 +39,50 @@ maxon::Vector GetCyclesPropertyVector(const CyclesProperty& property)
 	return result;
 }
 
+void GetCyclesCurveArea(const CyclesProperty& property, maxon::Vector2d& min, maxon::Vector2d& max)
+{
+	// "min_x min_y max_x max_y", written by tools/make_nodes.py.
+	maxon::Float values[4] = { 0.0, 0.0, 1.0, 1.0 };
+	maxon::Int index = 0;
+	iferr (maxon::String(property.text).Split(" "_s, true, [&values, &index](const maxon::String& part) -> maxon::Result<maxon::Bool>
+		{
+			iferr_scope;
+			if (index < 4)
+			{
+				values[index] = part.ToFloat() iferr_return;
+				++index;
+			}
+			return true;
+		}))
+	{
+	}
+	min = maxon::Vector2d(values[0], values[1]);
+	max = maxon::Vector2d(values[2], values[3]);
+}
+
+maxon::Result<maxon::SplineMapper> CreateCyclesCurve()
+{
+	iferr_scope;
+	const maxon::Vector2d min(0.0, 0.0);
+	const maxon::Vector2d max(1.0, 1.0);
+	maxon::SplineMapper spline = maxon::SplineMapper::Create() iferr_return;
+	spline.SetRange(min, max) iferr_return;
+	// As tools/make_nodes.py writes the description's default: tangents a third of the line long.
+	const maxon::Vector2d tangent = (max - min) / 3.0;
+	for (maxon::Int i = 0; i < 2; ++i)
+	{
+		maxon::SplineMapperKnot knot;
+		knot.position = i == 0 ? min : max;
+		knot.interpolation = maxon::SPLINEMAPPER_KNOT_INTERPOLATION_TYPE::BEZIER;
+		knot.tangentLeft = -tangent;
+		knot.tangentRight = tangent;
+		// The knot's id in the upper 16 bits (SPLINEMAPPER_KNOT_SET_ID, which compiles only inside namespace maxon).
+		knot.flags = maxon::SPLINEMAPPER_KNOT_FLAGS((i + 1) << 16);
+		spline.InsertKnot(i, knot) iferr_return;
+	}
+	return spline;
+}
+
 maxon::Result<maxon::Bool> IsCyclesSocketShown(const maxon::GraphNode& node, const CyclesNode& definition, const CyclesSocket& socket)
 {
 	iferr_scope;

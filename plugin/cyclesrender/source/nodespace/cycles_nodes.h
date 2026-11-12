@@ -7,6 +7,7 @@
 
 #include "c4d.h"
 #include "maxon/graph.h"
+#include "maxon/splinemapper.h"
 
 namespace cyclesrender
 {
@@ -27,18 +28,24 @@ struct CyclesSocket
 
 /// A setting on the node itself (not a socket): a dropdown, switch, number, colour, vector or text.
 ///
-/// Most are properties of the Blender node. Three kinds are told by a prefix of the identifier:
+/// Most are properties of the Blender node. Four kinds are told by a prefix of the identifier:
 /// "material:<property>" is a setting of the Blender material (on the Material Output only),
-/// "output:<socket>" is the value a Value, RGB or Normal node keeps on its output socket, and
-/// "ramp:<part>" is a part of a Color Ramp's stops (tools/make_nodes.py says why).
+/// "output:<socket>" is the value a Value, RGB or Normal node keeps on its output socket,
+/// "ramp:<part>" is a part of a Color Ramp's stops, and "curve:<index>" is a curve of an RGB
+/// Curves, Vector Curves or Float Curve node by its index in Blender's mapping.curves, with
+/// "curve:extend" for the mapping's extension (tools/make_nodes.py says why).
 struct CyclesProperty
 {
 	const maxon::Char* identifier;  ///< Blender's name of the property ("distribution"), or prefixed as above
 	const maxon::Char* port;        ///< id of the port in Cinema 4D ("prop.distribution")
 	const maxon::Char* label;
-	maxon::Char kind;               ///< 'e' one of several options, 'b' switch, 'i' whole number, 'f' number, 'c' colour, 'v' vector, 't' text, 'u' file
+	/// 'e' one of several options, 'b' switch, 'i' whole number, 'f' number, 'c' colour, 'v' vector, 't' text, 'u' file,
+	/// 'k' curve (a maxon::SplineMapper, shown with Cinema 4D's spline control)
+	maxon::Char kind;
 	const maxon::Char* items;       ///< options as "IDENTIFIER|Label;IDENTIFIER|Label"
-	const maxon::Char* text;        ///< default option or text; of a colour or vector, its default as "0.5 0.5 0.5"
+	/// default option or text; of a colour or vector, its default as "0.5 0.5 0.5"; of a curve, the
+	/// area of Blender's curve it stands for as "min_x min_y max_x max_y" (GetCyclesCurveArea)
+	const maxon::Char* text;
 	maxon::Float64 number;          ///< default number or switch
 };
 
@@ -83,6 +90,16 @@ maxon::Result<maxon::Bool> IsCyclesSocketShown(const maxon::GraphNode& node, con
 
 /// The default of a colour or vector setting (kind 'c' or 'v').
 maxon::Vector GetCyclesPropertyVector(const CyclesProperty& property);
+
+/// The area of Blender's curve that a curve setting (kind 'k') stands for: its lower left and
+/// upper right corner, 0..1, or -1..1 for Vector Curves. Cinema 4D's spline control shows only the
+/// square 0..1 (tools/make_nodes.py, CURVES): that square stands for this area.
+void GetCyclesCurveArea(const CyclesProperty& property, maxon::Vector2d& min, maxon::Vector2d& max);
+
+/// The curve a new node starts with (kind 'k'): a straight line across the square 0..1, which
+/// stands for Blender's starting curve across its area. Two Bezier knots whose tangents lie on
+/// the line, so that moving a knot or a tangent bends it smoothly.
+maxon::Result<maxon::SplineMapper> CreateCyclesCurve();
 
 /// The node with this Cinema 4D id, or nullptr.
 const CyclesNode* FindCyclesNode(const maxon::Id& asset);

@@ -129,6 +129,8 @@ Materials and the world are described in Blender's own names, so the bridge need
 
 A node property named `color_ramp` sets the stops of a Color Ramp node (`ShaderNodeValToRGB`): `{"interpolation": "LINEAR" | "EASE" | "CONSTANT" | …, "elements": [[position, r, g, b, a], …]}`, at least one stop, in rising order of position.
 
+A node property named `mapping` sets the curves of an RGB Curves, Vector Curves or Float Curve node (`ShaderNodeRGBCurve`, `ShaderNodeVectorCurve`, `ShaderNodeFloatCurve`), Blender's `node.mapping`: `{"extend": "EXTRAPOLATED" | "HORIZONTAL", "clip": [min x, min y, max x, max y], "curves": [curve, …]}`. `curves` is in the order of Blender's `mapping.curves` (RGB Curves: R, G, B, then C, the combined curve, which Blender applies first; Vector Curves: X, Y, Z) and may be shorter than the node's list. A curve is a list of at least two points `[x, y, handle type]` in rising order of x, the handle type `AUTO`, `AUTO_CLAMPED` or `VECTOR`; `null` leaves that curve as it is. `clip` is Blender's clipping rectangle, each value within -100 to 100; `extend` and `clip` are optional. The plugin sends a Cinema 4D spline as many points joined by straight lines (`VECTOR`).
+
 ### Native materials
 
 A `material` item with `"native": true` is a Blender material that is stored, not described: `blend` is the index of a blob holding a .blend file that contains that one material (what `bpy.data.libraries.write(path, {material})` writes), `name` its name for the user. Without `blend` it is Blender's default material. The item's id is the same from request to request for one material (`native_<key>`), unlike the ids of translated materials.

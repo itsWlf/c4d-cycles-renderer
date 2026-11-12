@@ -12,6 +12,7 @@
 #include "maxon/url.h"
 
 #include "../nodespace/cycles_nodes.h"
+#include "cycles_curves.h"
 #include "cycles_node_material.h"
 #include "material_export.h"
 
@@ -389,6 +390,7 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		maxon::Bool imageIsColor = true;
 		maxon::Bool hasImage = false;
 		maxon::Bool hasRamp = false;
+		maxon::Bool hasCurves = false;
 		for (maxon::Int i = 0; i < definition.propertyCount; ++i)
 		{
 			const CyclesProperty& property = definition.properties[i];
@@ -396,6 +398,11 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 			if (name.StartsWith("ramp:"_s))
 			{
 				hasRamp = true;   // all of them together, below
+				continue;
+			}
+			if (name.StartsWith("curve:"_s))
+			{
+				hasCurves = true;   // all of them together, below
 				continue;
 			}
 			const maxon::Id id = PortId(property.port) iferr_return;
@@ -426,6 +433,17 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		{
 			const maxon::String ramp = ColorRampJson(inputs, definition) iferr_return;
 			graph.SetPropertyJson(entry.index, "color_ramp", ramp);
+		}
+		if (hasCurves)
+		{
+			// The curves of RGB Curves, Vector Curves and Float Curve, sampled from Cinema 4D's
+			// splines (cycles_curves.h). Their values are no colours: they go as they are, whatever
+			// the document's colour management.
+			maxon::BaseArray<maxon::String> problems;
+			const maxon::String mapping = CurveMappingJson(inputs, definition, problems) iferr_return;
+			graph.SetPropertyJson(entry.index, "mapping", mapping);
+			for (const maxon::String& problem : problems)
+				exporter.Warn(FormatString("Material \"@\": @ node, @.", materialName, maxon::String(definition.label), problem));
 		}
 		if (hasImage)
 		{

@@ -10,7 +10,9 @@ It starts Blender once to ask it for its nodes (tools\\dump_blender_nodes.py) an
 Run it again for a new Blender version; do not edit the three by hand.
 
 The table: every node of a material's node tree is one entry with its Blender type, its label,
-its colour tag, its input and output sockets and the properties on the node itself. The plugin
+its colour tag, its input and output sockets and the properties on the node itself (and the values
+Blender keeps elsewhere: an output's value, a Color Ramp's stops, the curves of the curve nodes,
+each as settings of the node; see OUTPUT_VALUES, RAMP_MAX_STOPS and CURVES below). The plugin
 makes each a node of the "Cycles" node space (nodespace/cycles_nodespace.cpp) and writes a
 graph of them back as Blender nodes, one to one (materials/cycles_node_material.cpp).
 
@@ -82,6 +84,23 @@ OUTPUT_VALUES = {
 # node's `color_ramp`. At first as in Blender: black at 0, white at 1; further stops are white at 0.5.
 RAMP_MAX_STOPS = 8
 RAMP_INTERPOLATIONS = "EASE|Ease;CARDINAL|Cardinal;LINEAR|Linear;B_SPLINE|B-Spline;CONSTANT|Constant"
+
+# The curve nodes. Each curve of a node is a setting with Cinema 4D's spline control (a port of
+# type maxon::SplineMapper); the plugin samples the spline and the points travel as the node's
+# `mapping` (protocol.md, "Node graphs"). At first as in Blender: a straight line across the area.
+# The control knows only the square 0..1 (it rewrites a spline of another range into it on the
+# first edit, measured), so a spline always lives in that square, and the square stands for the
+# area of Blender's curve: 0..1, or -1..1 for Vector Curves.
+# node type -> (Blender's area: min x, min y, max x, max y; [(index in Blender's mapping.curves, port, label)])
+# Blender lists the curves of RGB Curves as R, G, B and then C (combined); its tabs show C first.
+CURVES = {
+    "ShaderNodeFloatCurve": ([0.0, 0.0, 1.0, 1.0], [(0, "prop.curve", "Curve")]),
+    "ShaderNodeRGBCurve": ([0.0, 0.0, 1.0, 1.0], [(3, "prop.curve_c", "C"), (0, "prop.curve_r", "R"), (1, "prop.curve_g", "G"),
+                                                  (2, "prop.curve_b", "B")]),
+    "ShaderNodeVectorCurve": ([-1.0, -1.0, 1.0, 1.0], [(0, "prop.curve_x", "X"), (1, "prop.curve_y", "Y"), (2, "prop.curve_z", "Z")]),
+}
+# What the curve does left and right of its first and last point; Blender's default is EXTRAPOLATED.
+CURVE_EXTEND = "HORIZONTAL|Horizontal;EXTRAPOLATED|Extrapolated"
 
 # Blender's foldable panels on a node: (title, open at first, identifier of the first input in it).
 # A panel runs to the next one; panels come after the loose inputs. Blender does not tell Python
@@ -186,13 +205,35 @@ PORT_TYPES = {"f": ("float", "float64", "net.maxon.ui.number"), "i": ("int", "in
               "v": ("net.maxon.parametrictype.vec<3,float>", "net.maxon.parametrictype.vec<3,float64>", "net.maxon.ui.vector"),
               "t": ("net.maxon.interface.string-C", "net.maxon.interface.string-C", "net.maxon.ui.string"),
               "u": ("net.maxon.interface.url-C", None, "net.maxon.ui.url"),
-              "e": ("net.maxon.datatype.id", "net.maxon.datatype.id", "net.maxon.ui.enum")}
+              "e": ("net.maxon.datatype.id", "net.maxon.datatype.id", "net.maxon.ui.enum"),
+              "k": ("net.maxon.interface.splinemapper-C", "net.maxon.interface.splinemapper-C", "net.maxon.ui.splinemapper")}
+
+# A knot of a spline (maxon::SplineMapperKnot) as Cinema 4D writes it: interpolation 0 is Bezier,
+# 1 linear, 2 cubic; the flags hold the knot's id in their upper 16 bits.
+SPLINE_BEZIER = 0
+
+
+def spline_knot(x, y, tangent_x, tangent_y, knot_id):
+    return {"position": {"x": x, "y": y}, "interpolation": SPLINE_BEZIER, "tangentLeft": {"x": -tangent_x, "y": -tangent_y},
+            "tangentRight": {"x": tangent_x, "y": tangent_y}, "flags": knot_id << 16}
+
+
+def straight_spline(stored):
+    """A spline of two Bezier knots in the corners of the square 0..1, the only range Cinema 4D's
+    control shows, its tangents along the line: a straight line, which bends as soon as a knot or
+    tangent is moved. The same as CreateCyclesCurve() in nodespace/cycles_nodes.cpp."""
+    third = 1.0 / 3.0
+    return value(stored, {"referenceDataType": stored, "_knots": [spline_knot(0.0, 0.0, third, third, 1), spline_knot(1.0, 1.0, third, third, 2)],
+                          "_min": {"x": 0.0, "y": 0.0}, "_max": {"x": 1.0, "y": 1.0}, "_tension": 1.0,
+                          "_linkTangent": False, "_linkPosition": False, "_snap": False})
 
 
 def default_value(kind, default):
     stored = PORT_TYPES[kind][1]
     if stored is None or default is None:
         return None
+    if kind == "k":
+        return straight_spline(stored)     # the default of a curve setting is Blender's area, for the table
     first = default[0] if isinstance(default, list) else default
     if kind == "c":
         return value(stored, {"r": float(default[0]), "g": float(default[1]), "b": float(default[2])})
@@ -314,7 +355,8 @@ def write_database(descriptions, folders):
 
 
 def property_row(identifier, port, label, kind, items, default):
-    """A row of the plugin's table for a setting; a colour or vector default goes as "r g b" text."""
+    """A row of the plugin's table for a setting; a colour or vector default goes as "r g b" text,
+    the area of Blender's curve that a curve setting stands for as "min_x min_y max_x max_y"."""
     text = default if isinstance(default, str) else (" ".join(repr(float(v)) for v in default) if isinstance(default, list) else "")
     number = float(default) if isinstance(default, (int, float, bool)) else 0.0
     return f'\t{{ {c_string(identifier)}, {c_string(port)}, {c_string(label)}, \'{kind}\', {c_string(items)}, {c_string(text)}, {number!r} }},'
@@ -413,6 +455,11 @@ def main():
                 setting(f"ramp:position_{n}", f"prop.ramp_position_{n}", f"Position {n}", "f", "", position, show)
                 setting(f"ramp:color_{n}", f"prop.ramp_color_{n}", f"Color {n}", "c", "", [0.0, 0.0, 0.0] if n == 1 else [1.0, 1.0, 1.0], show)
                 setting(f"ramp:alpha_{n}", f"prop.ramp_alpha_{n}", f"Alpha {n}", "f", "", 1.0, show)
+        if node["type"] in CURVES:
+            area, curves = CURVES[node["type"]]
+            for index, port, label in curves:
+                setting(f"curve:{index}", port, label, "k", "", area)
+            setting("curve:extend", "prop.curve_extend", "Extend", "e", CURVE_EXTEND, "EXTRAPOLATED")
         if node["type"] in ("ShaderNodeTexImage", "ShaderNodeTexEnvironment"):
             # The image: a file, and how its values are meant. The plugin makes the image from the two.
             properties.insert(0, '\t{ "image", "prop.image_file", "File", \'u\', "", "", 0.0 },')

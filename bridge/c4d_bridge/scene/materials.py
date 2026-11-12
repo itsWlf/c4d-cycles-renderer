@@ -80,6 +80,8 @@ def build_nodes(scene, tree, nodes, links, owner):
                 node.image = scene.images.get(value)
             elif name == "color_ramp":
                 _set_ramp(node, value, f"{owner}/{spec['name']}")
+            elif name == "mapping":
+                _set_mapping(node, value, f"{owner}/{spec['name']}")
             else:
                 _set_property(node, name, value, f"{owner}/{spec['name']}")
         for key, value in spec.get("inputs", {}).items():
@@ -132,6 +134,42 @@ def _set_ramp(node, value, owner):
         element = ramp.elements[0] if index == 0 else ramp.elements.new(position)
         element.position = position
         element.color = color
+
+
+def _set_mapping(node, value, owner):
+    """{"extend": ..., "clip": [min x, min y, max x, max y], "curves": [[[x, y, handle type], ...] or None, ...]}
+    for the curves of an RGB Curves, Vector Curves or Float Curve node (`node.mapping`)."""
+    mapping = getattr(node, "mapping", None)
+    curves = value.get("curves", ())
+    if mapping is None or len(curves) > len(mapping.curves):
+        raise RequestError("bad_request", f"{owner}: a curve mapping of {len(curves)} curves needs a curve node with as many")
+    if "extend" in value:
+        _set_property(mapping, "extend", value["extend"], owner)
+    clip = value.get("clip")
+    if clip:
+        # Each limit may not pass the opposite one (clip_min_x up to clip_max_x): open the
+        # rectangle to Blender's limits first, then close it to the one sent.
+        mapping.clip_min_x = mapping.clip_min_y = -100.0
+        mapping.clip_max_x = mapping.clip_max_y = 100.0
+        for name, limit in zip(("clip_min_x", "clip_min_y", "clip_max_x", "clip_max_y"), clip):
+            _set_property(mapping, name, float(limit), owner)
+    for curve, points in zip(mapping.curves, curves):
+        if points is None:
+            continue    # that curve stays as it is
+        if len(points) < 2:
+            raise RequestError("bad_request", f"{owner}: a curve needs at least two points")
+        # A curve keeps at least two points (points.remove refuses the last two). Extra points go;
+        # missing ones are added, and every point then gets its place in the order sent.
+        while len(curve.points) > len(points):
+            curve.points.remove(curve.points[len(curve.points) - 1])
+        while len(curve.points) < len(points):
+            curve.points.new(points[-1][0], points[-1][1])
+        for point, (x, y, *handle) in zip(curve.points, points):
+            point.location = (x, y)
+            _set_property(point, "handle_type", handle[0] if handle else "AUTO", owner)
+            # update() moves selected points into the clipping rectangle; a new point is selected.
+            point.select = False
+    mapping.update()
 
 
 def _set_property(target, name, value, owner):

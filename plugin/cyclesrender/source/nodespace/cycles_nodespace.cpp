@@ -29,6 +29,7 @@
 #include "maxon/nodetemplate.h"
 #include "maxon/previewimageprovider.h"
 #include "maxon/spinlock.h"
+#include "maxon/splinemapper.h"
 
 #include "../ids.h"
 #include "../materials/material_preview.h"
@@ -194,6 +195,13 @@ public:
 					break;
 				}
 				case 'u': port.SetType<maxon::Url>() iferr_return; break;
+				case 'k':
+				{
+					port.SetType<maxon::SplineMapper>() iferr_return;
+					const maxon::SplineMapper curve = CreateCyclesCurve() iferr_return;
+					port.SetPortValue(curve) iferr_return;
+					break;
+				}
 				default: port.SetType<maxon::String>() iferr_return; port.SetPortValue(maxon::String(property.text)) iferr_return; break;
 			}
 			port.SetValue(maxon::nodes::ConstantParameter, true) iferr_return;

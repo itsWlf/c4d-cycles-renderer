@@ -467,6 +467,12 @@ static const CyclesSocket FLOATCURVE_OUTPUTS[] =
 	{ "Value", "out.value", "Value", 'f', { 0.0, 0.0, 0.0, 0.0 }, "", "" },
 };
 
+static const CyclesProperty FLOATCURVE_PROPERTIES[] =
+{
+	{ "curve:0", "prop.curve", "Curve", 'k', "", "0.0 0.0 1.0 1.0", 0.0 },
+	{ "curve:extend", "prop.curve_extend", "Extend", 'e', "HORIZONTAL|Horizontal;EXTRAPOLATED|Extrapolated", "EXTRAPOLATED", 0.0 },
+};
+
 static const CyclesSocket FRESNEL_INPUTS[] =
 {
 	{ "IOR", "in.ior", "IOR", 'f', { 1.5, 0.0, 0.0, 0.0 }, "", "" },
@@ -807,6 +813,15 @@ static const CyclesSocket RGBCURVE_INPUTS[] =
 static const CyclesSocket RGBCURVE_OUTPUTS[] =
 {
 	{ "Color", "out.color", "Color", 'c', { 0.0, 0.0, 0.0, 0.0 }, "", "" },
+};
+
+static const CyclesProperty RGBCURVE_PROPERTIES[] =
+{
+	{ "curve:3", "prop.curve_c", "C", 'k', "", "0.0 0.0 1.0 1.0", 0.0 },
+	{ "curve:0", "prop.curve_r", "R", 'k', "", "0.0 0.0 1.0 1.0", 0.0 },
+	{ "curve:1", "prop.curve_g", "G", 'k', "", "0.0 0.0 1.0 1.0", 0.0 },
+	{ "curve:2", "prop.curve_b", "B", 'k', "", "0.0 0.0 1.0 1.0", 0.0 },
+	{ "curve:extend", "prop.curve_extend", "Extend", 'e', "HORIZONTAL|Horizontal;EXTRAPOLATED|Extrapolated", "EXTRAPOLATED", 0.0 },
 };
 
 static const CyclesSocket RGBTOBW_INPUTS[] =
@@ -1291,6 +1306,14 @@ static const CyclesSocket VECTORCURVE_OUTPUTS[] =
 	{ "Vector", "out.vector", "Vector", 'v', { 0.0, 0.0, 0.0, 0.0 }, "", "" },
 };
 
+static const CyclesProperty VECTORCURVE_PROPERTIES[] =
+{
+	{ "curve:0", "prop.curve_x", "X", 'k', "", "-1.0 -1.0 1.0 1.0", 0.0 },
+	{ "curve:1", "prop.curve_y", "Y", 'k', "", "-1.0 -1.0 1.0 1.0", 0.0 },
+	{ "curve:2", "prop.curve_z", "Z", 'k', "", "-1.0 -1.0 1.0 1.0", 0.0 },
+	{ "curve:extend", "prop.curve_extend", "Extend", 'e', "HORIZONTAL|Horizontal;EXTRAPOLATED|Extrapolated", "EXTRAPOLATED", 0.0 },
+};
+
 static const CyclesSocket VECTORDISPLACEMENT_INPUTS[] =
 {
 	{ "Vector", "in.vector", "Vector", 'c', { 0.800000011920929, 0.800000011920929, 0.800000011920929, 1.0 }, "", "" },
@@ -1512,7 +1535,7 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeCombineXYZ", "com.wolfnimations.cyclesrender.node.combinexyz", "Combine XYZ", "CONVERTER", COMBINEXYZ_INPUTS, 3, COMBINEXYZ_OUTPUTS, 1, nullptr, 0 },
 	{ "ShaderNodeDisplacement", "com.wolfnimations.cyclesrender.node.displacement", "Displacement", "VECTOR", DISPLACEMENT_INPUTS, 4, DISPLACEMENT_OUTPUTS, 1, DISPLACEMENT_PROPERTIES, 1 },
 	{ "ShaderNodeEmission", "com.wolfnimations.cyclesrender.node.emission", "Emission", "SHADER", EMISSION_INPUTS, 2, EMISSION_OUTPUTS, 1, nullptr, 0 },
-	{ "ShaderNodeFloatCurve", "com.wolfnimations.cyclesrender.node.floatcurve", "Float Curve", "CONVERTER", FLOATCURVE_INPUTS, 2, FLOATCURVE_OUTPUTS, 1, nullptr, 0 },
+	{ "ShaderNodeFloatCurve", "com.wolfnimations.cyclesrender.node.floatcurve", "Float Curve", "CONVERTER", FLOATCURVE_INPUTS, 2, FLOATCURVE_OUTPUTS, 1, FLOATCURVE_PROPERTIES, 2 },
 	{ "ShaderNodeFresnel", "com.wolfnimations.cyclesrender.node.fresnel", "Fresnel", "INPUT", FRESNEL_INPUTS, 2, FRESNEL_OUTPUTS, 1, nullptr, 0 },
 	{ "ShaderNodeGamma", "com.wolfnimations.cyclesrender.node.gamma", "Gamma", "COLOR", GAMMA_INPUTS, 2, GAMMA_OUTPUTS, 1, nullptr, 0 },
 	{ "ShaderNodeHairInfo", "com.wolfnimations.cyclesrender.node.hairinfo", "Curves Info", "INPUT", nullptr, 0, HAIRINFO_OUTPUTS, 6, nullptr, 0 },
@@ -1535,7 +1558,7 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeParticleInfo", "com.wolfnimations.cyclesrender.node.particleinfo", "Particle Info", "INPUT", nullptr, 0, PARTICLEINFO_OUTPUTS, 8, nullptr, 0 },
 	{ "ShaderNodePointInfo", "com.wolfnimations.cyclesrender.node.pointinfo", "Point Info", "INPUT", nullptr, 0, POINTINFO_OUTPUTS, 3, nullptr, 0 },
 	{ "ShaderNodeRGB", "com.wolfnimations.cyclesrender.node.rgb", "Color", "INPUT", nullptr, 0, RGB_OUTPUTS, 1, RGB_PROPERTIES, 1 },
-	{ "ShaderNodeRGBCurve", "com.wolfnimations.cyclesrender.node.rgbcurve", "RGB Curves", "COLOR", RGBCURVE_INPUTS, 2, RGBCURVE_OUTPUTS, 1, nullptr, 0 },
+	{ "ShaderNodeRGBCurve", "com.wolfnimations.cyclesrender.node.rgbcurve", "RGB Curves", "COLOR", RGBCURVE_INPUTS, 2, RGBCURVE_OUTPUTS, 1, RGBCURVE_PROPERTIES, 5 },
 	{ "ShaderNodeRGBToBW", "com.wolfnimations.cyclesrender.node.rgbtobw", "RGB to BW", "CONVERTER", RGBTOBW_INPUTS, 1, RGBTOBW_OUTPUTS, 1, nullptr, 0 },
 	{ "ShaderNodeRadialTiling", "com.wolfnimations.cyclesrender.node.radialtiling", "Radial Tiling", "VECTOR", RADIALTILING_INPUTS, 3, RADIALTILING_OUTPUTS, 4, RADIALTILING_PROPERTIES, 1 },
 	{ "ShaderNodeRaycast", "com.wolfnimations.cyclesrender.node.raycast", "Raycast", "INPUT", RAYCAST_INPUTS, 3, RAYCAST_OUTPUTS, 5, RAYCAST_PROPERTIES, 2 },
@@ -1561,7 +1584,7 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeUVMap", "com.wolfnimations.cyclesrender.node.uvmap", "UV Map", "INPUT", nullptr, 0, UVMAP_OUTPUTS, 1, UVMAP_PROPERTIES, 2 },
 	{ "ShaderNodeValToRGB", "com.wolfnimations.cyclesrender.node.valtorgb", "Color Ramp", "CONVERTER", VALTORGB_INPUTS, 1, VALTORGB_OUTPUTS, 2, VALTORGB_PROPERTIES, 26 },
 	{ "ShaderNodeValue", "com.wolfnimations.cyclesrender.node.value", "Value", "INPUT", nullptr, 0, VALUE_OUTPUTS, 1, VALUE_PROPERTIES, 1 },
-	{ "ShaderNodeVectorCurve", "com.wolfnimations.cyclesrender.node.vectorcurve", "Vector Curves", "VECTOR", VECTORCURVE_INPUTS, 2, VECTORCURVE_OUTPUTS, 1, nullptr, 0 },
+	{ "ShaderNodeVectorCurve", "com.wolfnimations.cyclesrender.node.vectorcurve", "Vector Curves", "VECTOR", VECTORCURVE_INPUTS, 2, VECTORCURVE_OUTPUTS, 1, VECTORCURVE_PROPERTIES, 4 },
 	{ "ShaderNodeVectorDisplacement", "com.wolfnimations.cyclesrender.node.vectordisplacement", "Vector Displacement", "VECTOR", VECTORDISPLACEMENT_INPUTS, 3, VECTORDISPLACEMENT_OUTPUTS, 1, VECTORDISPLACEMENT_PROPERTIES, 1 },
 	{ "ShaderNodeVectorMath", "com.wolfnimations.cyclesrender.node.vectormath", "Vector Math", "VECTOR", VECTORMATH_INPUTS, 4, VECTORMATH_OUTPUTS, 2, VECTORMATH_PROPERTIES, 1 },
 	{ "ShaderNodeVectorRotate", "com.wolfnimations.cyclesrender.node.vectorrotate", "Vector Rotate", "VECTOR", VECTORROTATE_INPUTS, 5, VECTORROTATE_OUTPUTS, 1, VECTORROTATE_PROPERTIES, 2 },
