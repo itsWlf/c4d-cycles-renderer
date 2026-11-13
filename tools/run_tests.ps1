@@ -82,7 +82,10 @@ $bridgeTests = @(
   @{ Name = "test_native"; Covers = @("${B}scene/native.py") },
   @{ Name = "test_preview"; Covers = @("${B}final/preview.py") },
   @{ Name = "test_cameras"; Covers = @("${B}scene/cameras.py") },
-  @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") }
+  @{ Name = "test_output"; Covers = @("${B}final/__init__.py", "${B}scene/objects.py", "${B}render/settings.py") },
+  @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") },
+  @{ Name = "test_lights"; Covers = @("${B}scene/lights.py") },
+  @{ Name = "test_devices"; Covers = @("${B}render/devices.py", "${B}render/settings.py") }
 )
 
 # Plugin inside Cinema 4D (c4dpy). Settings: for the start ("<file>" is a file of the start, emptied
@@ -108,11 +111,11 @@ $c4dTests = @(
   @{ Name = "shaders"; Covers = @("${P}materials/shader_translate.*", "${P}materials/baked_files.*", "${P}materials/material_export.*", "${P}scene/document_colors.*") },
   @{ Name = "mapping"; Covers = @("${P}materials/material_export.*", "${P}materials/shader_translate.*", "${P}scene/mesh_export.*") },
   @{ Name = "node_materials"; Settings = @{ g_cyclesRenderCapture = "<file>" }
-     Covers = @("${P}materials/exchange_material.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${B}scene/materials.py") },
+     Covers = @("${P}materials/exchange_material.*", "${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${B}scene/materials.py") },
   @{ Name = "geometry"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/mesh_export.*", "${P}scene/scene_exporter.*", "${P}materials/shader_translate.*", "${P}scene/document_colors.*", "${B}scene/instancers.py", "${B}scene/meshes.py") },
   @{ Name = "motion_blur"; Covers = @("${P}scene/mesh_export.*", "${P}scene/camera_export.*", "${P}videopost/*", "${B}render/settings.py", "${B}scene/objects.py") },
-  @{ Name = "passes"; Covers = @("${P}videopost/*", "${B}final/__init__.py", "${B}render/settings.py") },
+  @{ Name = "passes"; Covers = @("${P}videopost/*", "${B}final/__init__.py", "${B}render/settings.py", "${B}scene/objects.py", "tools/make_settings.py", "${R}description/vpcyclesrender.*") },
   @{ Name = "region"; Covers = @("${P}videopost/cycles_videopost.*", "${B}final/__init__.py") },
   @{ Name = "volumes"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
@@ -124,7 +127,8 @@ $c4dTests = @(
      Covers = @("${P}tags/object_tag.*", "${R}description/tcyclesobject.*", "${R}strings_en-US/description/tcyclesobject.str", "${P}scene/light_export.*", "${P}scene/curves_export.*", "${B}scene/instancers.py", "${B}scene/objects.py") },
   @{ Name = "fire_vdb"; Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" }
-     Covers = @("${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
+     Covers = @("${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
+  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${B}scene/materials.py") },
   @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${B}scene/world.py") },
   @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}nodespace/*", "${P}materials/cycles_*", "${R}nodes/*", "tools/make_nodes.py", "tools/dump_blender_nodes.py", "${B}scene/materials.py", "${P}ipr/ipr_testhook.*") },
@@ -135,6 +139,19 @@ $c4dTests = @(
                 "${B}scene/cameras.py", "${P}ipr/ipr_controller.*", "${R}icons/*", "tools/make_icons.py") },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}platform/process_stats*", "${B}viewport/*") },
+  @{ Name = "output"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}videopost/output_settings.*", "${P}videopost/render_settings_*", "${P}videopost/cycles_videopost.*", "${P}scene/camera_export.*", "${P}ipr/ipr_controller.*",
+                "${R}description/vpcyclesrender.*", "${R}strings_en-US/description/vpcyclesrender.str", "tools/make_settings.py", "${B}final/__init__.py") },
+  @{ Name = "image_nodes"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}nodespace/path_commands.*", "${P}nodespace/cycles_nodespace.*", "${P}materials/cycles_node_material.*", "${P}materials/material_export.*",
+                "${R}nodes/*", "tools/make_nodes.py", "${P}ipr/ipr_testhook.*") },
+  @{ Name = "ipr_add"; Settings = @{ g_cyclesRenderIprTest = "true" }; Covers = @("${P}ipr/ipr_add.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_testhook.*", "${P}lights/light_tag.*", "${P}lights/light_object.*") },
+  @{ Name = "cycles_lights"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}lights/*", "${R}description/ocycleslight.*", "${R}description/tcycleslight.*", "${R}strings_en-US/description/ocycleslight.str",
+                "${R}strings_en-US/description/tcycleslight.str", "${P}scene/light_export.*", "${B}scene/lights.py", "${R}icons/*", "tools/make_icons.py") },
+  @{ Name = "devices"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}prefs/devices.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
+                "${P}videopost/render_settings_map.*", "${B}render/devices.py", "${B}render/settings.py", "${P}ipr/ipr_testhook.*") },
   @{ Name = "ipr_region"; Settings = @{ g_cyclesRenderIprTest = "true" }; Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${B}viewport/*") },
   @{ Name = "colour"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/document_colors.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_controller.*", "${P}materials/shader_translate.*", "${P}materials/material_export.*", "${B}render/settings.py") },

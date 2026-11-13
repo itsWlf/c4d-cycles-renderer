@@ -36,8 +36,10 @@ public:
 		doc->StartUndo();
 		doc->InsertMaterial(material);
 		doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, material);
-		doc->EndUndo();
+		// Selected before EndUndo: after it, the selection is an undo step of its own, and the
+		// first undo would only take the selection back.
 		doc->SetActiveMaterial(material);
+		doc->EndUndo();
 		cinema::EventAdd();
 		return true;
 	}

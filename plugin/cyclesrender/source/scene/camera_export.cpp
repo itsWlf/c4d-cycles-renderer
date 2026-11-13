@@ -84,11 +84,12 @@ cinema::BaseObject* FindRenderCamera(cinema::BaseDocument* doc)
 	return sceneCamera ? sceneCamera : view->GetEditorCamera();
 }
 
-CameraFraming CameraFraming::Full(maxon::Int32 width, maxon::Int32 height)
+CameraFraming CameraFraming::Full(maxon::Int32 width, maxon::Int32 height, maxon::Float64 pixelAspect)
 {
 	CameraFraming framing;
 	framing.width = width;
 	framing.height = height;
+	framing.pixelAspect = pixelAspect > 0.0 ? pixelAspect : 1.0;
 	framing.frameWidth = maxon::Float64(width);
 	framing.frameHeight = maxon::Float64(height);
 	return framing;
@@ -428,9 +429,12 @@ maxon::Result<void> ExportCamera(SceneWriter& writer, const Coords& coords, cons
 
 	// Cinema 4D gives the film offset as a fraction of the width (X) and height (Y) of the
 	// camera's picture, with positive Y moving the picture up. Blender's shift is a fraction
-	// of the image width for both axes and moves the camera's view instead, hence the signs.
+	// of the image width for both axes and moves the camera's view instead, hence the signs. With
+	// pixels wider than high an image width spans that many times more of the view than as many
+	// pixels of height do (measured: an offset Y of 0.2 moves the picture by 0.2 of its height at
+	// any pixel aspect).
 	json.Float("shift_x", camera.filmOffsetX * framing.frameWidth / imageWidth);
-	json.Float("shift_y", -camera.filmOffsetY * framing.frameHeight / imageWidth);
+	json.Float("shift_y", -camera.filmOffsetY * framing.frameHeight / (imageWidth * framing.pixelAspect));
 
 	if (unclipped)
 	{

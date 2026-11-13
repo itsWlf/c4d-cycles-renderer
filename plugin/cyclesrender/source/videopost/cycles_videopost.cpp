@@ -24,6 +24,7 @@
 #include "../session/capture.h"
 #include "../session/json.h"
 #include "cycles_videopost.h"
+#include "output_settings.h"
 #include "render_settings_map.h"
 
 // Start Cinema 4D with g_cyclesRenderLogCalls=true to see every call the renderer receives.
@@ -219,8 +220,24 @@ static void PrepareMultiPass(cinema::GeListNode* node)
 	}
 }
 
+cinema::Bool CyclesVideoPost::GetDParameter(const cinema::GeListNode* node, const cinema::DescID& id, cinema::GeData& data, cinema::DESCFLAGS_GET& flags) const
+{
+	if (node && id.GetDepth() > 0 && GetOutputParameter(static_cast<const cinema::BaseList2D*>(node), id[0].id, data))
+	{
+		flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+		return true;
+	}
+	return SUPER::GetDParameter(node, id, data, flags);
+}
+
 cinema::Bool CyclesVideoPost::SetDParameter(cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data, cinema::DESCFLAGS_SET& flags)
 {
+	// The Output tab writes Cinema 4D's own Width, Height and Pixel Aspect too (output_settings.h).
+	if (node && id.GetDepth() > 0 && SetOutputParameter(static_cast<cinema::BaseList2D*>(node), id[0].id, data))
+	{
+		flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+		return true;
+	}
 	if (id.GetDepth() > 0 && data.GetType() == cinema::DA_LONG && data.GetInt32() != 0)
 	{
 		for (const RenderPass& pass : GetRenderPasses())
@@ -313,23 +330,34 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 		OpenSession(settings, vps) iferr_return;
 	}
 
+	// Cinema 4D's pixel aspect (Render Settings > Output, or the Output tab of Cycles Render): a
+	// pixel is that many times as wide as high. Measured against the Standard renderer: the
+	// camera keeps its horizontal view over the width, and the picture is what a picture of
+	// width x pixel aspect square pixels shows, squeezed into the width (docs/reference/c4d-sdk.md).
+	const maxon::Float64 pixelAspect = GetPixelAspect(vps->render->GetRenderData());
+
 	// The scene: all of it for the job's first frame, then only the items that changed.
 	{
-		const ExportSettings exportSettings = GetExportSettings(settings, width, height);
+		ExportSettings exportSettings = GetExportSettings(settings, width, height);
+		exportSettings.pixelAspect = pixelAspect;
 
 		// Motion blur: look at the scene when the shutter opens and when it closes, then come
 		// back to the frame. Each look is one evaluation of the document.
 		MotionSample shutterOpen;
 		MotionSample shutterClose;
 		const maxon::Bool motionBlur = exportSettings.motionBlur && exportSettings.shutter > 0.0;
-		if (motionBlur)
+		// The Vector pass without motion blur: Blender takes its motion vectors from where things
+		// are one frame before and one frame after (the keys the bridge sets, scene/common.py), so
+		// the scene is read at exactly those moments. (With motion blur Cycles has no Vector pass.)
+		const maxon::Bool vectorPass = !motionBlur && settings.GetBool(CYCLES_PASS_VECTOR, false);
+		if (motionBlur || vectorPass)
 		{
 			// The picture is the scene in the middle of the open shutter, blurred by what happens
 			// from its opening to its closing. With the shutter starting or ending on the frame
 			// that middle is half a shutter after or before the frame.
 			const maxon::Float64 fps = maxon::Float64(maxon::Max(vps->doc->GetFps(), maxon::Int32(1)));
-			const cinema::BaseTime frameTime = cinema::BaseTime(vps->doc->GetTime().Get() + exportSettings.shutterCentre / fps);
-			const maxon::Float64 half = exportSettings.shutter * 0.5 / fps;
+			const cinema::BaseTime frameTime = cinema::BaseTime(vps->doc->GetTime().Get() + (motionBlur ? exportSettings.shutterCentre / fps : 0.0));
+			const maxon::Float64 half = motionBlur ? exportSettings.shutter * 0.5 / fps : 1.0 / fps;
 			MotionSample* const samples[2] = { &shutterOpen, &shutterClose };
 			for (maxon::Int i = 0; i < 2; ++i)
 			{
@@ -356,7 +384,7 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 
 		SceneExporter exporter(vps->doc, exportSettings);
 		exporter.Collect() iferr_return;
-		if (motionBlur)
+		if (motionBlur || vectorPass)
 			exporter.SetMotion(&shutterOpen, &shutterClose);
 		if (IsCapturing())
 		{
@@ -378,6 +406,8 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 	request.String("op", "render"_s);
 	request.Int("width", width);
 	request.Int("height", height);
+	if (pixelAspect != 1.0)
+		request.Float("pixel_aspect", pixelAspect);
 
 	// The passes Cinema 4D has a buffer for.
 	maxon::Int passBuffers = 0;

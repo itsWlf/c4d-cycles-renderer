@@ -42,6 +42,9 @@ BLENDER = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
 # Left out: they belong to other kinds of node trees, or need data the plugin cannot give them.
 SKIP_NODES = {"ShaderNodeOutputLight", "ShaderNodeOutputWorld", "ShaderNodeOutputLineStyle", "ShaderNodeUVAlongStroke", "ShaderNodeScript",
               "ShaderNodeTexIES", "ShaderNodeMixRGB", "ShaderNodeEeveeSpecular", "ShaderNodeOutputAOV"}
+# The buttons under a file setting (nodespace/path_commands.cpp registers the commands by these ids).
+PATH_COMMANDS = [("com.wolfnimations.cyclesrender.command.path.relative", "Make Relative"),
+                 ("com.wolfnimations.cyclesrender.command.path.absolute", "Make Absolute")]
 # Properties that are no simple value. An image is replaced by a file and a colour space (below).
 SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash", "mode"}
 
@@ -329,6 +332,21 @@ class Description:
         for name, option_label in options or []:
             self.strings.append(entry("string", f"{identifier}#enum#{name}", name_string(option_label)))
 
+    def buttons(self, identifier, label, commands):
+        """A row of buttons in the Attribute Manager, each a command of the plugin (registered under
+        its id in maxon::CommandClasses, nodespace/path_commands.cpp), as Maxon's own Image node has
+        its "Reload Image" and the like: a group of two columns in the layout and a "command" entry
+        with the command type "button" per button; nothing in the data."""
+        self.data.append(entry("group", identifier))
+        self.ui.append(entry("group", identifier, {D + "ui.base.groupid": value("net.maxon.datatype.internedid", "net.maxon.node.base.group.inputs"),
+                                                   D + "ui.base.groupcolumns": value("int64", len(commands)),
+                                                   D + "ui.base.grouptitlebar": value("bool", False)}))
+        self.strings.append(entry("group", identifier, name_string(label)))
+        for command, text in commands:
+            self.ui.append(entry("command", command, {D + "ui.base.commandtype": value("net.maxon.datatype.id", "button"),
+                                                      D + "ui.base.groupid": value("net.maxon.datatype.internedid", identifier)}))
+            self.strings.append(entry("command", command, name_string(text)))
+
     def finish(self):
         self.strings.append(entry("exportedstring", "net.maxon.object.base.name", name_string(self.label)))
         return (definition({D + "data.info.classification": value("net.maxon.datatype.id", "node")}, self.data),
@@ -466,6 +484,12 @@ def main():
             properties.insert(1, '\t{ "image.colorspace", "prop.image_colorspace", "Color Space", \'e\', "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", 0.0 },')
             prop_ports.insert(0, ("image", "prop.image_file", "File", "u", "", None, None))
             prop_ports.insert(1, ("image.colorspace", "prop.image_colorspace", "Color Space", "e", "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", None))
+            # The first and last frame of an image sequence. Cinema 4D's drop of an image file on the
+            # Node Editor wants an image node with these two (NODESPACE::IMAGENODEPORTS) and fills
+            # them for a sequence; Blender's sequences are not translated, so they never show and
+            # are not sent (the exporter names a dropped sequence in the console).
+            setting("image:frame_start", "prop.image_frame_start", "Start Frame", "i", "", 0, "false")
+            setting("image:frame_end", "prop.image_frame_end", "End Frame", "i", "", 0, "false")
 
         # ---- the description. As on a Blender node: outputs, the node's settings, then the inputs.
         by_property = {identifier: (port, kind) for identifier, port, _label, kind, _items, _default, _group in prop_ports}
@@ -491,6 +515,9 @@ def main():
             # A setting: no wire can go in, and it does not show on the node.
             description.port(port, label, kind, default, group=group, hidden=True, constant=True, options=options_of(items),
                              show=prop_show.get(port))
+            if kind == "u":
+                # Under a file: make its path relative to the document's folder, or absolute again.
+                description.buttons("group.path", "Path", PATH_COMMANDS)
         panels = {first: (f"group.{port_id('', title)}", title, is_open) for title, is_open, first in PANELS.get(node["type"], [])}
         group = None
         for socket, kind, label in in_ports:

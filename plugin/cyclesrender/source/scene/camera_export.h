@@ -116,9 +116,13 @@ struct CameraFraming
 	maxon::Int32 height = 0;
 	maxon::Float64 frameWidth = 0.0;	///< the camera's picture inside it, in pixels
 	maxon::Float64 frameHeight = 0.0;
+	/// Width of an image pixel over its height (Cinema 4D's Pixel Aspect; Blender's pixel aspect X
+	/// over Y, which the `render` request carries). The IPR renders square pixels and gives the
+	/// picture the shape the pixel aspect gives it instead (CameraFraming::Fit).
+	maxon::Float64 pixelAspect = 1.0;
 
 	/// The camera's picture fills the image.
-	static CameraFraming Full(maxon::Int32 width, maxon::Int32 height);
+	static CameraFraming Full(maxon::Int32 width, maxon::Int32 height, maxon::Float64 pixelAspect = 1.0);
 	/// The camera's picture has the aspect @p frameAspect (width / height) and is fitted into the image.
 	static CameraFraming Fit(maxon::Int32 width, maxon::Int32 height, maxon::Float64 frameAspect);
 };

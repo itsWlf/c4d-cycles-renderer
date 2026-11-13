@@ -2,8 +2,8 @@
 """Final driver: renders one frame with a normal blocking render and returns its pixels.
 
 The engine, samples, passes and every other render setting were set before by a `settings`
-request; a `render` request carries the resolution, the names of the passes wanted back and
-optionally the region to render.
+request; a `render` request carries the resolution and pixel aspect, the names of the passes
+wanted back and optionally the region to render.
 """
 
 import os
@@ -161,6 +161,12 @@ def render(header):
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
+    # Width of a pixel over its height. Blender keeps it as two numbers of at least 1 each.
+    aspect = float(header.get("pixel_aspect", 1.0))
+    if aspect <= 0.0:
+        raise RequestError("bad_request", "pixel_aspect must be positive")
+    scene.render.pixel_aspect_x = aspect if aspect >= 1.0 else 1.0
+    scene.render.pixel_aspect_y = 1.0 if aspect >= 1.0 else 1.0 / aspect
     # Across the frames of a sequence Cycles keeps what did not change (acceleration structure,
     # loaded textures) instead of building it again for every frame.
     scene.render.use_persistent_data = True

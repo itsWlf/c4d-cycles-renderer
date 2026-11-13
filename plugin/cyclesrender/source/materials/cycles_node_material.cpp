@@ -386,11 +386,13 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		}
 
 		// The settings on the node.
-		maxon::String imagePath;
+		maxon::Url imageUrl;
 		maxon::Bool imageIsColor = true;
 		maxon::Bool hasImage = false;
 		maxon::Bool hasRamp = false;
 		maxon::Bool hasCurves = false;
+		maxon::Int frameStart = 0;
+		maxon::Int frameEnd = 0;
 		for (maxon::Int i = 0; i < definition.propertyCount; ++i)
 		{
 			const CyclesProperty& property = definition.properties[i];
@@ -398,6 +400,19 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 			if (name.StartsWith("ramp:"_s))
 			{
 				hasRamp = true;   // all of them together, below
+				continue;
+			}
+			if (name.StartsWith("image:"_s))
+			{
+				// The frames of a dropped image sequence (tools/make_nodes.py): no property of Blender's.
+				const maxon::Id frameId = PortId(property.port) iferr_return;
+				const maxon::GraphNode framePort = inputs.FindChild(frameId) iferr_return;
+				maxon::Int frame = 0;
+				if (framePort.IsValid())
+				{
+					frame = framePort.GetEffectivePortValue<maxon::Int>().GetValueOr(0) iferr_return;
+				}
+				(name == "image:frame_start"_s ? frameStart : frameEnd) = frame;
 				continue;
 			}
 			if (name.StartsWith("curve:"_s))
@@ -414,10 +429,8 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 				hasImage = true;
 				ifnoerr (const maxon::Opt<const maxon::Url&> url = port.GetEffectivePortValue<maxon::Url>())
 				{
-					if (url && url->IsPopulated())
-					{
-						imagePath = url->GetSystemPath() iferr_return;
-					}
+					if (url)
+						imageUrl = *url;
 				}
 				continue;
 			}
@@ -447,14 +460,28 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		}
 		if (hasImage)
 		{
-			if (imagePath.IsEmpty())
+			if (frameEnd > frameStart)
+			{
+				exporter.Warn(FormatString("Material \"@\": an @ node shows an image sequence (frames @ to @); sequences are not translated, its file is used as one image.",
+					materialName, maxon::String(definition.label), frameStart, frameEnd));
+			}
+			if (!imageUrl.IsPopulated())
 			{
 				exporter.Warn(FormatString("Material \"@\": an @ node names no file.", materialName, maxon::String(definition.label)));
 			}
 			else
 			{
-				const maxon::String image = exporter.GetFileImageId(imagePath, imageIsColor) iferr_return;
-				graph.SetProperty(entry.index, "image", image);
+				// A path relative to the document's folder, a file of the Asset Browser, or a plain one,
+				// found the way Cinema 4D finds a bitmap's (MaterialExporter::ResolveImageUrl).
+				maxon::String problem;
+				const maxon::String imagePath = exporter.ResolveImageUrl(imageUrl, problem) iferr_return;
+				if (problem.IsPopulated())
+					exporter.Warn(FormatString("Material \"@\": @ node: @", materialName, maxon::String(definition.label), problem));
+				if (imagePath.IsPopulated())
+				{
+					const maxon::String image = exporter.GetFileImageId(imagePath, imageIsColor) iferr_return;
+					graph.SetProperty(entry.index, "image", image);
+				}
 			}
 		}
 	}

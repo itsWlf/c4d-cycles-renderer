@@ -9,6 +9,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../prefs/devices.h"
 #include "../scene/document_colors.h"
 #include "../session/capture.h"
 #include "../session/json.h"
@@ -97,6 +98,16 @@ static const RenderPass PASSES[] =
 	{ CYCLES_PASS_EMISSION,               "Emission", "use_pass_emit" },
 	{ CYCLES_PASS_ENVIRONMENT,            "Environment", "use_pass_environment" },
 	{ CYCLES_PASS_AO,                     "Ambient Occlusion", "use_pass_ambient_occlusion" },
+	// Added in 0.2.0 (F5). Which engine delivers which: docs/reference/blender.md, "Final frames".
+	{ CYCLES_PASS_VECTOR,                 "Vector", "use_pass_vector" },
+	{ CYCLES_PASS_OBJECT_INDEX,           "Object Index", "use_pass_object_index" },
+	{ CYCLES_PASS_MATERIAL_INDEX,         "Material Index", "use_pass_material_index" },
+	{ CYCLES_PASS_SAMPLE_COUNT,           "Debug Sample Count", "cycles.pass_debug_sample_count" },
+	{ CYCLES_PASS_VOLUME_DIRECT,          "Volume Direct", "cycles.use_pass_volume_direct", "eevee.use_pass_volume_direct" },
+	{ CYCLES_PASS_VOLUME_INDIRECT,        "Volume Indirect", "cycles.use_pass_volume_indirect" },
+	{ CYCLES_PASS_SHADOW,                 "Shadow", "use_pass_shadow" },
+	{ CYCLES_PASS_TRANSPARENT,            "Transparent", "eevee.use_pass_transparent" },
+	{ CYCLES_PASS_SHADOW_CATCHER,         "Shadow Catcher", "cycles.use_pass_shadow_catcher" },
 };
 
 maxon::Block<const RenderPass> GetRenderPasses()
@@ -252,7 +263,11 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	request.BeginObject();
 	request.String("op", "settings"_s);
 	request.String("engine", engine == CYCLES_ENGINE_EEVEE ? "EEVEE"_s : "CYCLES"_s);
-	request.String("device", data.GetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU) == CYCLES_DEVICE_GPU ? "GPU"_s : "CPU"_s);
+	const maxon::Bool gpu = data.GetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU) == CYCLES_DEVICE_GPU;
+	request.String("device", gpu ? "GPU"_s : "CPU"_s);
+	// Which back end and devices "GPU" means: the Preferences page (prefs/devices.h).
+	if (gpu)
+		WriteDeviceSettings(request);
 	const maxon::String workingSpace = doc ? BlenderWorkingSpace(doc, warnings) : maxon::String();
 	if (!workingSpace.IsEmpty())
 		request.String("working_space", workingSpace);
@@ -295,10 +310,16 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	request.BeginArray("view_layer");
 	for (const RenderPass& pass : PASSES)
 	{
-		request.BeginArray();
-		request.String(nullptr, maxon::String(pass.property));
-		request.Bool(nullptr, data.GetBool(pass.id, false));
-		request.EndArray();
+		const maxon::Char* const properties[2] = { pass.property, pass.property2 };
+		for (const maxon::Char* property : properties)
+		{
+			if (!property)
+				continue;
+			request.BeginArray();
+			request.String(nullptr, maxon::String(property));
+			request.Bool(nullptr, data.GetBool(pass.id, false));
+			request.EndArray();
+		}
 	}
 	request.EndArray();
 	return engine;

@@ -15,6 +15,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "ipr_add.h"
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
@@ -60,6 +61,12 @@ enum
 	ID_MENU_SHOW_BLENDER,
 	ID_MENU_RESTART_BLENDER,
 	ID_MENU_FIT_WINDOW,
+	ID_MENU_ADD_MATERIAL,
+	ID_MENU_ADD_CAMERA,
+	ID_MENU_ADD_CAMERA_TAG,
+	ID_MENU_ADD_OBJECT_TAG,
+	ID_MENU_ADD_LIGHT,
+	ID_MENU_ADD_LIGHT_TAG,
 
 	CAMERA_RENDER_VIEW = 0,
 	CAMERA_AUTO = 1,
@@ -276,6 +283,17 @@ cinema::Bool IprDialog::CreateLayout()
 	MenuAddString(ID_MENU_SAVE, "Save Image As..."_s);
 	MenuAddSeparator();
 	MenuAddString(ID_MENU_CLOSE, "Close"_s);
+	MenuSubEnd();
+	// What the plugin offers, added to the active document (ipr_add.h).
+	MenuSubBegin("Add"_s);
+	MenuAddString(ID_MENU_ADD_MATERIAL, "Cycles Material"_s);
+	MenuAddSeparator();
+	MenuAddString(ID_MENU_ADD_CAMERA, "Camera with Cycles Camera Tag"_s);
+	MenuAddString(ID_MENU_ADD_CAMERA_TAG, "Cycles Camera Tag on Selected Cameras"_s);
+	MenuAddString(ID_MENU_ADD_OBJECT_TAG, "Cycles Object Tag on Selected Objects"_s);
+	MenuAddSeparator();
+	MenuAddString(ID_MENU_ADD_LIGHT, "Cycles Light"_s);
+	MenuAddString(ID_MENU_ADD_LIGHT_TAG, "Cycles Light Tag on Selected Lights"_s);
 	MenuSubEnd();
 	MenuSubBegin("Options"_s);
 	MenuSubBegin("IPR Resolution"_s);
@@ -716,6 +734,21 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 			break;
 		}
 		case ID_MENU_FIT_WINDOW: ipr.SetFitWindow(true); RefreshMenu(); break;
+		case ID_MENU_ADD_MATERIAL:
+		case ID_MENU_ADD_CAMERA:
+		case ID_MENU_ADD_CAMERA_TAG:
+		case ID_MENU_ADD_OBJECT_TAG:
+		case ID_MENU_ADD_LIGHT:
+		case ID_MENU_ADD_LIGHT_TAG:
+		{
+			const IPRADD what = id == ID_MENU_ADD_MATERIAL ? IPRADD::CYCLES_MATERIAL : id == ID_MENU_ADD_CAMERA ? IPRADD::CAMERA_WITH_TAG
+				: id == ID_MENU_ADD_CAMERA_TAG ? IPRADD::CAMERA_TAG : id == ID_MENU_ADD_LIGHT ? IPRADD::CYCLES_LIGHT
+				: id == ID_MENU_ADD_LIGHT_TAG ? IPRADD::LIGHT_TAG : IPRADD::OBJECT_TAG;
+			maxon::String message;
+			AddToDocument(cinema::GetActiveDocument(), what, message);
+			cinema::StatusSetText("Cycles Render: "_s + message);
+			break;
+		}
 		case ID_MENU_SCALE_25:
 		case ID_MENU_SCALE_50:
 		case ID_MENU_SCALE_100:
@@ -827,7 +860,9 @@ maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::Strin
 			{ "start", ID_BUTTON_START }, { "pause", ID_BUTTON_PAUSE }, { "reload", ID_BUTTON_RELOAD }, { "lock", ID_BUTTON_LOCK },
 			{ "snapshot", ID_BUTTON_SNAPSHOT }, { "frame", ID_BUTTON_FRAME }, { "settings", ID_BUTTON_SETTINGS },
 			{ "close", ID_MENU_CLOSE }, { "restart_blender", ID_MENU_RESTART_BLENDER }, { "show_blender", ID_MENU_SHOW_BLENDER }, { "scale_50", ID_MENU_SCALE_50 }, { "fit_window", ID_MENU_FIT_WINDOW },
-			{ "scale_100", ID_MENU_SCALE_100 } };
+			{ "scale_100", ID_MENU_SCALE_100 }, { "add_material", ID_MENU_ADD_MATERIAL }, { "add_camera", ID_MENU_ADD_CAMERA },
+			{ "add_camera_tag", ID_MENU_ADD_CAMERA_TAG }, { "add_object_tag", ID_MENU_ADD_OBJECT_TAG }, { "add_light", ID_MENU_ADD_LIGHT },
+			{ "add_light_tag", ID_MENU_ADD_LIGHT_TAG } };
 		for (const auto& control : CONTROLS)
 		{
 			if (argument == maxon::String(control.name))

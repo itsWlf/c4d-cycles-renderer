@@ -13,7 +13,11 @@
 #include "../ids.h"
 #include "../materials/cycles_curves.h"
 #include "../nodespace/cycles_nodes.h"
+#include "../nodespace/path_commands.h"
+#include "maxon/node_spaces.h"
+#include "maxon/nodeslib.h"
 #include "../session/json_writer.h"
+#include "ipr_add.h"
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
@@ -21,6 +25,7 @@
 #include "../materials/baked_files.h"
 #include "../materials/material_export.h"
 #include "../materials/native_material.h"
+#include "../prefs/devices.h"
 
 MAXON_CONFIGURATION_BOOL(g_cyclesRenderIprTest, false, maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
 	"Cycles Render: accept IPR commands from test scripts through the plugin's preferences container.");
@@ -320,6 +325,118 @@ static maxon::Result<maxon::String> CurveCommand(const maxon::String& argument)
 	return "{\"problem\":\"no Cycles node of that id with that port in the materials of the active document\"}"_s;
 }
 
+// The graph of the first material of the active document in the Cycles node space.
+static maxon::Result<maxon::nodes::NodesGraphModelRef> FirstCyclesGraph(maxon::String& materialName)
+{
+	iferr_scope;
+	const maxon::Id space(CYCLES_NODESPACE_ID);
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	for (cinema::BaseMaterial* material = doc ? doc->GetFirstMaterial() : nullptr; material; material = material->GetNext())
+	{
+		if (!material->IsInstanceOf(Mmaterial))
+			continue;
+		const cinema::NodeMaterial* const nodeMaterial = static_cast<const cinema::NodeMaterial*>(material);
+		if (!nodeMaterial->HasSpace(space))
+			continue;
+		const maxon::nodes::NodesGraphModelRef model = nodeMaterial->GetGraph(space) iferr_return;
+		if (model)
+		{
+			materialName = material->GetName();
+			return model;
+		}
+	}
+	return maxon::nodes::NodesGraphModelRef();
+}
+
+// "imagedrop <file>", "pathcommand relative|absolute <node id>", "path <node id>" (ipr_testhook.h):
+// what Cinema 4D does with an image dropped on the Node Editor, as far as a script can reach it,
+// and the two path buttons of the image nodes.
+static maxon::Result<maxon::String> ImageNodeCommand(const maxon::String& command, const maxon::String& argument)
+{
+	iferr_scope;
+	maxon::String materialName;
+	const maxon::nodes::NodesGraphModelRef model = FirstCyclesGraph(materialName) iferr_return;
+	if (!model)
+		return "{\"problem\":\"the active document has no material of Cycles nodes\"}"_s;
+	JsonWriter json;
+	json.BeginObject();
+	json.String("material", materialName);
+
+	if (command == "imagedrop"_s)
+	{
+		// What the space tells Cinema 4D (NODESPACE::IMAGENODEASSETID, IMAGENODEPORTS), used as the
+		// drop uses it: a node of that asset, the file in the second port. (The drop itself, a mouse
+		// over the Node Editor, cannot be made by a script.)
+		const maxon::DataDictionary spaceData = maxon::nodes::NodeSpaceHelpersInterface::GetNodeSpaceData(maxon::Id(CYCLES_NODESPACE_ID));
+		const maxon::Id asset = spaceData.Get(maxon::nodes::NODESPACE::IMAGENODEASSETID, maxon::Id());
+		const maxon::nodes::NODESPACE::ImageNodePortTuple ports = spaceData.Get(maxon::nodes::NODESPACE::IMAGENODEPORTS, maxon::nodes::NODESPACE::ImageNodePortTuple());
+		json.String("asset", asset.ToString());
+		const maxon::NodePath* const paths[4] = { &ports.first, &ports.second, &ports.third, &ports.fourth };
+		json.BeginArray("ports");
+		for (const maxon::NodePath* path : paths)
+			json.String(nullptr, path->IsEmpty() ? maxon::String() : maxon::String(path->GetLastId().ToCString()));
+		json.EndArray();
+		if (asset.IsEmpty() || ports.second.IsEmpty())
+		{
+			json.String("problem", "the space names no image node"_s);
+			json.EndObject();
+			return json.GetText();
+		}
+		const maxon::nodes::NodeTemplate nodeTemplate = maxon::nodes::NodesLib::LoadTemplate(maxon::AssetInterface::GetBuiltinRepository(), asset) iferr_return;
+		maxon::GraphTransaction transaction = model.BeginTransaction() iferr_return;
+		const maxon::GraphNode node = model.AddChild(maxon::Id(), nodeTemplate) iferr_return;
+		const maxon::GraphNode outputs = node.GetOutputs() iferr_return;
+		const maxon::GraphNode inputs = node.GetInputs() iferr_return;
+		const maxon::GraphNode result = outputs.FindChild(ports.first.GetLastId()) iferr_return;
+		const maxon::GraphNode file = inputs.FindChild(ports.second.GetLastId()) iferr_return;
+		const maxon::GraphNode first = inputs.FindChild(ports.third.GetLastId()) iferr_return;
+		const maxon::GraphNode last = inputs.FindChild(ports.fourth.GetLastId()) iferr_return;
+		json.Bool("ports_found", result.IsValid() && file.IsValid() && first.IsValid() && last.IsValid());
+		if (file.IsValid())
+		{
+			maxon::Url url;
+			url.SetSystemPath(argument) iferr_return;
+			file.SetPortValue(url) iferr_return;
+		}
+		transaction.Commit() iferr_return;
+		json.String("node", maxon::String(node.GetId().ToCString()));
+	}
+	else
+	{
+		maxon::String nodeName = argument;
+		maxon::Bool relative = true;
+		if (command == "pathcommand"_s)
+		{
+			maxon::Int space = 0;
+			if (!argument.Find(" "_s, &space))
+				return "{\"problem\":\"pathcommand relative|absolute <node id>\"}"_s;
+			relative = argument.GetLeftPart(space) == "relative"_s;
+			nodeName = argument.GetRightPart(space + 1);
+		}
+		maxon::Id nodeId;
+		nodeId.Init(nodeName) iferr_return;
+		const maxon::GraphNode node = model.GetViewRoot().FindChild(nodeId) iferr_return;
+		if (!node.IsValid())
+			return "{\"problem\":\"no node of that id\"}"_s;
+		if (command == "pathcommand"_s)
+		{
+			const maxon::String result = InvokePathCommand(relative, model, node) iferr_return;
+			json.String("result", result);
+		}
+		const maxon::GraphNode inputs = node.GetInputs() iferr_return;
+		const maxon::GraphNode file = inputs.FindChild(maxon::Id("prop.image_file")) iferr_return;
+		maxon::Url url;
+		if (file.IsValid())
+		{
+			url = file.GetEffectivePortValue<maxon::Url>().GetValueOr(maxon::Url()) iferr_return;
+		}
+		json.String("scheme", url.GetScheme().ToString());
+		json.String("path", url.GetPath());
+	}
+	json.EndObject();
+	return json.GetText();
+}
+
 static maxon::String Execute(const maxon::String& commandLine)
 {
 	IprController& ipr = IprController::Get();
@@ -477,6 +594,64 @@ static maxon::String Execute(const maxon::String& commandLine)
 		iferr (const maxon::String answer = CurveCommand(argument))
 			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
 		return answer;
+	}
+	else if (command == "add"_s)
+	{
+		// What the window's "Add" menu does, without the window: material, camera, camera_tag,
+		// object_tag, light, light_tag.
+		const IPRADD what = argument == "material"_s ? IPRADD::CYCLES_MATERIAL : argument == "camera"_s ? IPRADD::CAMERA_WITH_TAG
+			: argument == "camera_tag"_s ? IPRADD::CAMERA_TAG : argument == "light"_s ? IPRADD::CYCLES_LIGHT
+			: argument == "light_tag"_s ? IPRADD::LIGHT_TAG : IPRADD::OBJECT_TAG;
+		maxon::String message;
+		const maxon::Int added = AddToDocument(cinema::GetActiveDocument(), what, message);
+		JsonWriter json;
+		json.BeginObject();
+		json.Int("added", added);
+		json.String("message", message);
+		json.EndObject();
+		return json.GetText();
+	}
+	else if (command == "imagedrop"_s || command == "pathcommand"_s || command == "path"_s)
+	{
+		iferr (const maxon::String answer = ImageNodeCommand(command, argument))
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		return answer;
+	}
+	else if (command == "devices"_s)
+	{
+		// The Preferences page's Cycles Render Devices (prefs/devices.h): "find" asks a Blender as the
+		// button does, "type <n>" chooses a type, "use <index> <0|1>" ticks a checkbox of the page,
+		// "reset" forgets everything; then the settings as JSON.
+		if (argument == "find"_s)
+		{
+			iferr (FindDevices())
+				return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		}
+		else if (argument.StartsWith("type "_s))
+		{
+			iferr (const maxon::Int type = argument.GetPart(5, argument.GetLength() - 5).ToInt())
+				return "{\"problem\":\"no type\"}"_s;
+			SetDeviceType(DEVICETYPE(maxon::Int32(type)));
+		}
+		else if (argument.StartsWith("use "_s))
+		{
+			maxon::BaseArray<maxon::String> parts;
+			iferr (argument.Split(" "_s, true, parts))
+				return "{\"problem\":\"no memory\"}"_s;
+			iferr (const DeviceSettings settings = GetDeviceSettings())
+				return "{\"problem\":\"no settings\"}"_s;
+			iferr (const maxon::BaseArray<CyclesDevice> boxes = DevicesOfType(settings, settings.type))
+				return "{\"problem\":\"no list\"}"_s;
+			const maxon::Int index = parts.GetCount() == 3 ? parts[1].ToInt().GetValueOr(-1) : -1;
+			if (index < 0 || index >= boxes.GetCount())
+				return "{\"problem\":\"no such checkbox\"}"_s;
+			SetDeviceUse(boxes[index].id, parts[2] == "1"_s);
+		}
+		else if (argument == "reset"_s)
+		{
+			ResetDeviceSettings();
+		}
+		return DescribeDeviceSettings();
 	}
 	else if (command == "bakes"_s)
 	{

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Draws the IPR window's toolbar icons into plugin/cyclesrender/res/icons.
+"""Draws the plugin's icons (the IPR window's toolbar, the commands, tags and the light object)
+into plugin/cyclesrender/res/icons.
 
     python tools/make_icons.py
 
@@ -186,10 +187,24 @@ def camera_tag(x, y):
     return (72, 72, 72)
 
 
+def light(x, y):
+    """The icon of the Cycles Light object and of the Cycles Light tag (the maintainer's wish,
+    0.2.0): the camera tag's kind of variant in yellow, the plugin's hexagon in a dark yellow with
+    a lighter, shaded yellow circle."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        shade = max(0.0, 1.0 - math.hypot(x - 0.42, y - 0.42) * 1.6)
+        return (255, int(200 + 50 * shade), int(40 + 150 * shade))
+    return (150, 112, 12)
+
+
 if __name__ == "__main__":
     for icon_name, shape in (("play", play), ("stop", stop), ("pause", pause), ("pause_active", pause_active), ("reload", reload_icon),
                              ("lock_closed", lock(True)), ("lock_open", lock(False)), ("snapshot", snapshot),
                              ("frame", frame), ("settings", gear), ("cyclesrender", app), ("cyclesrender_grey", app_grey),
-                             ("camera_tag", camera_tag)):
+                             ("camera_tag", camera_tag), ("light_object", light), ("light_tag", light)):
         render(icon_name, shape)
     print("icons written to", os.path.normpath(OUT))

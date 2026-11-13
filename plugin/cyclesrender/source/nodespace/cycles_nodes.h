@@ -78,6 +78,9 @@ struct CyclesNodeFolder
 /// The node every material ends in.
 #define CYCLES_OUTPUT_NODE_ID "com.wolfnimations.cyclesrender.node.outputmaterial"
 #define CYCLES_PRINCIPLED_NODE_ID "com.wolfnimations.cyclesrender.node.bsdfprincipled"
+/// The Image Texture node, which Cinema 4D makes for an image dropped on the Node Editor
+/// (NODESPACE::IMAGENODEASSETID), with the ports it fills (cycles_nodespace.cpp).
+#define CYCLES_IMAGE_NODE_ID "com.wolfnimations.cyclesrender.node.teximage"
 
 /// All nodes, generated from Blender by tools/make_nodes.py.
 maxon::Block<const CyclesNode> GetCyclesNodes();

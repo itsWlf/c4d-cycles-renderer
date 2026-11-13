@@ -80,17 +80,23 @@ PREFILTERS = [("NONE", "None", "NONE"), ("FAST", "Fast", "FAST"), ("ACCURATE", "
 QUALITIES = [("HIGH", "High", "HIGH"), ("BALANCED", "Balanced", "BALANCED"), ("FAST", "Fast", "FAST")]
 
 # The render passes: checkboxes only; their table (Blender's pass names) is in render_settings_map.cpp.
-DATA_PASSES = [(1700, "DEPTH", "Depth"), (1701, "MIST", "Mist"), (1702, "POSITION", "Position"), (1703, "NORMAL", "Normal"), (1704, "UV", "UV")]
-LIGHT_PASSES = [(1705, "DIFFUSE_DIRECT", "Diffuse Direct"), (1706, "DIFFUSE_INDIRECT", "Diffuse Indirect"), (1707, "DIFFUSE_COLOR", "Diffuse Color"),
-                (1708, "GLOSSY_DIRECT", "Glossy Direct"), (1709, "GLOSSY_INDIRECT", "Glossy Indirect"), (1710, "GLOSSY_COLOR", "Glossy Color"),
-                (1711, "TRANSMISSION_DIRECT", "Transmission Direct"), (1712, "TRANSMISSION_INDIRECT", "Transmission Indirect"),
-                (1713, "TRANSMISSION_COLOR", "Transmission Color"), (1714, "EMISSION", "Emission"), (1715, "ENVIRONMENT", "Environment"),
-                (1716, "AO", "Ambient Occlusion")]
+# A fourth element names the one engine that has the pass: the page hides it for the other.
+DATA_PASSES = [(1700, "DEPTH", "Depth"), (1701, "MIST", "Mist"), (1702, "POSITION", "Position"), (1703, "NORMAL", "Normal"), (1704, "UV", "UV", "CYCLES"),
+               (1717, "VECTOR", "Vector (Motion)"), (1718, "OBJECT_INDEX", "Object Index", "CYCLES"), (1725, "MATERIAL_INDEX", "Material Index", "CYCLES"),
+               (1724, "SAMPLE_COUNT", "Sample Count", "CYCLES")]
+LIGHT_PASSES = [(1705, "DIFFUSE_DIRECT", "Diffuse Direct"), (1706, "DIFFUSE_INDIRECT", "Diffuse Indirect", "CYCLES"), (1707, "DIFFUSE_COLOR", "Diffuse Color"),
+                (1708, "GLOSSY_DIRECT", "Glossy Direct"), (1709, "GLOSSY_INDIRECT", "Glossy Indirect", "CYCLES"), (1710, "GLOSSY_COLOR", "Glossy Color"),
+                (1711, "TRANSMISSION_DIRECT", "Transmission Direct", "CYCLES"), (1712, "TRANSMISSION_INDIRECT", "Transmission Indirect", "CYCLES"),
+                (1713, "TRANSMISSION_COLOR", "Transmission Color", "CYCLES"), (1720, "VOLUME_DIRECT", "Volume Direct"),
+                (1721, "VOLUME_INDIRECT", "Volume Indirect", "CYCLES"), (1714, "EMISSION", "Emission"), (1715, "ENVIRONMENT", "Environment"),
+                (1716, "AO", "Ambient Occlusion"), (1722, "SHADOW", "Shadow", "EEVEE"), (1723, "TRANSPARENT", "Transparent", "EEVEE"),
+                (1719, "SHADOW_CATCHER", "Shadow Catcher", "CYCLES")]
 
 
 def passes(entries):
-    return [{"kind": "PASS", "id": id, "symbol": "CYCLES_PASS_" + suffix, "label": label, "engine": None, "enable": None}
-            for id, suffix, label in entries]
+    return [{"kind": "PASS", "id": entry[0], "symbol": "CYCLES_PASS_" + entry[1], "label": entry[2],
+             "engine": entry[3] if len(entry) > 3 else None, "enable": None}
+            for entry in entries]
 
 
 POOLS = [(size, size + " MB", size) for size in ("16", "32", "64", "128", "256", "512", "1024")]
@@ -399,6 +405,24 @@ PAGE = [
         group(2195, "CYCLES_GROUP_PASSES_DATA", "Data", passes(DATA_PASSES)),
         group(2196, "CYCLES_GROUP_PASSES_LIGHT", "Light", passes(LIGHT_PASSES)),
     ]),
+    # Directly right of the AOVs tab (the maintainer, 2026-11-12).
+    # Blender's Output tab, Format panel: the resolution, its percentage and the pixel aspect, as
+    # Blender shows them. Cinema 4D's Output page keeps the values that render (Width, Height,
+    # Pixel Aspect): these settings are stored here and write those values, and show them back
+    # when they were changed there (videopost/output_settings.cpp). Nothing of it goes to Blender
+    # as a property (path None): the plugin sends the size and pixel aspect with each frame.
+    group(2200, "CYCLES_TAB_OUTPUT", "Output", [
+        group(2201, "CYCLES_GROUP_FORMAT", "Format", [
+            row(I(1850, "CYCLES_OUTPUT_RESOLUTION_X", "Resolution X", 1920, None, min=1, max=65536),
+                I(1851, "CYCLES_OUTPUT_RESOLUTION_Y", "Y", 1080, None, min=1, max=65536)),
+            row(I(1852, "CYCLES_OUTPUT_PERCENTAGE", "%", 100, None, min=1, max=1000),
+                {"kind": "TEXT", "id": 1855, "symbol": "CYCLES_OUTPUT_RESULT", "label": "", "engine": None, "enable": None}),
+            row(F(1853, "CYCLES_OUTPUT_ASPECT_X", "Aspect X", 1.0, None, min=1.0, max=200.0, step=0.1),
+                F(1854, "CYCLES_OUTPUT_ASPECT_Y", "Y", 1.0, None, min=1.0, max=200.0, step=0.1)),
+            text(1856, "CYCLES_OUTPUT_NOTE", "Width, Height and Pixel Aspect of Cinema 4D's Output page, in Blender's terms."),
+        ]),
+    ]),
+
 ]
 
 
@@ -452,7 +476,9 @@ def group_body(children, depth):
         run.clear()
 
     for child in children:
-        if child["kind"] in ("GROUP", "TEXT"):
+        # A render pass is a checkbox of its own row, and some are hidden for one engine: outside a
+        # grid hiding one shifts nothing.
+        if child["kind"] in ("GROUP", "TEXT", "PASS"):
             flush()
             out.append(res_entry(child, depth))
             continue

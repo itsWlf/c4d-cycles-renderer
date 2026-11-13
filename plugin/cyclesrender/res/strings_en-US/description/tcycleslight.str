@@ -1,0 +1,66 @@
+STRINGTABLE Tcycleslight
+{
+	Tcycleslight                            "Cycles Light";
+
+	CYCLESLIGHTTAG_GROUP_LIGHT              "Light";
+	CYCLESLIGHTTAG_LIGHT_ENABLE             "Use Blender's Light Settings (replace the light's own)";
+	CYCLESLIGHTTAG_TAKE_FROM_LIGHT          "Take Values from the Light";
+	CYCLESLIGHTTAG_TYPE                     "Type";
+	CYCLESLIGHTTAG_TYPE_POINT               "Point";
+	CYCLESLIGHTTAG_TYPE_SUN                 "Sun";
+	CYCLESLIGHTTAG_TYPE_SPOT                "Spot";
+	CYCLESLIGHTTAG_TYPE_AREA                "Area";
+	CYCLESLIGHTTAG_USE_TEMPERATURE          "Temperature";
+	CYCLESLIGHTTAG_TEMPERATURE              "Temperature (K)";
+	CYCLESLIGHTTAG_COLOR                    "Color";
+	CYCLESLIGHTTAG_ENERGY                   "Power (W)";
+	CYCLESLIGHTTAG_EXPOSURE                 "Exposure";
+	CYCLESLIGHTTAG_NORMALIZE                "Normalize";
+	CYCLESLIGHTTAG_RADIUS                   "Radius";
+	CYCLESLIGHTTAG_SOFT_FALLOFF             "Soft Falloff";
+	CYCLESLIGHTTAG_ANGLE                    "Angle";
+	CYCLESLIGHTTAG_SHAPE                    "Shape";
+	CYCLESLIGHTTAG_SHAPE_SQUARE             "Square";
+	CYCLESLIGHTTAG_SHAPE_RECTANGLE          "Rectangle";
+	CYCLESLIGHTTAG_SHAPE_DISK               "Disk";
+	CYCLESLIGHTTAG_SHAPE_ELLIPSE            "Ellipse";
+	CYCLESLIGHTTAG_SIZE                     "Size";
+	CYCLESLIGHTTAG_SIZE_Y                   "Size Y";
+	CYCLESLIGHTTAG_GROUP_BEAM               "Beam Shape";
+	CYCLESLIGHTTAG_SPOT_SIZE                "Spot Size";
+	CYCLESLIGHTTAG_SPOT_BLEND               "Blend";
+	CYCLESLIGHTTAG_SPREAD                   "Spread";
+
+	CYCLESLIGHTTAG_GROUP_SETTINGS           "Settings";
+	CYCLESLIGHTTAG_SETTINGS_ENABLE          "Use These Settings (Cast Shadow replaces the light's shadow type)";
+	CYCLESLIGHTTAG_MAX_BOUNCES              "Max Bounces";
+	CYCLESLIGHTTAG_CAST_SHADOW              "Cast Shadow";
+	CYCLESLIGHTTAG_MULTIPLE_IMPORTANCE      "Multiple Importance";
+	CYCLESLIGHTTAG_SHADOW_CAUSTICS          "Shadow Caustics";
+	CYCLESLIGHTTAG_PORTAL                   "Portal";
+
+	CYCLESLIGHTTAG_GROUP_VISIBILITY         "Visibility";
+	CYCLESLIGHTTAG_VISIBILITY_ENABLE        "Use This Ray Visibility";
+	CYCLESLIGHTTAG_VISIBLE_CAMERA           "Camera";
+	CYCLESLIGHTTAG_VISIBLE_DIFFUSE          "Diffuse";
+	CYCLESLIGHTTAG_VISIBLE_GLOSSY           "Glossy";
+	CYCLESLIGHTTAG_VISIBLE_TRANSMISSION     "Transmission";
+	CYCLESLIGHTTAG_VISIBLE_VOLUME_SCATTER   "Volume Scatter";
+
+	CYCLESLIGHTTAG_GROUP_EEVEE              "Eevee";
+	CYCLESLIGHTTAG_EEVEE_ENABLE             "Use These Settings";
+	CYCLESLIGHTTAG_GROUP_EEVEE_SHADOW       "Shadow";
+	CYCLESLIGHTTAG_EEVEE_SHADOW_JITTER      "Jitter";
+	CYCLESLIGHTTAG_EEVEE_SHADOW_OVERBLUR    "Overblur";
+	CYCLESLIGHTTAG_EEVEE_SHADOW_FILTER      "Filter";
+	CYCLESLIGHTTAG_EEVEE_SHADOW_RESOLUTION  "Resolution Limit";
+	CYCLESLIGHTTAG_EEVEE_SHADOW_ABSOLUTE    "Absolute Resolution Limit";
+	CYCLESLIGHTTAG_GROUP_EEVEE_INFLUENCE    "Influence";
+	CYCLESLIGHTTAG_EEVEE_DIFFUSE_FACTOR     "Diffuse";
+	CYCLESLIGHTTAG_EEVEE_SPECULAR_FACTOR    "Glossy";
+	CYCLESLIGHTTAG_EEVEE_TRANSMISSION_FACTOR "Transmission";
+	CYCLESLIGHTTAG_EEVEE_VOLUME_FACTOR      "Volume Scatter";
+	CYCLESLIGHTTAG_GROUP_EEVEE_DISTANCE     "Custom Distance";
+	CYCLESLIGHTTAG_EEVEE_USE_CUSTOM_DISTANCE "Custom Distance";
+	CYCLESLIGHTTAG_EEVEE_CUSTOM_DISTANCE    "Distance";
+}

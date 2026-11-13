@@ -19,7 +19,8 @@ struct ExportSettings
 {
 	maxon::Int32 width = 1280;                         ///< image size in pixels
 	maxon::Int32 height = 720;
-	maxon::Bool depthOfField = false;                  ///< send the camera's focus and f-stop
+	maxon::Float64 pixelAspect = 1.0;                  ///< width of a pixel over its height (Cinema 4D's Pixel Aspect)
+	maxon::Bool depthOfField = false;                 ///< send the camera's focus and f-stop
 	maxon::Bool eevee = false;                         ///< the engine is Eevee (no panoramic camera there)
 	maxon::Float64 lightMultiplier = 1.0;              ///< applied to every light
 	cinema::Vector worldColor = cinema::Vector(0.05);  ///< environment when the scene has no Sky object
@@ -124,7 +125,8 @@ private:
 		maxon::Bool volumeScatter = true;  ///< seen by light scattered in volumes (Cycles Object tag only)
 		maxon::Bool holdout = false;       ///< renders as a hole in the picture (Cycles Object tag only)
 		maxon::Bool shadowCatcher = false; ///< shows only the shadows it receives (Cycles Object tag only)
-		maxon::Bool IsDefault() const { return camera && shadow && diffuse && glossy && transmission && volumeScatter && !holdout && !shadowCatcher; }
+		maxon::Int32 passIndex = 0;        ///< Blender's pass index (the Object Index pass): the Compositing tag's first enabled Object Buffer
+		maxon::Bool IsDefault() const { return camera && shadow && diffuse && glossy && transmission && volumeScatter && !holdout && !shadowCatcher && passIndex == 0; }
 	};
 
 	/// One texture tag as far as the exporter reads it.

@@ -1,0 +1,68 @@
+STRINGTABLE Ocycleslight
+{
+	Ocycleslight                            "Cycles Light";
+
+	CYCLESLIGHT_GROUP_LIGHT                 "Light";
+	CYCLESLIGHT_TYPE                        "Type";
+	CYCLESLIGHT_TYPE_POINT                  "Point";
+	CYCLESLIGHT_TYPE_SUN                    "Sun";
+	CYCLESLIGHT_TYPE_SPOT                   "Spot";
+	CYCLESLIGHT_TYPE_AREA                   "Area";
+	CYCLESLIGHT_USE_TEMPERATURE             "Temperature";
+	CYCLESLIGHT_TEMPERATURE                 "Temperature (K)";
+	CYCLESLIGHT_COLOR                       "Color";
+	CYCLESLIGHT_ENERGY                      "Power (W)";
+	CYCLESLIGHT_EXPOSURE                    "Exposure";
+	CYCLESLIGHT_NORMALIZE                   "Normalize";
+	CYCLESLIGHT_RADIUS                      "Radius";
+	CYCLESLIGHT_SOFT_FALLOFF                "Soft Falloff";
+	CYCLESLIGHT_ANGLE                       "Angle";
+	CYCLESLIGHT_SHAPE                       "Shape";
+	CYCLESLIGHT_SHAPE_SQUARE                "Square";
+	CYCLESLIGHT_SHAPE_RECTANGLE             "Rectangle";
+	CYCLESLIGHT_SHAPE_DISK                  "Disk";
+	CYCLESLIGHT_SHAPE_ELLIPSE               "Ellipse";
+	CYCLESLIGHT_SIZE                        "Size";
+	CYCLESLIGHT_SIZE_Y                      "Size Y";
+	CYCLESLIGHT_GROUP_BEAM                  "Beam Shape";
+	CYCLESLIGHT_SPOT_SIZE                   "Spot Size";
+	CYCLESLIGHT_SPOT_BLEND                  "Blend";
+	CYCLESLIGHT_SHOW_CONE                   "Show Cone";
+	CYCLESLIGHT_SPREAD                      "Spread";
+
+	CYCLESLIGHT_GROUP_SETTINGS              "Settings";
+	CYCLESLIGHT_MAX_BOUNCES                 "Max Bounces";
+	CYCLESLIGHT_CAST_SHADOW                 "Cast Shadow";
+	CYCLESLIGHT_MULTIPLE_IMPORTANCE         "Multiple Importance";
+	CYCLESLIGHT_SHADOW_CAUSTICS             "Shadow Caustics";
+	CYCLESLIGHT_PORTAL                      "Portal";
+
+	CYCLESLIGHT_GROUP_VISIBILITY            "Visibility";
+	CYCLESLIGHT_VISIBLE_CAMERA              "Camera";
+	CYCLESLIGHT_VISIBLE_DIFFUSE             "Diffuse";
+	CYCLESLIGHT_VISIBLE_GLOSSY              "Glossy";
+	CYCLESLIGHT_VISIBLE_TRANSMISSION        "Transmission";
+	CYCLESLIGHT_VISIBLE_VOLUME_SCATTER      "Volume Scatter";
+
+	CYCLESLIGHT_GROUP_EEVEE                 "Eevee";
+	CYCLESLIGHT_GROUP_EEVEE_SHADOW          "Shadow";
+	CYCLESLIGHT_EEVEE_SHADOW_JITTER         "Jitter";
+	CYCLESLIGHT_EEVEE_SHADOW_OVERBLUR       "Overblur";
+	CYCLESLIGHT_EEVEE_SHADOW_FILTER         "Filter";
+	CYCLESLIGHT_EEVEE_SHADOW_RESOLUTION     "Resolution Limit";
+	CYCLESLIGHT_EEVEE_SHADOW_ABSOLUTE       "Absolute Resolution Limit";
+	CYCLESLIGHT_GROUP_EEVEE_INFLUENCE       "Influence";
+	CYCLESLIGHT_EEVEE_DIFFUSE_FACTOR        "Diffuse";
+	CYCLESLIGHT_EEVEE_SPECULAR_FACTOR       "Glossy";
+	CYCLESLIGHT_EEVEE_TRANSMISSION_FACTOR   "Transmission";
+	CYCLESLIGHT_EEVEE_VOLUME_FACTOR         "Volume Scatter";
+	CYCLESLIGHT_GROUP_EEVEE_DISTANCE        "Custom Distance";
+	CYCLESLIGHT_EEVEE_USE_CUSTOM_DISTANCE   "Custom Distance";
+	CYCLESLIGHT_EEVEE_CUSTOM_DISTANCE       "Distance";
+
+	CYCLESLIGHT_GROUP_LINKING               "Light Linking";
+	CYCLESLIGHT_LINKING_MODE                "Mode";
+	CYCLESLIGHT_LINKING_MODE_EXCLUDE        "Exclude";
+	CYCLESLIGHT_LINKING_MODE_INCLUDE        "Include";
+	CYCLESLIGHT_LINKING_LIST                "Objects";
+}

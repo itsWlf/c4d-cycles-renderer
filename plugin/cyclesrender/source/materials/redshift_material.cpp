@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The Redshift Standard Material as Principled BSDFs (redshift_material.h). What each option
-// maps to is listed in docs/reference/c4d-sdk.md, "Redshift Standard Material".
+// maps to is listed in docs/reference/c4d-sdk.md, "Redshift Standard Material"; the nodes wired
+// into its inputs are translated by redshift_nodes.cpp.
 
 #include "c4d.h"
 #include "c4d_basematerial.h"
@@ -12,6 +13,7 @@
 
 #include "material_export.h"
 #include "redshift_material.h"
+#include "redshift_nodes.h"
 
 #define RS_NODE "com.redshift3d.redshift4c4d.nodes.core."
 #define STD(name) maxon::Id(RS_NODE "standardmaterial." name)
@@ -197,85 +199,12 @@ private:
 		Warn(FormatString("the \"@\" node plugged into @ is not translated; the value set on the input is used.", name, maxon::String(what)));
 	}
 
-	// The image node for a Texture node plugged into the port.
+	// What is wired into the port, as Blender nodes (redshift_nodes.h): a Texture node, or a chain
+	// of the nodes that have a counterpart; invalid (and named in the console) otherwise.
 	maxon::Result<NodeOutput> Texture(const maxon::GraphNode& port, maxon::Bool colorData, const maxon::Char* what)
 	{
-		iferr_scope;
-		const maxon::GraphNode source = Source(port) iferr_return;
-		if (!source.IsValid())
-			return NodeOutput();
-		const maxon::Id asset = AssetOf(source) iferr_return;
-		if (asset != maxon::Id(RS_NODE "texturesampler"))
-		{
-			NotTranslated(source, what);
-			return NodeOutput();
-		}
-		const maxon::GraphNode inputs = source.GetInputs() iferr_return;
-		const maxon::GraphNode bundle = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.tex0")) iferr_return;
-		maxon::GraphNode pathPort;
-		if (bundle.IsValid())
-		{
-			pathPort = bundle.FindChild(maxon::Id("path")) iferr_return;
-		}
-		maxon::String path;
-		if (pathPort.IsValid())
-		{
-			ifnoerr (const maxon::Opt<const maxon::Url&> url = pathPort.GetEffectivePortValue<maxon::Url>())
-			{
-				if (url && url->IsPopulated())
-				{
-					path = url->GetSystemPath() iferr_return;
-				}
-			}
-			if (path.IsEmpty())
-			{
-				ifnoerr (const maxon::Opt<const maxon::String&> text = pathPort.GetEffectivePortValue<maxon::String>())
-				{
-					if (text)
-						path = *text;
-				}
-			}
-		}
-		if (path.IsEmpty())
-		{
-			Warn(FormatString("the Texture node plugged into @ names no file.", maxon::String(what)));
-			return NodeOutput();
-		}
-		const maxon::String image = _exporter.GetFileImageId(path, colorData) iferr_return;
-		const maxon::Int node = _graph.Add("ShaderNodeTexImage") iferr_return;
-		_graph.SetProperty(node, "image", image);
-
-		// The texture's own tiling and offset.
-		const maxon::GraphNode scalePort = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.scale")) iferr_return;
-		const maxon::GraphNode offsetPort = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.offset")) iferr_return;
-		maxon::Vector2d scale(1.0);
-		maxon::Vector2d offset(0.0);
-		if (scalePort.IsValid())
-		{
-			ifnoerr (const maxon::Opt<const maxon::Vector2d&> value = scalePort.GetEffectivePortValue<maxon::Vector2d>())
-			{
-				if (value)
-					scale = *value;
-			}
-		}
-		if (offsetPort.IsValid())
-		{
-			ifnoerr (const maxon::Opt<const maxon::Vector2d&> moved = offsetPort.GetEffectivePortValue<maxon::Vector2d>())
-			{
-				if (moved)
-					offset = *moved;
-			}
-		}
-		if (scale != maxon::Vector2d(1.0) || offset != maxon::Vector2d(0.0))
-		{
-			const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-			const maxon::Int mapping = _graph.Add("ShaderNodeMapping") iferr_return;
-			_graph.SetInput(mapping, "Scale", cinema::Vector(scale.x, scale.y, 1.0));
-			_graph.SetInput(mapping, "Location", cinema::Vector(offset.x, offset.y, 0.0));
-			_graph.Link(NodeOutput { coordinates, "UV"_s }, mapping, "Vector") iferr_return;
-			_graph.Link(NodeOutput { mapping, "Vector"_s }, node, "Vector") iferr_return;
-		}
-		return NodeOutput { node, "Color"_s };
+		RedshiftNodes nodes(_exporter, _graph, _material);
+		return nodes.Wired(port, colorData, what);
 	}
 
 	MaterialExporter& _exporter;

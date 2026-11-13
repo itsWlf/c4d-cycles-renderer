@@ -18,11 +18,13 @@
 #include "olight.h"
 #include "orslight.h"
 #include "customgui_inexclude.h"
+#include "ocycleslight.h"
 #include "tcompositing.h"
 #include "tcyclesobject.h"
 #include "ttexture.h"
 
 #include "../ids.h"
+#include "../lights/light_tag.h"
 #include "../materials/material_export.h"
 #include "camera_export.h"
 #include "curves_export.h"
@@ -386,6 +388,29 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		{
 			_notes.Append(FormatString("Object \"@\": \"Receive Shadows\" off has no counterpart in Cycles and is ignored.", op->GetName())) iferr_return;
 		}
+		// The Object Buffers: Blender has one pass index per object, shown by the Object Index pass.
+		// The first enabled buffer's id becomes it; further ones are named (one mask per buffer, as
+		// the Standard renderer makes, is no pass Blender has).
+		static const cinema::Int32 BUFFER_ENABLE[12] = { COMPOSITINGTAG_ENABLECHN0, COMPOSITINGTAG_ENABLECHN1, COMPOSITINGTAG_ENABLECHN2,
+			COMPOSITINGTAG_ENABLECHN3, COMPOSITINGTAG_ENABLECHN4, COMPOSITINGTAG_ENABLECHN5, COMPOSITINGTAG_ENABLECHN6, COMPOSITINGTAG_ENABLECHN7,
+			COMPOSITINGTAG_ENABLECHN8, COMPOSITINGTAG_ENABLECHN9, COMPOSITINGTAG_ENABLECHN10, COMPOSITINGTAG_ENABLECHN11 };
+		static const cinema::Int32 BUFFER_ID[12] = { COMPOSITINGTAG_IDCHN0, COMPOSITINGTAG_IDCHN1, COMPOSITINGTAG_IDCHN2, COMPOSITINGTAG_IDCHN3,
+			COMPOSITINGTAG_IDCHN4, COMPOSITINGTAG_IDCHN5, COMPOSITINGTAG_IDCHN6, COMPOSITINGTAG_IDCHN7, COMPOSITINGTAG_IDCHN8, COMPOSITINGTAG_IDCHN9,
+			COMPOSITINGTAG_IDCHN10, COMPOSITINGTAG_IDCHN11 };
+		maxon::Int enabled = 0;
+		inherited.visibility.passIndex = 0;
+		for (maxon::Int i = 0; i < 12; ++i)
+		{
+			if (!GetBoolParameter(compositing, BUFFER_ENABLE[i], false))
+				continue;
+			if (enabled++ == 0)
+				inherited.visibility.passIndex = maxon::Max(maxon::Int32(0), GetIntParameter(compositing, BUFFER_ID[i], 0));
+		}
+		if (enabled > 1)
+		{
+			_notes.Append(FormatString("Object \"@\": only the first of its @ Object Buffers becomes Blender's pass index (Object Index pass, @).",
+				op->GetName(), enabled, inherited.visibility.passIndex)) iferr_return;
+		}
 	}
 
 	// A Cycles Object tag overrides, tab by tab, for its object and everything below.
@@ -407,6 +432,12 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		}
 		if (GetBoolParameter(tag, CYCLESOBJECT_LINKING_ENABLE, false))
 			inherited.linkTag = tag;
+	}
+	// A Cycles Light tag works only on one of Cinema 4D's lights (lights/light_tag.h).
+	if (FindLightTag(op) && !IsTaggableLight(op))
+	{
+		_notes.Append(FormatString(op->GetType() == ID_LIGHT_OBJECT ? "Object \"@\": a Cycles Light tag on a Cycles Light does nothing; the light has these settings itself."_s
+			: "Object \"@\": a Cycles Light tag works on Cinema 4D's and Redshift's lights only; here it does nothing."_s, op->GetName())) iferr_return;
 	}
 
 	// The object a render instance refers to is drawn where the instance is, whatever hides the
@@ -432,7 +463,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	{
 		// Nothing else of it renders: the particles themselves are replaced by the objects.
 	}
-	else if (type == Olight || type == Orslight)
+	else if (type == Olight || type == Orslight || type == ID_LIGHT_OBJECT)
 	{
 		// A Redshift light carries the "used by a generator" mark itself, like a Hair object.
 		const maxon::Bool shines = type == Orslight ? (inherited.visible && layerVisible) : renders;
@@ -813,8 +844,10 @@ maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, con
 {
 	iferr_scope;
 
-	// The light's own list.
-	const cinema::GeData data = GetParameterData(light.object, LIGHT_EXCLUSION_LIST);
+	// The light's own list (the Cycles Light keeps it under ids of its own, with the modes the
+	// other way round).
+	const maxon::Bool own = light.object->GetType() == ID_LIGHT_OBJECT;
+	const cinema::GeData data = GetParameterData(light.object, own ? CYCLESLIGHT_LINKING_LIST : LIGHT_EXCLUSION_LIST);
 	const cinema::InExcludeData* const list = data.GetCustomDataType<cinema::InExcludeData>();
 	const maxon::Int32 count = list ? list->GetObjectCount() : 0;
 	maxon::BaseArray<const cinema::BaseList2D*> listed;
@@ -825,7 +858,9 @@ maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, con
 			listed.Append(entry) iferr_return;
 		}
 	}
-	linking.include = !listed.IsEmpty() && GetIntParameter(light.object, LIGHT_EXCLUSION_MODE, LIGHT_EXCLUSION_MODE_EXCLUDE) == LIGHT_EXCLUSION_MODE_INCLUDE;
+	const maxon::Bool includes = own ? GetIntParameter(light.object, CYCLESLIGHT_LINKING_MODE, CYCLESLIGHT_LINKING_MODE_EXCLUDE) == CYCLESLIGHT_LINKING_MODE_INCLUDE
+		: GetIntParameter(light.object, LIGHT_EXCLUSION_MODE, LIGHT_EXCLUSION_MODE_EXCLUDE) == LIGHT_EXCLUSION_MODE_INCLUDE;
+	linking.include = !listed.IsEmpty() && includes;
 	// A listed object stands for itself and everything below it.
 	for (maxon::Int index = 0; index < _leaves.GetCount() && !listed.IsEmpty(); ++index)
 	{
@@ -904,6 +939,8 @@ template <typename VISIBILITY> static void WriteVisibility(JsonWriter& json, con
 	json.Bool("volume_scatter", visibility.volumeScatter);
 	json.Bool("holdout", visibility.holdout);
 	json.Bool("shadow_catcher", visibility.shadowCatcher);
+	if (visibility.passIndex != 0)
+		json.Int("pass_index", visibility.passIndex);
 	json.EndObject();
 }
 
@@ -1199,7 +1236,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			cameraMotion[0] = _motionOpen->camera;
 			cameraMotion[1] = _motionClose->camera;
 		}
-		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee, CameraFraming::Full(_settings.width, _settings.height),
+		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee, CameraFraming::Full(_settings.width, _settings.height, _settings.pixelAspect),
 			moves ? cameraMotion : nullptr) iferr_return;
 	}
 	// A Sky object comes first; then a Redshift dome light; then the plain world of the render settings.
@@ -1223,7 +1260,10 @@ maxon::Result<maxon::String> SceneExporter::GetListing() const
 	{
 		if (leaf.kind == LEAF::LIGHT)
 		{
-			text += FormatString("light \"@\" type=@ pos=@\n", leaf.path, GetIntParameter(leaf.object, LIGHT_TYPE, 0), VectorText(leaf.mg.off));
+			if (leaf.object->GetType() == ID_LIGHT_OBJECT)
+				text += FormatString("cycles light \"@\" type=@ pos=@\n", leaf.path, GetIntParameter(leaf.object, CYCLESLIGHT_TYPE, 0), VectorText(leaf.mg.off));
+			else
+				text += FormatString("light \"@\" type=@ pos=@\n", leaf.path, GetIntParameter(leaf.object, LIGHT_TYPE, 0), VectorText(leaf.mg.off));
 			continue;
 		}
 		if (leaf.kind == LEAF::HAIR || leaf.kind == LEAF::PARTICLES)

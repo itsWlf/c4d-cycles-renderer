@@ -56,7 +56,7 @@ CONTAINER Tcyclesobject
 			BIG_MODE_SIZE 160;
 			NUM_FLAGS 0;
 			INIT_STATE 0;
-			ACCEPT { Olight; 1036751; };
+			ACCEPT { Olight; 1036751; 1073987; };
 		}
 	}
 

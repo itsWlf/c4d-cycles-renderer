@@ -4,8 +4,8 @@
 The plugin owns the table that maps Cinema 4D parameters to Blender properties and sends
 ready-made (property path, value) pairs. Paths are relative to the scene, for example
 `cycles.samples` or `render.film_transparent`; `view_layer` holds such pairs relative to the
-view layer (the render passes). Three settings need more than an assignment and travel as
-named fields instead: `engine`, `device` and `working_space`.
+view layer (the render passes). Some settings need more than an assignment and travel as
+named fields instead: `engine`, `device` (with `device_type` and `devices`) and `working_space`.
 """
 
 import bpy
@@ -64,11 +64,14 @@ def apply(header):
             raise RequestError("bad_request", f"cannot set view_layer.{path} to {value!r} ({error})") from error
 
     device = header.get("device")
+    reply = {}
     if device is not None:
-        used = devices.use_cycles_device(scene, device)
-        if used != device:
+        used, backend, names, device_warnings = devices.use_cycles_device(scene, device, header.get("device_type"), header.get("devices"))
+        warnings.extend(device_warnings)
+        if used != device and not device_warnings:
             warnings.append(f"Cycles has no {device} device here; rendering on the {used}.")
-    return {"warnings": warnings, "engine": scene.render.engine, "device": scene.cycles.device}, ()
+        reply = {"device_type": backend, "devices": names}
+    return {"warnings": warnings, "engine": scene.render.engine, "device": scene.cycles.device, **reply}, ()
 
 
 def read(header):

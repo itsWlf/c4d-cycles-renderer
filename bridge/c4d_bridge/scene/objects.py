@@ -17,7 +17,8 @@ def build_object(scene, item, blobs):
 
 def set_visibility(obj, item):
     """Which rays see the object: {"camera", "shadow", "diffuse", "glossy", "transmission",
-    "volume_scatter", "holdout", "shadow_catcher"}."""
+    "volume_scatter", "holdout", "shadow_catcher"}, and "pass_index", what the Object Index pass
+    shows for it."""
     visibility = item.get("visibility", {})
     obj.visible_camera = visibility.get("camera", True)
     obj.visible_shadow = visibility.get("shadow", True)
@@ -27,6 +28,7 @@ def set_visibility(obj, item):
     obj.visible_volume_scatter = visibility.get("volume_scatter", True)
     obj.is_holdout = visibility.get("holdout", False)
     obj.is_shadow_catcher = visibility.get("shadow_catcher", False)
+    obj.pass_index = int(visibility.get("pass_index", 0))
 
 
 def assign_materials(scene, obj, item):

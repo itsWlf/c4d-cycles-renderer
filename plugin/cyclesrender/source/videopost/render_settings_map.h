@@ -18,6 +18,7 @@ struct RenderPass
 	maxon::Int32 id;              ///< parameter id (a checkbox) in vpcyclesrender.h
 	const maxon::Char* name;      ///< Blender's name of the pass; also the name of the layer in Cinema 4D
 	const maxon::Char* property;  ///< the property of Blender's view layer that switches it on
+	const maxon::Char* property2 = nullptr;  ///< a second one, where the engines keep the switch in different places
 };
 
 /// Every pass there is, in the order of the Render Settings.

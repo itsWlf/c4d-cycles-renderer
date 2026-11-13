@@ -40,7 +40,16 @@ namespace cyclesrender
 /// "area" (Blender's, nodespace/cycles_nodes.h), "tension", "knots" ([x, y, interpolation,
 /// tangents, flags], sorted), "c4d" (SplineMapper::GetPoint at 1001 even positions across the
 /// range and knots, in the control's coordinates), "sent" (the points the exporter sends, in
-/// Blender's), "problems"}.
+/// Blender's), "problems"}. Three more answer {"material", ...} for the first material of Cycles
+/// nodes of the active document: imagedrop <file> (what a drop of an image on the Node Editor
+/// does with what the node space names: a node of NODESPACE::IMAGENODEASSETID with the file in
+/// its IMAGENODEPORTS; "asset", "ports", "ports_found", "node"), pathcommand relative|absolute
+/// <node id> (runs that button's command through maxon::CommandClasses: "result") and path
+/// <node id> (both also give the file's "scheme" and "path"). And add material|camera|camera_tag|
+/// object_tag|light|light_tag runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"}.
+/// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render
+/// Devices (prefs/devices.h; "find" starts a Blender as the page's button does) and answers with
+/// them (DescribeDeviceSettings).
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprTestCommand();
 

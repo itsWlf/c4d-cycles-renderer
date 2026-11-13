@@ -69,11 +69,11 @@ The test suite lives in `tests/` and is **kept locally: it is not part of the re
 ```powershell
 .\tools\run_tests.ps1 -Changed             # the tests for what differs from the last commit
 .\tools\run_tests.ps1 -Changed -DryRun     # only print what it would run, and why
-.\tools\run_tests.ps1                      # the whole baseline: build, 9 bridge tests, 37 Cinema 4D tests; about 16 minutes
+.\tools\run_tests.ps1                      # the whole baseline: build, 12 bridge tests, 43 Cinema 4D tests; about 17 minutes
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 ```
 
-**When to run which.** For every piece of work: the tests for what changed (`-Changed`). The whole baseline: once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release, on every supported Blender and Cinema 4D version once there is more than one. A typical selected run takes one and a half to four minutes (measured: a bridge file 97 s, an exporter file 230 s with the build, a file the map does not know, which runs the core set, 203 s); the baseline about 14 minutes (820 s; with one start of Cinema 4D per test it was 940 s), and about two minutes more since the camera tests of 0.2.0 (estimated from their own times: `cameras` 91 s instead of 30 s, `camera_tag` 40 s, `test_cameras` about 20 s; the whole baseline was not run).
+**When to run which.** For every piece of work: the tests for what changed (`-Changed`). The whole baseline: once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release, on every supported Blender and Cinema 4D version once there is more than one. A typical selected run takes one and a half to four minutes (measured: a bridge file 97 s, an exporter file 230 s with the build, a file the map does not know, which runs the core set, 203 s); the baseline about 14 minutes (820 s; with one start of Cinema 4D per test it was 940 s), and about two minutes more since the camera tests of 0.2.0 (estimated from their own times: `cameras` 91 s instead of 30 s, `camera_tag` 40 s, `test_cameras` about 20 s; and the tests of the 0.2.0 features measured in a selected run: `output` 21 s, `image_nodes` 10 s, `ipr_add` under 1 s, `test_output` 3 s; of F10 to F14: `cycles_lights` 61 s, `redshift_nodes` 44 s, `devices` 23 s, `test_lights` 3 s, `test_devices` 4 s; the whole baseline was not run).
 
 **How `-Changed` chooses.** It takes the files that differ from the last commit (staged or not, and new files git does not ignore) and, because `tests/` is not in git, the files in `tests/` written since the last commit was made. A map in `tools/run_tests.ps1` (the field `Covers` of each test, next to the test list) says which tests check which paths. A few files are everybody's (the scene walk and writer, the session layer, the videopost, the bridge's server and protocol, the runner itself): a change in one of them runs a named core set of twelve tests, and the script says next to the list why that set is enough. Every run of `-Changed` also includes an always-run set (`test_protocol`, `session_selftest`, `coords`: about a minute). A file the map does not know runs the core set and is named as unmapped; a change of documents only runs nothing. The script prints which tests it chose for which file. A selected run can miss a fault in code the map does not connect to the change: that is what the sprint's full run is for, and when it finds such a fault, the connection goes into the map in the same piece of work.
 
@@ -108,6 +108,7 @@ Cinema 4D reads these from its command line (`name=value`) or from environment v
 | `g_cyclesRenderDumpFile=<file>` | `c4d.GePluginMessage(1073816, None)` writes the exporter's listing of the active document to this file, without Blender |
 | `g_cyclesRenderSelfTest=<n>` | Without the dump file set, the same plugin message runs the session self-test for n cycles |
 | `g_cyclesRenderIprTest=true` | The same plugin message first looks for an IPR test command (`ipr/ipr_testhook.h`) |
+| `g_cyclesRenderLogPathCommands=true` | Write to the console what the image nodes' buttons "Make Relative" and "Make Absolute" receive when pressed (`nodespace/path_commands.cpp`) |
 | `g_cyclesRenderNativeMaterial=true` | Offer the Cycles Native Material (its command and its entry in the material menus). Switched off in this release, see the roadmap, "Open bugs" |
 
 The bridge takes `--show-window` after `--` to keep Blender's window visible; the IPR window has the same as a menu entry (*Options > Show Blender Window*), which is the quickest way to see what Blender was sent.
@@ -130,6 +131,8 @@ Other common changes:
 | Translate another shader into nodes | A case in `ShaderTranslator::Native()` (`materials/shader_translate.cpp`) |
 | Add a request the IPR sends | A handler in the bridge's `server.py`, a `PostRequest` in `ipr/ipr_controller.cpp`, an entry in the protocol |
 | Add a parameter to the Cycles Object tag | `res/description/tcyclesobject.*`, a default in `tags/object_tag.cpp`, read it where it counts |
+| Add a setting to the Cycles Light object and tag | The same id in `res/description/ocycleslight.*` and `tcycleslight.*` (the tag's switches decide by the hundreds of the id, `lights/light_tag.cpp`), its default in `InitLightSettings`, read it in `lights/light_settings.cpp` into `BlenderLight` (`scene/light_export.h`), write it in `WriteLight`, a field in the protocol and in `bridge/c4d_bridge/scene/lights.py` |
+| Translate another Redshift node | A case in `RedshiftNodes::Translate` (`materials/redshift_nodes.cpp`), and a chain for it in `tests/c4d/redshift_nodes.py` against Redshift |
 | Add a parameter to the Cycles Camera tag | `res/description/tcyclescamera.*`, a default in `tags/camera_tag.h` and `.cpp`, read it in `CameraValues::Read` (`scene/camera_export.cpp`) |
 | Support a new Blender version | See the next section, and "Version coupling" in [reference/blender.md](reference/blender.md) |
 | Register a new hook | It needs a plugin id from developers.maxon.net (`source/ids.h` says which may be shared) |

@@ -1,0 +1,92 @@
+#ifndef TCYCLESLIGHT_H__
+#define TCYCLESLIGHT_H__
+
+// Parameter IDs of the Cycles Light tag. They are stored in scene files: never renumber, and
+// never reuse a retired number.
+//
+// The tag sits on one of Cinema 4D's lights (a standard light or a Redshift light). Each tab
+// starts with a switch; while it is off the tab counts for nothing and the light is translated
+// from its own values as without the tag. Light: on, the tab's settings replace the light's own
+// type, colour, brightness, sizes and cone (the light keeps its place, its direction, its on/off
+// and its include and exclude lists). Settings, Visibility, Eevee: on, they add Blender's
+// settings that Cinema 4D's lights do not have; "Cast Shadow" then replaces the light's own
+// shadow type.
+//
+// The settings have the numbers of the same settings of the Cycles Light object (ocycleslight.h),
+// so that one reader serves both (lights/light_settings.h); keep the two headers equal where they
+// overlap.
+enum
+{
+	// Tabs and groups (as in ocycleslight.h)
+	CYCLESLIGHTTAG_GROUP_LIGHT = 2000,
+	CYCLESLIGHTTAG_GROUP_BEAM = 2001,
+	CYCLESLIGHTTAG_GROUP_SETTINGS = 2002,
+	CYCLESLIGHTTAG_GROUP_VISIBILITY = 2003,
+	CYCLESLIGHTTAG_GROUP_EEVEE = 2004,
+	CYCLESLIGHTTAG_GROUP_EEVEE_SHADOW = 2005,
+	CYCLESLIGHTTAG_GROUP_EEVEE_INFLUENCE = 2006,
+	CYCLESLIGHTTAG_GROUP_EEVEE_DISTANCE = 2007,
+
+	// The switch of each tab (unchecked by default: the light is translated as without the tag)
+	CYCLESLIGHTTAG_LIGHT_ENABLE = 1900,
+	CYCLESLIGHTTAG_SETTINGS_ENABLE = 1901,
+	CYCLESLIGHTTAG_VISIBILITY_ENABLE = 1902,
+	CYCLESLIGHTTAG_EEVEE_ENABLE = 1903,
+	// A button: fills the Light tab with what the light is translated to now
+	CYCLESLIGHTTAG_TAKE_FROM_LIGHT = 1910,
+
+	// Light (Blender's Light panel)
+	CYCLESLIGHTTAG_TYPE = 1000,
+		CYCLESLIGHTTAG_TYPE_POINT = 0,
+		CYCLESLIGHTTAG_TYPE_SUN = 1,
+		CYCLESLIGHTTAG_TYPE_SPOT = 2,
+		CYCLESLIGHTTAG_TYPE_AREA = 3,
+	CYCLESLIGHTTAG_USE_TEMPERATURE = 1001,
+	CYCLESLIGHTTAG_TEMPERATURE = 1002,
+	CYCLESLIGHTTAG_COLOR = 1003,
+	CYCLESLIGHTTAG_ENERGY = 1004,
+	CYCLESLIGHTTAG_EXPOSURE = 1005,
+	CYCLESLIGHTTAG_NORMALIZE = 1006,
+	CYCLESLIGHTTAG_RADIUS = 1007,
+	CYCLESLIGHTTAG_SOFT_FALLOFF = 1008,
+	CYCLESLIGHTTAG_ANGLE = 1009,
+	CYCLESLIGHTTAG_SHAPE = 1010,
+		CYCLESLIGHTTAG_SHAPE_SQUARE = 0,
+		CYCLESLIGHTTAG_SHAPE_RECTANGLE = 1,
+		CYCLESLIGHTTAG_SHAPE_DISK = 2,
+		CYCLESLIGHTTAG_SHAPE_ELLIPSE = 3,
+	CYCLESLIGHTTAG_SIZE = 1011,
+	CYCLESLIGHTTAG_SIZE_Y = 1012,
+	CYCLESLIGHTTAG_SPOT_SIZE = 1013,
+	CYCLESLIGHTTAG_SPOT_BLEND = 1014,
+	CYCLESLIGHTTAG_SPREAD = 1016,
+
+	// Settings (Cycles)
+	CYCLESLIGHTTAG_MAX_BOUNCES = 1100,
+	CYCLESLIGHTTAG_CAST_SHADOW = 1101,
+	CYCLESLIGHTTAG_MULTIPLE_IMPORTANCE = 1102,
+	CYCLESLIGHTTAG_SHADOW_CAUSTICS = 1103,
+	CYCLESLIGHTTAG_PORTAL = 1104,
+
+	// Ray visibility
+	CYCLESLIGHTTAG_VISIBLE_CAMERA = 1200,
+	CYCLESLIGHTTAG_VISIBLE_DIFFUSE = 1201,
+	CYCLESLIGHTTAG_VISIBLE_GLOSSY = 1202,
+	CYCLESLIGHTTAG_VISIBLE_TRANSMISSION = 1203,
+	CYCLESLIGHTTAG_VISIBLE_VOLUME_SCATTER = 1204,
+
+	// Eevee
+	CYCLESLIGHTTAG_EEVEE_DIFFUSE_FACTOR = 1300,
+	CYCLESLIGHTTAG_EEVEE_SPECULAR_FACTOR = 1301,
+	CYCLESLIGHTTAG_EEVEE_TRANSMISSION_FACTOR = 1302,
+	CYCLESLIGHTTAG_EEVEE_VOLUME_FACTOR = 1303,
+	CYCLESLIGHTTAG_EEVEE_USE_CUSTOM_DISTANCE = 1304,
+	CYCLESLIGHTTAG_EEVEE_CUSTOM_DISTANCE = 1305,
+	CYCLESLIGHTTAG_EEVEE_SHADOW_JITTER = 1306,
+	CYCLESLIGHTTAG_EEVEE_SHADOW_OVERBLUR = 1307,
+	CYCLESLIGHTTAG_EEVEE_SHADOW_FILTER = 1308,
+	CYCLESLIGHTTAG_EEVEE_SHADOW_RESOLUTION = 1309,
+	CYCLESLIGHTTAG_EEVEE_SHADOW_ABSOLUTE = 1310
+};
+
+#endif // TCYCLESLIGHT_H__

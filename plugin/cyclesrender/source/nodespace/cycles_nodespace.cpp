@@ -387,8 +387,24 @@ public:
 		endNodes.Append(maxon::Id(CYCLES_OUTPUT_NODE_ID)) iferr_return;
 		spaceData.Set(maxon::nodes::NODESPACE::MATERIALENDNODEIDS, std::move(endNodes)) iferr_return;
 		spaceData.Set(maxon::nodes::NODESPACE::NODESYSTEMCLASS, _class) iferr_return;
-		spaceData.Set(maxon::nodes::NODESPACE::IMAGENODEASSETID, maxon::Id()) iferr_return;
-		spaceData.Set(maxon::nodes::NODESPACE::IMAGENODEPORTS, maxon::nodes::NODESPACE::ImageNodePortTuple()) iferr_return;
+		// An image file dropped on the Node Editor (from the file browser or the Asset Browser)
+		// becomes an Image Texture node naming it. Cinema 4D wants four ports of that node (SDK,
+		// "Implementing Texture Nodes"): the colour output, the file, and the first and last
+		// frame of a sequence, which the node has as hidden settings (tools/make_nodes.py).
+		spaceData.Set(maxon::nodes::NODESPACE::IMAGENODEASSETID, maxon::Id(CYCLES_IMAGE_NODE_ID)) iferr_return;
+		const auto portPath = [](const maxon::Char* port) -> maxon::Result<maxon::NodePath>
+		{
+			iferr_scope;
+			maxon::InternedId id;
+			id.Init(maxon::String(port)) iferr_return;
+			return maxon::NodePath::Create(maxon::ToSingletonBlock<maxon::InternedId>(id));
+		};
+		maxon::nodes::NODESPACE::ImageNodePortTuple imagePorts;
+		imagePorts.first = portPath("out.color") iferr_return;
+		imagePorts.second = portPath("prop.image_file") iferr_return;
+		imagePorts.third = portPath("prop.image_frame_start") iferr_return;
+		imagePorts.fourth = portPath("prop.image_frame_end") iferr_return;
+		spaceData.Set(maxon::nodes::NODESPACE::IMAGENODEPORTS, std::move(imagePorts)) iferr_return;
 		// The Material Output is previewed as a material (a ball, not a flat picture).
 		maxon::BaseArray<maxon::Id> previewNodes;
 		previewNodes.Append(maxon::Id(CYCLES_OUTPUT_NODE_ID)) iferr_return;

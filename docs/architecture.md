@@ -80,6 +80,8 @@ plugin/cyclesrender/            the Cinema 4D module
       render_settings_map       sends the render settings; hides those of the other engine and of the
                                 Advanced layout
       render_settings_table.h   generated: every setting with the Blender property it sets
+      output_settings           the Output tab (resolution, %, pixel aspect in Blender's terms), which
+                                writes Cinema 4D's own Output values; the pixel aspect every render uses
     scene/
       scene_exporter            walks the document, decides what renders, writes all scene items
       scene_writer              one `scene` request under construction: items, blobs, warnings; reduces it
@@ -104,6 +106,8 @@ plugin/cyclesrender/            the Cinema 4D module
       shader_translate          a Cinema 4D shader as Blender nodes, or baked to a texture
       node_graph                a Blender node graph under construction
       redshift_material         the Redshift Standard Material, option by option
+      redshift_nodes            the Redshift nodes wired into its inputs: the Texture node, math, vector
+                                math, colour mix, invert, colour correction, makers and splitters
       exchange_material         other node materials through Cinema 4D's material exchange (approximation)
       cycles_node_material      a material of Cycles nodes, written node for node
       cycles_curves             the curves of RGB Curves, Vector Curves and Float Curve: a Cinema 4D spline
@@ -117,9 +121,18 @@ plugin/cyclesrender/            the Cinema 4D module
                                 and their folders in the Asset Browser
       cycles_nodes              Blender's shader nodes as a table; which sockets show for which settings
       cycles_nodes_table.h      generated: that table
+      path_commands             the image nodes' buttons "Make Relative" and "Make Absolute": commands of
+                                the maxon command system
     tags/object_tag             the Cycles Object tag
     tags/camera_tag             the Cycles Camera tag: depth of field and lens, Blender's settings
-    prefs/                      the Preferences page, and the settings stored in Cinema 4D's preferences
+    lights/
+      light_object              the Cycles Light object: Blender's light types and settings, drawn in the
+                                viewport
+      light_tag                 the Cycles Light tag on Cinema 4D's and Redshift's lights: Blender's light
+                                settings in place of the light's own, and Blender's settings they lack
+      light_settings            what the two share: defaults, which settings show, reading them
+    prefs/                      the Preferences page, and the settings stored in Cinema 4D's preferences:
+                                which Blender (settings), Blender's Cycles render devices (devices)
     session/
       blender_install           finds Blender and the bridge installed in it; reads Blender's version
       blender_process           starts Blender with the bridge, waits for the handshake, ends it
@@ -134,6 +147,7 @@ plugin/cyclesrender/            the Cinema 4D module
                                 engine, latency measurement
       ipr_worker                a thread that owns one windowed Blender and sends every request
       ipr_dialog                the IPR window and the command that opens it
+      ipr_add                   what the window's "Add" menu adds to the document
       ipr_image_area            the picture: view transform (DisplayTransform), zoom, pan; the float bitmap
                                 for snapshots and saving
       ipr_testhook              lets test scripts drive the IPR (and set curves of Cycles nodes, which
@@ -143,7 +157,7 @@ plugin/cyclesrender/            the Cinema 4D module
                                 a lock file
   res/
     description/                vpcyclesrender (the Render Settings page, generated), prefscyclesrender,
-                                tcyclesobject, tcyclescamera, mcyclesnative
+                                tcyclesobject, tcyclescamera, tcycleslight, ocycleslight, mcyclesnative
     nodes/                      generated: the description database of the Cycles nodes
     icons/                      drawn by tools/make_icons.py
     native_default.preview      generated: the picture of a native material that was never edited
@@ -276,7 +290,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
 
 ![The IPR window](images/ipr_window.png)
 
-- **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
+- **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Add (a Cycles Material; a camera with a Cycles Camera tag where the render view looks from, which becomes the render view's camera; a Cycles Camera tag on the selected cameras; a Cycles Object tag on the selected objects; a Cycles Light where the render view looks from; a Cycles Light tag on the selected lights; each one undo step); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
 - **Toolbar, left to right:** start or stop, pause, reload; the camera list with the lock; snapshot; the zoom percentage (it can be dragged and typed into) with the frame button; then, at the right, the pass list, the engine list and the settings button.
 - **Picture:** the frame with Cinema 4D's view transform (with "Basic" colour management: as the Picture Viewer shows a final frame, through the sRGB curve with Linear Workflow on and as it is with it off), zoom around the cursor with the mouse wheel, drag to pan. With "Fit Window" the area outside the camera's picture is shown at 45 % brightness. Snapshots and saved images carry the render-space values with the document's profiles (OCIO), or linear values with the linear profile ("Basic"), as Cinema 4D's own renders do.
 - **Status line:** time, RAM and VRAM of the Blender process, and a progress bar labelled with the samples.
@@ -310,12 +324,17 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
 | Stacked texture tags | One Blender material per pile, the layers joined by Mix Shader nodes with the upper layer's alpha | |
 | Shaders | Nodes where Blender has the same thing; otherwise baked to a float texture and cached | See [Materials](#materials) |
 | Redshift Standard Material | Principled BSDFs, option by option | Table in the SDK reference |
+| Redshift nodes wired into it | Blender's Math, Vector Math, Mix, Invert, Gamma, Hue/Saturation, Combine and Separate nodes, Image Texture | Colour Correct's contrast as six Vector Math nodes (measured formula); untranslated nodes named |
 | Other node materials | Principled BSDF through Cinema 4D's material exchange | An approximation |
 | Cycles nodes | Blender's shader nodes, one to one | |
 | Standard lights | Point, Spot, Sun, Area | Cinema 4D's lights have no physical unit; the conversion is calibrated by measurement |
 | Redshift lights | Sun, Point, Spot, Area with exact powers | Measured against Redshift |
+| Cycles Light object | Point, Sun, Spot, Area with Blender's own values | Nothing to convert; lengths from document units to metres |
+| Cycles Light tag on a light | The tag's Blender values in place of the light's own (Light tab), Blender's light settings added (Settings, Visibility, Eevee tabs) | Each tab only while its switch is on |
 | Sky object with a panorama, Redshift dome light | World environment | Without either: the default world of the render settings |
 | Camera, Redshift camera | Lens, sensor, shift, clipping, parallel projection, depth of field | |
+| Pixel Aspect of the Output page | Blender's pixel aspect X and Y of the final render | The IPR renders square pixels and shows the picture as wide as the pixel aspect makes it |
+| Compositing tag's first enabled Object Buffer | The object's pass index (Object Index pass) | |
 | Volume Loader | Volume read from the file's path | No copy: the item names the frame's file |
 | Volume Builder, Pyro | `.vdb` files saved to the preferences folder | |
 | Volume shading | Principled Volume reading the grids by name; the Cycles Object tag sets density, colour, emission, fire | |
@@ -336,6 +355,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
    - *Neither*: the channel falls back to its plain value and the user is told.
 2. **A material of Cycles nodes** is written node for node, value for value and wire for wire. Nothing in Cinema 4D evaluates these nodes.
 3. **A Redshift material** whose output is a Standard Material node is read port by port.
+   The nodes wired into its inputs are translated node by node where Blender has the same thing (`materials/redshift_nodes`); any other is named in the console and the input's own value is used.
 4. **Any other node material** is asked to describe itself as a Standard Surface, the route Cinema 4D's own FBX and USD exporters take.
 5. **A Cycles Native Material** is sent as the bytes it holds.
 
@@ -343,7 +363,7 @@ A material none of them can read is replaced by its average colour, with a warni
 
 ## The Render Settings page
 
-The page mimics Blender's Render properties: Blender's panels as foldable groups with Blender's names, a Simple and an Advanced layout, the groups of the engine that is not chosen hidden, and settings in two columns that line up within a group. **Defaults are Blender's own.** Four tabs: Render Settings, General Settings, Object Settings (the plugin's own settings for reading the Cinema 4D scene) and AOVs (the render passes).
+The page mimics Blender's Render properties: Blender's panels as foldable groups with Blender's names, a Simple and an Advanced layout, the groups of the engine that is not chosen hidden, and settings in two columns that line up within a group. **Defaults are Blender's own.** Five tabs: Render Settings, General Settings, Object Settings (the plugin's own settings for reading the Cinema 4D scene), AOVs (the render passes; a pass only one engine has is hidden for the other) and Output, right of AOVs (the maintainer's choice). The Output tab is Blender's Format panel (Resolution X and Y, %, Aspect X and Y) over Cinema 4D's own Output values: Cinema 4D allocates the picture from its Width, Height and Pixel Aspect and the IPR reads them, so they stay what renders; the tab writes them and shows them back when they were changed on Cinema 4D's page (`videopost/output_settings`).
 
 ![The Render Settings page](images/render_settings.png)
 

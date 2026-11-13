@@ -14,6 +14,7 @@
 #include "../platform/process_stats.h"
 #include "../platform/shared_memory.h"
 #include "../scene/camera_export.h"
+#include "../videopost/output_settings.h"
 #include "../videopost/render_settings_map.h"
 #include "ipr_controller.h"
 
@@ -542,15 +543,20 @@ void IprController::SyncSize(cinema::BaseDocument* doc)
 {
 	_sizeDirty = false;
 
-	// The camera's picture has the shape of the Render Settings resolution.
+	// The camera's picture has the shape of the Render Settings resolution, with its pixel aspect:
+	// the IPR renders square pixels, so a picture of pixels twice as wide as high is shown twice
+	// as wide, as it is meant to be seen (and with "25 %" to "200 %" it gets that many pixels more
+	// across).
 	maxon::Int32 width = 1280;
 	maxon::Int32 height = 720;
+	maxon::Float64 pixelAspect = 1.0;
 	if (const cinema::RenderData* const renderData = doc->GetActiveRenderData())
 	{
 		width = maxon::Max(maxon::Int32(1), renderData->GetDataInstanceRef().GetInt32(RDATA_XRES, width));
 		height = maxon::Max(maxon::Int32(1), renderData->GetDataInstanceRef().GetInt32(RDATA_YRES, height));
+		pixelAspect = GetPixelAspect(renderData->GetDataInstanceRef());
 	}
-	_frameAspect = maxon::Float64(width) / maxon::Float64(height);
+	_frameAspect = maxon::Float64(width) * pixelAspect / maxon::Float64(height);
 
 	const maxon::Bool fit = _fitWindow && _windowWidth > 0 && _windowHeight > 0;
 	if (fit)
@@ -560,7 +566,7 @@ void IprController::SyncSize(cinema::BaseDocument* doc)
 	}
 	else
 	{
-		width = maxon::ClampValue(maxon::Int32(maxon::Float64(width) * _scale + 0.5), MIN_SIDE, MAX_SIDE);
+		width = maxon::ClampValue(maxon::Int32(maxon::Float64(width) * pixelAspect * _scale + 0.5), MIN_SIDE, MAX_SIDE);
 		height = maxon::ClampValue(maxon::Int32(maxon::Float64(height) * _scale + 0.5), MIN_SIDE, MAX_SIDE);
 	}
 	_framing = fit ? CameraFraming::Fit(width, height, _frameAspect) : CameraFraming::Full(width, height);

@@ -117,6 +117,18 @@ public:
 	/// @param[in] bitmapProfile  BITMAPSHADER_COLORPROFILE of the bitmap shader reading the file, or NOTOK.
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::String> GetFileImageId(const maxon::String& path, maxon::Bool colorData, maxon::Int32 bitmapProfile = NOTOK);
+
+	//----------------------------------------------------------------------------------------
+	/// The file a node's image port names, as a path Blender can open: a path relative to the
+	/// document's folder (a Url of URLSCHEME_RELATIVE, as the node's "Make Relative" button
+	/// writes it) is joined to that folder; a file of the Asset Browser is copied out of its
+	/// repository into this session's folder (baked_files.h); every name is then looked for as
+	/// Cinema 4D looks for a bitmap's (next to the document, in "tex", in the search paths).
+	/// @param[out] problem  What went wrong, in words for the user, or empty. The path may still
+	///                      be usable (it is sent as it is, and the bridge reports a missing file).
+	/// @return              The path, or empty when there is none to send.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<maxon::String> ResolveImageUrl(const maxon::Url& url, maxon::String& problem);
 	/// The id of the `image` item for pixels in memory (RGBA, top row first, values as they
 	/// are to be used). They are written to a file kept like a baked shader's (baked_files.h).
 	maxon::Result<maxon::String> GetPixelImageId(const maxon::BaseArray<maxon::Vector4d32>& pixels, maxon::Int32 width, maxon::Int32 height);

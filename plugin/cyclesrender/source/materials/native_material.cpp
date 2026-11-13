@@ -676,8 +676,9 @@ public:
 		doc->StartUndo();
 		doc->InsertMaterial(material);
 		doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, material);
-		doc->EndUndo();
+		// Selected before EndUndo, so that one undo removes the material (materials/cycles_material.cpp).
 		doc->SetActiveMaterial(material);
+		doc->EndUndo();
 		cinema::EventAdd();
 		return true;
 	}

@@ -18,6 +18,7 @@ set(target_settings [=[
     "asset.framework",
     "cinema.framework",
     "cinema_hybrid.framework",
+    "command.framework",
     "core.framework",
     "corenodes.framework",
     "exchange.framework",

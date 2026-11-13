@@ -13,6 +13,8 @@
 #include "ipr/ipr_controller.h"
 #include "ipr/ipr_dialog.h"
 #include "ipr/ipr_testhook.h"
+#include "lights/light_object.h"
+#include "lights/light_tag.h"
 #include "prefs/prefs_page.h"
 #include "prefs/settings.h"
 #include "scene/scene_dump.h"
@@ -42,6 +44,10 @@ cinema::Bool cinema::PluginStart()
 		ApplicationOutput("Cycles Render: could not register the Cycles Object tag (id @).", cyclesrender::ID_OBJECT_TAG);
 	if (!cyclesrender::RegisterCameraTag())
 		ApplicationOutput("Cycles Render: could not register the Cycles Camera tag (id @).", cyclesrender::ID_CAMERA_TAG);
+	if (!cyclesrender::RegisterLightObject())
+		ApplicationOutput("Cycles Render: could not register the Cycles Light object (id @).", cyclesrender::ID_LIGHT_OBJECT);
+	if (!cyclesrender::RegisterLightTag())
+		ApplicationOutput("Cycles Render: could not register the Cycles Light tag (id @).", cyclesrender::ID_LIGHT_TAG);
 	if (!cyclesrender::RegisterCyclesMaterial())
 		ApplicationOutput("Cycles Render: could not register the Cycles Material command (id @).", cyclesrender::ID_CYCLES_MATERIAL);
 	if (!cyclesrender::RegisterNativeMaterial())

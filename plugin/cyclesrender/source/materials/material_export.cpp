@@ -9,6 +9,7 @@
 #include "c4d.h"
 #include "c4d_reflection.h"
 #include "mmaterial.h"
+#include "maxon/file_utilities.h"
 #include "maxon/spinlock.h"
 #include "ttexture.h"
 #include "xbitmap.h"
@@ -818,6 +819,69 @@ maxon::Result<maxon::String> MaterialExporter::GetFileImageId(const maxon::Strin
 	json.String("colorspace", maxon::String(colorspace));
 	_writer.EndItem();
 	return id;
+}
+
+maxon::Result<maxon::String> MaterialExporter::ResolveImageUrl(const maxon::Url& url, maxon::String& problem)
+{
+	iferr_scope;
+	problem = maxon::String();
+	const cinema::Filename documentFolder = _doc ? _doc->GetDocumentPath() : cinema::Filename();
+	const maxon::Id scheme = url.GetScheme();
+	maxon::Url file = url;
+	if (scheme == maxon::URLSCHEME_RELATIVE)
+	{
+		// Relative to the document's folder ("Make Relative", nodespace/path_commands.cpp).
+		if (documentFolder.IsPopulated())
+		{
+			const maxon::Url folder = cinema::MaxonConvert(documentFolder, cinema::MAXONCONVERTMODE::NONE);
+			file = (folder + url) iferr_return;
+			file = file.Normalize() iferr_return;	// "../tex/a.png" climbs out of the folder
+		}
+		else
+		{
+			problem = FormatString("the path \"@\" is relative to the document's folder, but the document has never been saved; "
+				"it is looked for in Cinema 4D's texture paths only.", url.GetPath());
+		}
+	}
+	else if (scheme != maxon::URLSCHEME_FILESYSTEM)
+	{
+		// A file Blender cannot open by itself, an image of the Asset Browser above all (asset:///):
+		// its bytes are copied into this session's folder once, and kept like a baked texture.
+		const maxon::String id = FormatString("image_copy_@", maxon::String::HexToString(maxon::UInt64(url.ToString(nullptr).GetHashCode()), false));
+		maxon::String path = FindBakedFile(id, _doc, _writer) iferr_return;
+		if (path.IsPopulated())
+			return path;
+		maxon::BaseArray<maxon::Char> bytes;
+		iferr (maxon::FileUtilities::ReadFileToMemory(url, bytes))
+		{
+			problem = FormatString("the file \"@\" could not be read (@).", url.ToString(nullptr), err.GetMessage());
+			return maxon::String();
+		}
+		cinema::Filename copy = NewBakedFileName(id);
+		if (!copy.IsPopulated())
+		{
+			problem = "the plugin's folder for texture files could not be made."_s;
+			return maxon::String();
+		}
+		copy.SetSuffix(url.GetSuffix());
+		const maxon::Url target = cinema::MaxonConvert(copy, cinema::MAXONCONVERTMODE::WRITE);
+		iferr (maxon::FileUtilities::WriteArray(target, maxon::Block<maxon::Char>(bytes.GetFirst(), bytes.GetCount())))
+		{
+			cinema::GeFKill(copy);
+			problem = FormatString("the file \"@\" could not be copied (@).", url.ToString(nullptr), err.GetMessage());
+			return maxon::String();
+		}
+		path = AddBakedFile(id, copy, _doc, _writer) iferr_return;
+		return path;
+	}
+
+	// Found the way Cinema 4D finds a bitmap: next to the document, in its "tex" folder, in the
+	// texture search paths. An unresolved name is sent as it is; the bridge reports it.
+	const maxon::String path = file.GetSystemPath() iferr_return;
+	cinema::Filename resolved;
+	if (cinema::GenerateTexturePath(documentFolder, cinema::Filename(path), cinema::Filename(), &resolved) && resolved.IsPopulated())
+		return resolved.GetString();
+	return path;
 }
 
 // Shaders baked by this process, for tests. Exports run on the main thread (IPR) and on

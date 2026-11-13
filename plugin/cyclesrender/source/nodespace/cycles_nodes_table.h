@@ -1030,6 +1030,8 @@ static const CyclesProperty TEXENVIRONMENT_PROPERTIES[] =
 	{ "image.colorspace", "prop.image_colorspace", "Color Space", 'e', "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", 0.0 },
 	{ "projection", "prop.projection", "Projection", 'e', "EQUIRECTANGULAR|Equirectangular;MIRROR_BALL|Mirror Ball", "EQUIRECTANGULAR", 0.0 },
 	{ "interpolation", "prop.interpolation", "Interpolation", 'e', "Linear|Linear;Closest|Closest;Cubic|Cubic;Smart|Smart", "Linear", 0.0 },
+	{ "image:frame_start", "prop.image_frame_start", "Start Frame", 'i', "", "", 0.0 },
+	{ "image:frame_end", "prop.image_frame_end", "End Frame", 'i', "", "", 0.0 },
 };
 
 static const CyclesSocket TEXGABOR_INPUTS[] =
@@ -1089,6 +1091,8 @@ static const CyclesProperty TEXIMAGE_PROPERTIES[] =
 	{ "interpolation", "prop.interpolation", "Interpolation", 'e', "Linear|Linear;Closest|Closest;Cubic|Cubic;Smart|Smart", "Linear", 0.0 },
 	{ "projection_blend", "prop.projection_blend", "Projection Blend", 'f', "", "", 0.0 },
 	{ "extension", "prop.extension", "Extension", 'e', "REPEAT|Repeat;EXTEND|Extend;CLIP|Clip;MIRROR|Mirror", "REPEAT", 0.0 },
+	{ "image:frame_start", "prop.image_frame_start", "Start Frame", 'i', "", "", 0.0 },
+	{ "image:frame_end", "prop.image_frame_end", "End Frame", 'i', "", "", 0.0 },
 };
 
 static const CyclesSocket TEXMAGIC_INPUTS[] =
@@ -1571,10 +1575,10 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeTexBrick", "com.wolfnimations.cyclesrender.node.texbrick", "Brick Texture", "TEXTURE", TEXBRICK_INPUTS, 10, TEXBRICK_OUTPUTS, 2, TEXBRICK_PROPERTIES, 4 },
 	{ "ShaderNodeTexChecker", "com.wolfnimations.cyclesrender.node.texchecker", "Checker Texture", "TEXTURE", TEXCHECKER_INPUTS, 4, TEXCHECKER_OUTPUTS, 2, nullptr, 0 },
 	{ "ShaderNodeTexCoord", "com.wolfnimations.cyclesrender.node.texcoord", "Texture Coordinate", "INPUT", nullptr, 0, TEXCOORD_OUTPUTS, 7, TEXCOORD_PROPERTIES, 1 },
-	{ "ShaderNodeTexEnvironment", "com.wolfnimations.cyclesrender.node.texenvironment", "Environment Texture", "TEXTURE", TEXENVIRONMENT_INPUTS, 1, TEXENVIRONMENT_OUTPUTS, 1, TEXENVIRONMENT_PROPERTIES, 4 },
+	{ "ShaderNodeTexEnvironment", "com.wolfnimations.cyclesrender.node.texenvironment", "Environment Texture", "TEXTURE", TEXENVIRONMENT_INPUTS, 1, TEXENVIRONMENT_OUTPUTS, 1, TEXENVIRONMENT_PROPERTIES, 6 },
 	{ "ShaderNodeTexGabor", "com.wolfnimations.cyclesrender.node.texgabor", "Gabor Texture", "TEXTURE", TEXGABOR_INPUTS, 6, TEXGABOR_OUTPUTS, 3, TEXGABOR_PROPERTIES, 1 },
 	{ "ShaderNodeTexGradient", "com.wolfnimations.cyclesrender.node.texgradient", "Gradient Texture", "TEXTURE", TEXGRADIENT_INPUTS, 1, TEXGRADIENT_OUTPUTS, 2, TEXGRADIENT_PROPERTIES, 1 },
-	{ "ShaderNodeTexImage", "com.wolfnimations.cyclesrender.node.teximage", "Image Texture", "TEXTURE", TEXIMAGE_INPUTS, 1, TEXIMAGE_OUTPUTS, 2, TEXIMAGE_PROPERTIES, 6 },
+	{ "ShaderNodeTexImage", "com.wolfnimations.cyclesrender.node.teximage", "Image Texture", "TEXTURE", TEXIMAGE_INPUTS, 1, TEXIMAGE_OUTPUTS, 2, TEXIMAGE_PROPERTIES, 8 },
 	{ "ShaderNodeTexMagic", "com.wolfnimations.cyclesrender.node.texmagic", "Magic Texture", "TEXTURE", TEXMAGIC_INPUTS, 3, TEXMAGIC_OUTPUTS, 2, TEXMAGIC_PROPERTIES, 1 },
 	{ "ShaderNodeTexNoise", "com.wolfnimations.cyclesrender.node.texnoise", "Noise Texture", "TEXTURE", TEXNOISE_INPUTS, 9, TEXNOISE_OUTPUTS, 2, TEXNOISE_PROPERTIES, 3 },
 	{ "ShaderNodeTexSky", "com.wolfnimations.cyclesrender.node.texsky", "Sky Texture", "TEXTURE", TEXSKY_INPUTS, 1, TEXSKY_OUTPUTS, 1, TEXSKY_PROPERTIES, 12 },

@@ -39,6 +39,8 @@ public:
 	virtual void Free(cinema::GeListNode* node) override;
 	virtual cinema::Bool GetDDescription(const cinema::GeListNode* node, cinema::Description* description, cinema::DESCFLAGS_DESC& flags) const override;
 	virtual cinema::Bool SetDParameter(cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data, cinema::DESCFLAGS_SET& flags) override;
+	/// The Output tab shows Cinema 4D's own Width, Height and Pixel Aspect (output_settings.h).
+	virtual cinema::Bool GetDParameter(const cinema::GeListNode* node, const cinema::DescID& id, cinema::GeData& data, cinema::DESCFLAGS_GET& flags) const override;
 	virtual cinema::Bool GetDEnabling(const cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data,
 		cinema::DESCFLAGS_ENABLE flags, const cinema::BaseContainer* itemdesc) const override;
 	virtual cinema::VIDEOPOSTINFO GetRenderInfo(cinema::BaseVideoPost* node) override;
