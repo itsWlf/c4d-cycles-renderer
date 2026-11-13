@@ -46,10 +46,17 @@ namespace cyclesrender
 /// its IMAGENODEPORTS; "asset", "ports", "ports_found", "node"), pathcommand relative|absolute
 /// <node id> (runs that button's command through maxon::CommandClasses: "result") and path
 /// <node id> (both also give the file's "scheme" and "path"). And add material|camera|camera_tag|
-/// object_tag|light|light_tag runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"}.
+/// object_tag|light|light_tag runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"};
+/// add follow runs FollowAddedCameras() as the message plugin does after a change: {"views_set", "switches"}.
 /// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render
 /// Devices (prefs/devices.h; "find" starts a Blender as the page's button does) and answers with
 /// them (DescribeDeviceSettings).
+/// Measuring and checking the sync (0.2.0, F15 and F16): trace on|off switches the IPR's timeline
+/// (ipr_trace.h) and trace hands it over {"trace": [[time, name, value], ...], "now"}; verify exports
+/// the active document whole and compares it with what Blender holds (IprController::VerifySync:
+/// {"items", "differences"}); sources lists what each mesh leaf is made from
+/// (SceneExporter::GetSourceListing). The status also has meshes_exported, meshes_kept, export_ms
+/// and mesh_ms of the last export.
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprTestCommand();
 

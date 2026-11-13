@@ -28,6 +28,23 @@ enum class IPRADD
 //----------------------------------------------------------------------------------------
 maxon::Int AddToDocument(cinema::BaseDocument* doc, IPRADD what, maxon::String& message);
 
+//----------------------------------------------------------------------------------------
+/// Keeps the render view on the right camera through undo and redo of "Camera with Cycles
+/// Camera Tag". Cinema 4D's undo cannot hold a view (after undoing a step that recorded one, the
+/// view has lost its camera link), so that step leaves the view out and the plugin follows it
+/// instead: while the added camera is gone (undone, or deleted) the view looks through the camera
+/// it looked through before, and once it is back (redone) through the added camera again. A
+/// switch is forgotten when its document closes or the user chooses another camera for that view.
+/// Call on the main thread after a change of a document: the message plugin of the renderer's id
+/// does, on every EVMSG_CHANGE and once a second (materials/baked_files.cpp).
+/// @return  How many views were set.
+//----------------------------------------------------------------------------------------
+maxon::Int FollowAddedCameras();
+/// The switches still followed; for tests.
+maxon::Int GetAddedCameraSwitchCount();
+/// Forgets every switch; when the plugin is unloaded.
+void FreeAddedCameraSwitches();
+
 } // namespace cyclesrender
 
 #endif // CYCLESRENDER_IPR_ADD_H__

@@ -10,6 +10,7 @@
 #include "../scene/camera_export.h"
 #include "../scene/document_colors.h"
 #include "ipr_image_area.h"
+#include "ipr_trace.h"
 
 namespace cyclesrender
 {
@@ -403,6 +404,7 @@ void IprImageArea::ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::
 
 void IprImageArea::DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2, cinema::Int32 y2, const cinema::BaseContainer& msg)
 {
+	TraceIpr("drawn", maxon::Float64(_frame.frameId));
 	OffScreenOn();
 	const cinema::Int32 areaWidth = GetWidth();
 	const cinema::Int32 areaHeight = GetHeight();

@@ -5,6 +5,7 @@
 #include "c4d.h"
 
 #include "../ids.h"
+#include "../ipr/ipr_trace.h"
 #include "frame_watcher.h"
 
 namespace cyclesrender
@@ -97,6 +98,7 @@ void FrameWatcher::Main()
 			_fresh = true;
 			_arrival = platform::UnixTime();
 		}
+		TraceIpr("frame", maxon::Float64(_latest.frameId));
 		// One message per frame the main thread has not picked up yet is enough.
 		if (notify)
 			cinema::SpecialEventAdd(ID_CORE_MESSAGE);

@@ -37,4 +37,13 @@ CONTAINER Prefscyclesrender
 		BUTTON PREF_CYCLES_FIND_DEVICES { }
 		STATICTEXT PREF_CYCLES_DEVICES_STATUS { ANIM OFF; }
 	}
+
+	// What of the IPR can be switched off when hunting a fault.
+	GROUP PREF_CYCLES_IPR_GROUP
+	{
+		DEFAULT 1;
+		COLUMNS 1;
+
+		BOOL PREF_CYCLES_IPR_SKIP_UNCHANGED { ANIM OFF; }
+	}
 }

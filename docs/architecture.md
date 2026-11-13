@@ -102,7 +102,8 @@ plugin/cyclesrender/            the Cinema 4D module
       material_export           which translator a material goes to; the classic material as a Principled
                                 BSDF graph; image items; what a baked shader's id depends on
       baked_files               the files of baked shaders: reused within a session, owned by documents,
-                                deleted when the documents are closed and no Blender reads them
+                                deleted when the documents are closed and no Blender reads them; its
+                                message plugin also calls ipr_add's FollowAddedCameras
       shader_translate          a Cinema 4D shader as Blender nodes, or baked to a texture
       node_graph                a Blender node graph under construction
       redshift_material         the Redshift Standard Material, option by option
@@ -147,11 +148,14 @@ plugin/cyclesrender/            the Cinema 4D module
                                 engine, latency measurement
       ipr_worker                a thread that owns one windowed Blender and sends every request
       ipr_dialog                the IPR window and the command that opens it
-      ipr_add                   what the window's "Add" menu adds to the document
+      ipr_add                   what the window's "Add" menu adds to the document; the render view's
+                                camera through undo and redo of its camera entry
       ipr_image_area            the picture: view transform (DisplayTransform), zoom, pan; the float bitmap
                                 for snapshots and saving
       ipr_testhook              lets test scripts drive the IPR (and set curves of Cycles nodes, which
                                 Python cannot make)
+      ipr_trace                 a timeline of what the IPR does, from every thread, for measurements
+                                and tests (off unless the test hook switches it on)
     platform/                   everything specific to the operating system (Windows only so far):
                                 sockets, shared memory and events, process statistics, environment,
                                 a lock file
@@ -197,7 +201,7 @@ Each decision is stated with its reason, so that it can be revisited when the re
 
 6. **Translation happens in the plugin; the bridge stays generic.** Materials arrive as node graphs in Blender's own node names, settings as pairs of property path and value. The bridge therefore needs no knowledge of Cinema 4D, which keeps the GPL side small and lets the protocol be tested without Cinema 4D.
 
-7. **Scene updates are deltas keyed by stable identity, found by fingerprint.** Sending a whole scene on each edit would ruin the IPR's latency. Identity comes from Cinema 4D's object GUIDs. After a change the whole scene is exported into memory, every item is hashed (its text and its blobs), and only items whose hash differs from what Blender holds are sent. This is right by construction, with no bookkeeping of what Cinema 4D may have touched, and costs a few milliseconds for small scenes. Its price is exporting unchanged meshes; when large scenes make that too slow, the export of objects whose dirty counters did not move can be skipped (the counters are listed in the SDK reference).
+7. **Scene updates are deltas keyed by stable identity, found by fingerprint.** Sending a whole scene on each edit would ruin the IPR's latency. Identity comes from Cinema 4D's object GUIDs. After a change the whole scene is exported into memory, every item is hashed (its text and its blobs), and only items whose hash differs from what Blender holds are sent. This is right by construction, with no bookkeeping of what Cinema 4D may have touched, and costs a few milliseconds for small scenes. Its price was exporting unchanged meshes (74 ms after moving one object in a scene of 900 meshes); since 0.2.0 the IPR skips that one part, and only that: the walk, the objects, materials, lights and world are still exported and compared every time, so everything that decides *where* and *how* a mesh is shown stays right by construction. A mesh is left as Blender holds it when a signature of what it is made from equals the one recorded when Blender got it (`SyncState` keeps both; `SceneWriter::KeepMesh` puts the kept items into the request by their fingerprints, without content). The signature is the full data of the mesh, hashed, except for a polygon object of the document without animation and with only plain data tags, where its identity is enough (address, GUID, the dirty counts of object and tags), because every edit measured changed it. *Rejected:* trusting dirty counters for generated meshes (an instance's copy changed its content at the same address with the same counts after a redo), and skipping whole objects (material ids follow the order of the export, which would shift). A switch in the Preferences turns it off (SDK reference, "Skipping unchanged meshes in the IPR").
 
 8. **Blender calculates with the numbers Cinema 4D calculates with.** With OCIO the plugin sends the document's render space (ACEScg by default) and Blender switches to it, so colour values pass through unchanged and sRGB textures are converted exactly as Cinema 4D converts them. Pixels come back scene-linear and Cinema 4D applies its own view transform, for the IPR and final frames alike. This keeps the IPR, the Picture Viewer and saved files consistent. With "Basic" colour management (the render space "Legacy (sRGB linear workflow)") Blender works in linear Rec.709 and the plugin converts what Cinema 4D would convert, in one place (`scene/document_colors`): colours typed into Cinema 4D are linearised with Linear Workflow on, images get the colour space that gives Cinema 4D's values, and the picture gets the sRGB curve where Cinema 4D's own picture has it. With Linear Workflow off Cinema 4D calculates on the stored sRGB numbers themselves; Blender is given those numbers as if they were linear and they go back unchanged, which is exactly Cinema 4D's arithmetic. *Rejected:* letting Blender convert at the edges in that mode (linear inside, curve at the end): light added on sRGB numbers is not the same as light added linearly.
 
@@ -270,6 +274,8 @@ Rules that keep it responsive:
 - A 2 ms window timer keeps Blender's loop from idling while the IPR runs (measured: 12 ms median round trip instead of 18 ms). It is removed while the IPR is stopped or paused.
 - The frame thread always hands over the newest frame; frames the window did not get to are skipped.
 - Camera moves take a fast path that skips the scene walk in Cinema 4D: the camera is compared on every timer tick (15 ms). In Blender they move the viewport's own view where possible instead of a camera object: with 100,000 instances a move of the camera object costs 0.16 s, a move of the view 0.018 s. A camera object is used when the camera needs depth of field, a film offset or a parallel projection.
+- **During a drag the window's timer does not run** (measured: not once in an emulated tool drag of 1.2 s), so before 0.2.0 the IPR followed a drag only when it ended. Cinema 4D's tools tell the managers about every step synchronously (`EVMSG_ASYNCEDITORMOVE`, sent with `GeSyncMessage`, as the SDK asks tools to); when such a message arrives while the timer has not run for three of its periods, the window does what the timer would: the change is exported and sent while Blender is idle, and the newest frame is taken. Any other message in such a loop sends the camera only. Measured in the application with an emulated drag: 39 of 40 steps sent, answered in 1.6 ms, the new frame back 3 ms after the step. Whether the window draws it before the drag ends depends on Cinema 4D's drag loop (in the emulated one nothing is drawn until it ends; with events processed between steps the picture is on screen 8 ms after each step). Navigating a view sends no known message: it is followed when it ends.
+- **Playback sends no change event** (measured: none in 3 s of playing; one when it stopped), so before 0.2.0 the IPR stood still while the timeline played. The document's time is compared on every tick (the timer runs during playback): measured, 91 of 91 frames sent in 3 s, a picture on screen 4 ms after each was sent.
 - Blender runs at below-normal priority, so that a render on the CPU does not starve Cinema 4D's interface.
 - Expect the latency of an edit to grow with the number of instances, not of polygons (measurements in the Blender reference).
 
@@ -284,13 +290,15 @@ Measured end to end, from Cinema 4D's change event to the changed picture in the
 
 Where the time goes (640 × 360, GPU, typical): export and compare 3–6 ms; Blender applies the change 1–3 ms; Cycles restarts and renders its first sample 11–60 ms; picture on screen 1–3 ms.
 
+A large scene (900 meshes of 800 polygons, 720,000 polygons; 200 × 112, GPU, `tests/c4d/ipr_reuse.py`, 2026-11-13), one object moved: the export and comparison took 74–87 ms with every mesh exported (55–66 ms of it the meshes) and 8–15 ms with unchanged meshes kept (3–4.5 ms the meshes: 600 judged by identity, 300 generated ones hashed); the change reached the picture in 120–131 ms and in 50–63 ms (two runs). What is left is Blender's: of the 50–63 ms, Blender applied the change in 1–2 ms and the first frame came back 39–46 ms later (Cycles restarts with 900 objects), on screen 1–8 ms after that.
+
 ## The IPR window
 
 A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp`).
 
 ![The IPR window](images/ipr_window.png)
 
-- **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Add (a Cycles Material; a camera with a Cycles Camera tag where the render view looks from, which becomes the render view's camera; a Cycles Camera tag on the selected cameras; a Cycles Object tag on the selected objects; a Cycles Light where the render view looks from; a Cycles Light tag on the selected lights; each one undo step); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
+- **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Add (a Cycles Material; a camera with a Cycles Camera tag where the render view looks from, which becomes the render view's camera; a Cycles Camera tag on the selected cameras; a Cycles Object tag on the selected objects; a Cycles Light where the render view looks from; a Cycles Light tag on the selected lights; each one undo step; Cinema 4D's undo cannot hold a view, so the camera entry keeps the view out of its step and the renderer's message plugin puts the view back on its earlier camera when the step is undone, and on the new one when it is redone); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
 - **Toolbar, left to right:** start or stop, pause, reload; the camera list with the lock; snapshot; the zoom percentage (it can be dragged and typed into) with the frame button; then, at the right, the pass list, the engine list and the settings button.
 - **Picture:** the frame with Cinema 4D's view transform (with "Basic" colour management: as the Picture Viewer shows a final frame, through the sRGB curve with Linear Workflow on and as it is with it off), zoom around the cursor with the mouse wheel, drag to pan. With "Fit Window" the area outside the camera's picture is shown at 45 % brightness. Snapshots and saved images carry the render-space values with the document's profiles (OCIO), or linear values with the linear profile ("Basic"), as Cinema 4D's own renders do.
 - **Status line:** time, RAM and VRAM of the Blender process, and a progress bar labelled with the samples.

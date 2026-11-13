@@ -354,4 +354,58 @@ maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op)
 	return hash;
 }
 
+// A selection by its ranges, as HashMeshSource hashes the polygon selections.
+static maxon::UInt64 HashSelection(const cinema::BaseSelect* selection, maxon::Int32 maxElements, maxon::UInt64 hash)
+{
+	hash = hash * 31 + maxon::UInt64(selection ? selection->GetCount() : -1);
+	for (maxon::Int32 segment = 0; selection && segment < selection->GetSegments(); ++segment)
+	{
+		maxon::Int32 from = 0;
+		maxon::Int32 to = 0;
+		if (selection->GetRange(segment, maxElements, &from, &to))
+			hash = (hash ^ (maxon::UInt64(maxon::UInt32(from)) << 32 | maxon::UInt64(maxon::UInt32(to)))) * 0x100000001B3ull;
+	}
+	return hash;
+}
+
+maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op)
+{
+	maxon::UInt64 hash = HashMeshSource(op);
+	const maxon::Int32 polygonCount = op->GetPolygonCount();
+	// CreatePhongNormals() breaks the normals at these edges (indexed 4 * polygon + edge).
+	hash = HashSelection(op->GetPhongBreak(), polygonCount * 4, hash);
+	// N-gons: which polygons form one.
+	const maxon::Int32 ngons = op->GetNgonCount();
+	hash = hash * 31 + maxon::UInt64(ngons);
+	if (ngons > 0)
+	{
+		maxon::Int32 count = 0;
+		maxon::Int32* map = nullptr;
+		if (const_cast<cinema::PolygonObject*>(op)->GetPolygonTranslationMap(count, map) && map)
+			hash = HashBytes(reinterpret_cast<const maxon::Char*>(map), maxon::Int(polygonCount) * SIZEOF(maxon::Int32), hash + maxon::UInt64(count));
+		DeleteMem(map);
+	}
+	for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
+	{
+		if (tag->IsInstanceOf(Tvertexcolor))
+			hash = hash * 31 + (static_cast<const cinema::VertexColorTag*>(tag)->IsPerPointColor() ? 2 : 1);
+	}
+	return hash;
+}
+
+maxon::UInt64 HashMeshIdentity(const cinema::PolygonObject* op)
+{
+	maxon::UInt64 hash = maxon::UInt64(reinterpret_cast<maxon::UInt>(op)) * 0x9E3779B97F4A7C15ull;
+	hash = (hash ^ op->GetGUID()) * 0x100000001B3ull;
+	hash = (hash ^ op->GetDirty(cinema::DIRTYFLAGS::DATA)) * 0x100000001B3ull;
+	for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
+	{
+		hash = (hash ^ maxon::UInt64(tag->GetType())) * 0x100000001B3ull;
+		hash = (hash ^ maxon::UInt64(reinterpret_cast<maxon::UInt>(tag))) * 0x100000001B3ull;
+		hash = (hash ^ tag->GetDirty(cinema::DIRTYFLAGS::DATA)) * 0x100000001B3ull;
+		hash = (hash ^ maxon::UInt64(tag->GetName().GetHashCode())) * 0x100000001B3ull;
+	}
+	return hash;
+}
+
 } // namespace cyclesrender

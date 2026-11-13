@@ -129,6 +129,9 @@ public:
 	void MarkSceneChanged();
 	/// Notices state changes, sends what changed in the document. Cheap when nothing did.
 	void Tick();
+	/// Only the camera part of Tick(): sends the camera if it moved and Blender is idle. For
+	/// messages that arrive while Cinema 4D is in a modal loop, when the window's timer does not run.
+	void FollowCamera();
 
 	IPRSTATE GetState() const { return _state; }
 	const maxon::String& GetMessage() const { return _message; }
@@ -158,8 +161,16 @@ public:
 	maxon::Int32 GetSentSceneCount() const { return _worker ? _worker->GetSentSceneCount() : 0; }
 	maxon::Int32 GetSentRequestCount() const { return _worker ? _worker->GetSentRequestCount() : 0; }
 	maxon::Int32 GetLastChangeCount() const { return _lastChangeCount; }
+	/// What the last export did with the meshes, and how long it took (export and comparison).
+	const ExportStats& GetLastExportStats() const { return _lastStats; }
+	maxon::Float64 GetLastExportMilliseconds() const { return _lastExportMilliseconds; }
 	maxon::Bool IsIdle() const { return !_worker || _worker->GetPendingCount() == 0; }
 	void KillBlenderForTest();
+	/// Exports the active document whole, as from scratch (without reusing a mesh), with the settings
+	/// of the last export, and compares every item with what Blender holds as far as the IPR knows:
+	/// JSON {"items": n, "differences": [ids]}. Nothing is sent and nothing remembered changes. For
+	/// tests: no difference means Blender holds exactly what a full export would give it.
+	maxon::Result<maxon::String> VerifySync();
 
 private:
 	maxon::Result<void> EnsureWorker();
@@ -202,6 +213,10 @@ private:
 	maxon::String _sentSettings;
 	ExportSettings _exportSettings;
 	maxon::Int32 _lastChangeCount = 0;
+	ExportStats _lastStats;
+	maxon::Float64 _lastExportMilliseconds = 0.0;
+	cinema::BaseTime _exportedTime;							///< the document's time at the last export (playback sends no change event)
+	maxon::Bool _exportedTimeKnown = false;
 
 	maxon::Int32 _width = 0;
 	maxon::Int32 _height = 0;

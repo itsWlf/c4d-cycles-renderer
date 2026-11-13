@@ -19,4 +19,7 @@ STRINGTABLE Prefscyclesrender
 	PREF_CYCLES_DEVICE_TYPE_METAL "Metal";
 	PREF_CYCLES_FIND_DEVICES      "Find Devices";
 	PREF_CYCLES_DEVICES_STATUS    "Devices";
+
+	PREF_CYCLES_IPR_GROUP         "IPR";
+	PREF_CYCLES_IPR_SKIP_UNCHANGED "Skip Unchanged Meshes";
 }

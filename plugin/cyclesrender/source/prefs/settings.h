@@ -33,6 +33,13 @@ cinema::Bool DetectAndStoreBlender();
 /// block for about a second the one time it finds a Blender.
 void DetectBlenderOnFirstStart();
 
+/// Preferences > Renderer > Cycles Render > IPR, "Skip Unchanged Meshes": the IPR leaves a mesh
+/// Blender holds as it is when nothing it is made from changed, instead of exporting it again after
+/// every change (scene/scene_exporter.h, ExportSettings::reuse). On by default; off is the way the
+/// IPR worked before, for hunting a fault.
+cinema::Bool GetIprSkipUnchangedMeshes();
+void SetIprSkipUnchangedMeshes(cinema::Bool skip);
+
 } // namespace cyclesrender
 
 #endif // CYCLESRENDER_SETTINGS_H__

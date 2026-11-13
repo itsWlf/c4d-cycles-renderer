@@ -21,17 +21,23 @@ maxon::UInt64 HashBytes(const maxon::Char* data, maxon::Int count, maxon::UInt64
 //----------------------------------------------------------------------------------------
 /// What Blender currently holds: a fingerprint of every scene item, by item id. One per
 /// live session; SceneWriter::KeepChanges() compares against it and brings it up to date.
+///
+/// For items whose export can be skipped (the IPR's meshes, SceneWriter::KeepMesh), it also
+/// keeps the signature of what each was made from (SceneWriter::NoteMeshSource).
 //----------------------------------------------------------------------------------------
 class SyncState
 {
 public:
 	/// Forget everything, as after Blender's scene was cleared.
-	void Reset() { _items.Reset(); }
+	void Reset() { _items.Reset(); _sources.Reset(); }
 	maxon::Int GetItemCount() const { return _items.GetCount(); }
+	/// Makes this a copy of @p other (for comparing a fresh export with it, without changing it).
+	maxon::Result<void> CopyFrom(const SyncState& other);
 
 private:
 	friend class SceneWriter;
 	maxon::HashMap<maxon::String, maxon::UInt64> _items;
+	maxon::HashMap<maxon::String, maxon::UInt64> _sources;   ///< item id -> signature of what it was made from
 };
 
 //----------------------------------------------------------------------------------------
@@ -94,6 +100,22 @@ public:
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::Int> KeepChanges(SyncState& state, maxon::Bool partial = false);
 
+	//----------------------------------------------------------------------------------------
+	/// Skipping the export of a mesh Blender already has. ExportMesh() writes two items, the mesh
+	/// @p meshId and its points; NoteMeshSource() then attaches @p signature, a hash of everything
+	/// they were made from (scene_exporter.cpp, MeshSignature), and KeepChanges() stores it in the
+	/// SyncState. Next time KeepMesh() with the same signature puts the two items into the request
+	/// as Blender holds them, by their fingerprints and without their content, instead of an export.
+	/// @return  False, with nothing added, unless @p state holds both items made from @p signature.
+	//----------------------------------------------------------------------------------------
+	maxon::Bool KeepMesh(const SyncState& state, const maxon::String& meshId, maxon::UInt64 signature);
+	void NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature);
+	/// True when KeepChanges() found an item of KeepMesh() that Blender does not hold as kept: the
+	/// request lacks its content and must be made again without KeepMesh(). Never seen; a guard.
+	maxon::Bool IsMissingKeptItems() const { return _missingKept; }
+	/// After KeepChanges(): the ids of the items it left to send and of those it lists for removal.
+	maxon::Result<maxon::BaseArray<maxon::String>> GetChangedIds() const;
+
 	/// Sends the request and waits for the reply. The writer cannot be used afterwards.
 	maxon::Result<void> Send(BridgeClient& client, cinema::BaseThread* cancel);
 
@@ -106,6 +128,10 @@ private:
 		maxon::Int blobCount = 0;
 		maxon::Bool send = true;
 		maxon::Int sendWith = NOTOK;     ///< index of the item whose sending forces this one
+		maxon::Bool kept = false;        ///< KeepMesh(): no content, only the fingerprint below
+		maxon::UInt64 keptFingerprint = 0;
+		maxon::Bool hasSource = false;   ///< NoteMeshSource() or KeepMesh() gave it a signature
+		maxon::UInt64 source = 0;
 	};
 
 	maxon::UInt64 Fingerprint(const Item& item) const;
@@ -118,6 +144,7 @@ private:
 	maxon::BaseArray<maxon::String> _bakedFiles;   ///< image item ids of baked files the request names
 	maxon::Int _itemFirstBlob = 0;   ///< index of the first blob of the item being written
 	maxon::Bool _itemOpen = false;
+	maxon::Bool _missingKept = false;
 	JsonWriter _discarded;           ///< receives the fields of an item that could not be stored
 };
 

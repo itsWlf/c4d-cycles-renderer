@@ -53,6 +53,24 @@ maxon::Result<maxon::Bool> ExportMesh(SceneWriter& writer, const Coords& coords,
 //----------------------------------------------------------------------------------------
 maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op);
 
+//----------------------------------------------------------------------------------------
+/// HashMeshSource() and the rest of what ExportMesh() reads from @p op: the edges that break
+/// the Phong normals, the n-gons, and whether vertex colours are per point. Two objects with the
+/// same value export the same items for the same mesh id, slots and units. A pass over the mesh's
+/// data (points, polygons, every tag ExportMesh reads), several times cheaper than exporting it
+/// (docs/reference/c4d-sdk.md, "Skipping unchanged meshes in the IPR").
+//----------------------------------------------------------------------------------------
+maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op);
+
+//----------------------------------------------------------------------------------------
+/// Which object @p op is and how often it and its tags were changed: its address and GUID, its
+/// data dirty count, and type, address, dirty count and name of each tag. Costs nothing per
+/// polygon. It changes with every edit Cinema 4D records, but not with an edit that bypasses the
+/// dirty counts, and an object made anew at a freed address can repeat it: the exporter trusts it
+/// only for objects of the document itself (scene_exporter.cpp, MeshSignature).
+//----------------------------------------------------------------------------------------
+maxon::UInt64 HashMeshIdentity(const cinema::PolygonObject* op);
+
 } // namespace cyclesrender
 
 #endif // CYCLESRENDER_MESH_EXPORT_H__

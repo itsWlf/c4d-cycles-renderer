@@ -17,11 +17,13 @@ MAXON_CONFIGURATION_STRING(g_cyclesRenderBlender, "", maxon::CONFIGURATION_CATEG
 namespace cyclesrender
 {
 
-// Keys inside the plugin's container in Cinema 4D's preferences. Never renumber.
+// Keys inside the plugin's container in Cinema 4D's preferences. Never renumber. (prefs/devices.cpp
+// uses 1010 to 1012, the IPR's test hook 9000 and 9001.)
 enum
 {
 	SETTING_BLENDER_PATH = 1000,
-	SETTING_BLENDER_STATUS = 1001
+	SETTING_BLENDER_STATUS = 1001,
+	SETTING_IPR_SKIP_UNCHANGED = 1020
 };
 
 // The container is keyed by the renderer's issued plugin ID so it survives ID changes elsewhere.
@@ -104,6 +106,19 @@ cinema::Bool DetectAndStoreBlender()
 		return false;
 	StoreBlender(install, cinema::MaxonConvert(install.executable));
 	return true;
+}
+
+cinema::Bool GetIprSkipUnchangedMeshes()
+{
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	return stored ? stored->GetBool(SETTING_IPR_SKIP_UNCHANGED, true) : true;
+}
+
+void SetIprSkipUnchangedMeshes(cinema::Bool skip)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetBool(SETTING_IPR_SKIP_UNCHANGED, skip);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
 }
 
 void DetectBlenderOnFirstStart()

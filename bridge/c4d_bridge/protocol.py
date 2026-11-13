@@ -10,7 +10,7 @@ import struct
 MAGIC = b"C4DB"
 VERSION = 0
 MAX_HEADER_BYTES = 16 * 1024 * 1024
-MAX_BLOBS = 4096
+MAX_BLOBS = 1048576     # 4096 in 0.1.0, which a scene of 820 meshes (five blobs each) reached
 
 _PREFIX = struct.Struct("<4sHHII")  # magic, version, flags, header length, blob count
 

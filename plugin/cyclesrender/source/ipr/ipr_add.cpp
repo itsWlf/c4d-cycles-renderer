@@ -89,9 +89,164 @@ static maxon::Int AddCyclesLight(cinema::BaseDocument* doc, maxon::String& messa
 	return 1;
 }
 
+// --- the render view's camera through undo and redo -------------------------------------------
+//
+// Cinema 4D's undo cannot hold a view (measured in c4dpy and in the application, 2026-11-12): after
+// undoing a step that recorded the render view with AddUndo (CHANGE, CHANGE_NOCHILDREN or
+// CHANGE_SMALL, the camera set with SetSceneCamera or as BASEDRAW_DATA_CAMERA), the document's view
+// has no camera link at all and looks through its own editor camera (an "RS Camera" that is no object
+// of the document), redo does not bring the link back, and the view object held before the undo is
+// no longer the document's. Left out of the undo step, the view keeps its link: while the camera it
+// names is gone (undone) the view falls back to its editor camera, and once the camera is back
+// (redone) the link finds it again. So the view is kept out of the step, and the plugin itself puts
+// the view back on the camera it had before while the added camera is gone, and on the added camera
+// again when it returns: FollowAddedCameras(), on every change of a document.
+
+namespace
+{
+/// One "Camera with Cycles Camera Tag": which view was switched, from which camera, to which.
+struct CameraSwitch
+{
+	cinema::BaseDocument* doc = nullptr;		///< compared with the document list; used only while it is in it
+	cinema::BaseDraw* view = nullptr;				///< compared with the document's views; used only while it is one
+	cinema::BaseLink* previous = nullptr;		///< the camera the view looked through; empty: its editor camera
+	cinema::BaseLink* added = nullptr;			///< the camera that was added
+	maxon::Bool reverted = false;						///< the view was put back on the previous camera
+};
+}
+
+// Main thread only. The newest last; a few are enough (each lasts while its undo step can come back).
+static maxon::BaseArray<CameraSwitch> g_switches;
+static const maxon::Int MAX_SWITCHES = 16;
+
+static void FreeSwitch(CameraSwitch& entry)
+{
+	cinema::BaseLink::Free(entry.previous);
+	cinema::BaseLink::Free(entry.added);
+}
+
+static void RememberSwitch(cinema::BaseDocument* doc, cinema::BaseDraw* view, cinema::BaseObject* previous, cinema::BaseObject* added)
+{
+	CameraSwitch entry;
+	entry.doc = doc;
+	entry.view = view;
+	entry.previous = previous ? cinema::BaseLink::Alloc() : nullptr;
+	entry.added = cinema::BaseLink::Alloc();
+	if (entry.previous)
+		entry.previous->SetLink(previous);
+	if (!entry.added || (previous && !entry.previous))
+	{
+		FreeSwitch(entry);
+		return;
+	}
+	entry.added->SetLink(added);
+	if (g_switches.GetCount() >= MAX_SWITCHES)
+	{
+		FreeSwitch(g_switches[0]);
+		g_switches.Erase(0) iferr_ignore("Erasing the first of a non-empty array cannot fail.");
+	}
+	iferr (g_switches.Append(entry))
+		FreeSwitch(entry);
+}
+
+static maxon::Bool IsOpenDocument(const cinema::BaseDocument* doc)
+{
+	for (const cinema::BaseDocument* open = cinema::GetFirstDocument(); open; open = open->GetNext())
+	{
+		if (open == doc)
+			return true;
+	}
+	return false;
+}
+
+static maxon::Bool IsViewOf(cinema::BaseDocument* doc, const cinema::BaseDraw* view)
+{
+	for (cinema::Int32 i = 0; i < doc->GetBaseDrawCount(); ++i)
+	{
+		if (doc->GetBaseDraw(i) == view)
+			return true;
+	}
+	return false;
+}
+
+maxon::Int FollowAddedCameras()
+{
+	maxon::Int changed = 0;
+	for (maxon::Int i = g_switches.GetCount() - 1; i >= 0; --i)
+	{
+		CameraSwitch& entry = g_switches[i];
+		maxon::Bool keep = IsOpenDocument(entry.doc) && IsViewOf(entry.doc, entry.view);
+		if (keep)
+		{
+			cinema::BaseDocument* const doc = entry.doc;
+			cinema::BaseObject* const added = static_cast<cinema::BaseObject*>(entry.added->GetLink(doc, Obase));
+			cinema::BaseObject* const previous = entry.previous ? static_cast<cinema::BaseObject*>(entry.previous->GetLink(doc, Obase)) : nullptr;
+			// What the view's link names now; nothing while it names no camera of the document (its
+			// editor camera, or a camera that is gone).
+			cinema::BaseObject* const current = entry.view->HasCameraLink() ? entry.view->GetSceneCamera(doc) : nullptr;
+			if (!entry.reverted)
+			{
+				if (added)
+				{
+					// Still added: as long as the view looks through it there is nothing to do; when the
+					// user chose another camera the switch is theirs now.
+					keep = current == added;
+				}
+				else if (!current)
+				{
+					// Undone (or deleted): the view goes back to where it looked before.
+					entry.view->SetSceneCamera(previous);
+					entry.reverted = true;
+					++changed;
+				}
+				else
+				{
+					keep = false;
+				}
+			}
+			else if (added)
+			{
+				// Redone: as the step did, the view looks through the added camera, unless the user has
+				// chosen another one since.
+				if (current == previous)
+				{
+					entry.view->SetSceneCamera(added);
+					entry.reverted = false;
+					++changed;
+				}
+				else
+				{
+					keep = false;
+				}
+			}
+		}
+		if (!keep)
+		{
+			FreeSwitch(entry);
+			g_switches.Erase(i) iferr_ignore("Erasing an element of the array cannot fail.");
+		}
+	}
+	if (changed > 0)
+		cinema::EventAdd();
+	return changed;
+}
+
+maxon::Int GetAddedCameraSwitchCount()
+{
+	return g_switches.GetCount();
+}
+
+void FreeAddedCameraSwitches()
+{
+	for (CameraSwitch& entry : g_switches)
+		FreeSwitch(entry);
+	g_switches.Reset();
+}
+
 // A camera where the active view looks from, with the view's focal length, and a Cycles Camera tag.
 // It becomes the camera of the render view: the IPR (on "Render View") then shows it, and the
-// tag's settings, at once, from where the view was.
+// tag's settings, at once, from where the view was. The view is not part of the undo step (see
+// above): FollowAddedCameras() follows the step's undo and redo.
 static maxon::Int AddCameraWithTag(cinema::BaseDocument* doc, maxon::String& message)
 {
 	cinema::BaseObject* const camera = cinema::BaseObject::Alloc(Ocamera);
@@ -108,13 +263,15 @@ static maxon::Int AddCameraWithTag(cinema::BaseDocument* doc, maxon::String& mes
 	}
 	camera->SetName("Cycles Camera"_s);
 	cinema::BaseTag* const tag = camera->MakeTag(ID_CAMERA_TAG);
+	// The camera the view's link names before, if any (without one it looks through its editor camera).
+	cinema::BaseObject* const previous = view && view->HasCameraLink() ? view->GetSceneCamera(doc) : nullptr;
 	doc->StartUndo();
 	doc->InsertObject(camera, nullptr, nullptr);
 	doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, camera);
 	if (view)
 	{
-		doc->AddUndo(cinema::UNDOTYPE::CHANGE_SMALL, view);
 		view->SetSceneCamera(camera);
+		RememberSwitch(doc, view, previous, camera);
 	}
 	doc->SetActiveObject(camera, SELECTION_NEW);
 	if (tag)

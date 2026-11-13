@@ -13,10 +13,12 @@
 
 #include "../platform/process_stats.h"
 #include "../platform/shared_memory.h"
+#include "../prefs/settings.h"
 #include "../scene/camera_export.h"
 #include "../videopost/output_settings.h"
 #include "../videopost/render_settings_map.h"
 #include "ipr_controller.h"
+#include "ipr_trace.h"
 
 namespace cyclesrender
 {
@@ -154,6 +156,7 @@ void IprController::Fail(const maxon::String& message)
 	_state = IPRSTATE::FAILED;
 	_message = message;
 	_viewStarted = false;
+	_exportedTimeKnown = false;
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_sentView = "?"_s;
@@ -257,6 +260,7 @@ void IprController::Stop()
 	_state = IPRSTATE::STOPPED;
 	_message = maxon::String();
 	_viewStarted = false;
+	_exportedTimeKnown = false;
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_sentView = "?"_s;
@@ -509,9 +513,18 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 	_exportSettings.eevee = _engine == CYCLES_ENGINE_EEVEE;	// the IPR's engine menu may override the render settings
 	_exportSettings.camera = ResolveCamera(doc);
 	_exportSettings.writeCamera = false;
+	// Meshes Blender holds, made from what is there now, are not exported again (Preferences >
+	// Cycles Render > IPR, "Skip Unchanged Meshes"). A scene sent from scratch is exported whole.
+	const maxon::Bool skip = GetIprSkipUnchangedMeshes();
+	_exportSettings.reuse = !clear && skip ? &_sceneState : nullptr;
+	_exportSettings.noteSources = skip;
+	_exportedTime = doc->GetTime();
+	_exportedTimeKnown = true;
 
+	const maxon::Float64 exportStart = platform::UnixTime();
 	SceneExporter exporter(doc, _exportSettings);
 	exporter.Collect() iferr_return;
+	const maxon::Float64 collected = platform::UnixTime();
 
 	IprTask* task = NewObj(IprTask) iferr_return;
 	finally
@@ -523,11 +536,30 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 	exporter.Write(*task->scene) iferr_return;
 	for (const maxon::String& warning : task->scene->GetWarnings())
 		ReportOnce(warning);
+	const maxon::Float64 written = platform::UnixTime();
 
 	const maxon::Int changes = task->scene->KeepChanges(_sceneState) iferr_return;
+	if (task->scene->IsMissingKeptItems())
+	{
+		// A kept mesh that Blender turned out not to hold (never seen): the request lacks it, so the
+		// scene is sent again from scratch, exported whole.
+		ApplicationOutput("Cycles Render IPR: an unchanged mesh was not where it was expected in Blender; the scene is sent again.");
+		return SyncScene(true);
+	}
 	_lastChangeCount = maxon::Int32(changes);
+	const maxon::Float64 compared = platform::UnixTime();
+	_lastStats = exporter.GetStats();
+	_lastExportMilliseconds = (compared - exportStart) * 1000.0;
+	TraceIpr("collect_ms", (collected - exportStart) * 1000.0);
+	TraceIpr("write_ms", (written - collected) * 1000.0);
+	TraceIpr("compare_ms", (compared - written) * 1000.0);
+	TraceIpr("mesh_ms", _lastStats.meshMilliseconds);
+	TraceIpr("meshes_kept", maxon::Float64(_lastStats.meshesKept));
+	TraceIpr("meshes_exported", maxon::Float64(_lastStats.meshesExported));
+	TraceIpr("export_ms", _lastExportMilliseconds);
 	if (changes > 0 || clear)
 	{
+		TraceIpr("posted_scene", maxon::Float64(changes));
 		_worker->Post(task);
 		task = nullptr;
 		// The clock runs from the moment Cinema 4D reported the change.
@@ -670,6 +702,7 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 		if (view.GetText() != _sentView)
 		{
 			_sentView = view.GetText();
+			TraceIpr("posted_view");
 			_worker->PostRequest(view);
 			// A camera move is found by polling, not announced: the clock starts when it is found.
 			ArmLatency(0.0);
@@ -694,6 +727,7 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 	const maxon::Int changes = task->scene->KeepChanges(_cameraState, true) iferr_return;
 	if (changes > 0 || !_sentView.IsEmpty())
 	{
+		TraceIpr("posted_camera");
 		_worker->Post(task);
 		task = nullptr;
 		if (!_sentView.IsEmpty())
@@ -710,6 +744,7 @@ void IprController::Tick()
 {
 	if (!_worker)
 		return;
+	TraceIpr("tick");
 
 	ReportWarnings();
 
@@ -772,6 +807,12 @@ void IprController::Tick()
 		return;
 	}
 
+	// Playback changes the document's time without any change event (measured: none in 3 s of
+	// playing, an EVMSG_CHANGE only when it stopped), so the time is compared on every tick; the
+	// window's timer runs while Cinema 4D plays.
+	if (_exportedTimeKnown && doc->GetTime() != _exportedTime)
+		MarkSceneChanged();
+
 	// While Blender is still busy with the last change, wait: the next export then covers
 	// everything that happened in the meantime.
 	if (!idle)
@@ -791,6 +832,46 @@ void IprController::Tick()
 		iferr (SyncCamera(doc))
 			Fail(err.GetMessage());
 	}
+}
+
+maxon::Result<maxon::String> IprController::VerifySync()
+{
+	iferr_scope;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	if (!doc || doc != _document)
+		return "{\"problem\":\"the IPR holds another document or none\"}"_s;
+	ExportSettings settings = _exportSettings;
+	settings.reuse = nullptr;
+	settings.noteSources = false;
+	settings.camera = ResolveCamera(doc);
+	SceneExporter exporter(doc, settings);
+	exporter.Collect() iferr_return;
+	SceneWriter writer(false);
+	exporter.Write(writer) iferr_return;
+	SyncState copy;
+	copy.CopyFrom(_sceneState) iferr_return;
+	writer.KeepChanges(copy) iferr_return;
+	const maxon::BaseArray<maxon::String> changed = writer.GetChangedIds() iferr_return;
+	JsonWriter json;
+	json.BeginObject();
+	json.Int("items", writer.GetItemCount());
+	json.BeginArray("differences");
+	for (const maxon::String& id : changed)
+		json.String(nullptr, id);
+	json.EndArray();
+	json.EndObject();
+	return json.GetText();
+}
+
+void IprController::FollowCamera()
+{
+	if (!_worker || _state != IPRSTATE::RUNNING || _worker->GetPendingCount() != 0)
+		return;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	if (!doc || doc != _document)
+		return;
+	iferr (SyncCamera(doc))
+		Fail(err.GetMessage());
 }
 
 // --- results --------------------------------------------------------------------------------

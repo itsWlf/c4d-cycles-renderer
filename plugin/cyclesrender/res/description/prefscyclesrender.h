@@ -25,7 +25,11 @@ enum
 	PREF_CYCLES_FIND_DEVICES = 1005,
 	// One checkbox per device of the chosen type, made by the page (prefs_page.cpp): 1100 and on.
 	PREF_CYCLES_DEVICE_FIRST = 1100,
-	PREF_CYCLES_DEVICE_LAST = 1163
+	PREF_CYCLES_DEVICE_LAST = 1163,
+
+	// The IPR: a switch for its riskier feature, to turn it off when hunting a fault.
+	PREF_CYCLES_IPR_GROUP = 997,
+	PREF_CYCLES_IPR_SKIP_UNCHANGED = 1007
 };
 
 #endif // PREFSCYCLESRENDER_H__

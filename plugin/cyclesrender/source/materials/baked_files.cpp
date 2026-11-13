@@ -11,6 +11,7 @@
 #include "maxon/spinlock.h"
 
 #include "../ids.h"
+#include "../ipr/ipr_add.h"
 #include "../platform/file_lock.h"
 #include "../platform/shared_memory.h"
 #include "../scene/scene_writer.h"
@@ -663,17 +664,20 @@ maxon::String DescribeBakedFiles()
 // --- the message hook -------------------------------------------------------------------------
 
 // Watches the document list on Cinema 4D's main thread: on every change (a document closed
-// sends one), and once a second for whatever no change announced.
+// sends one), and once a second for whatever no change announced. The one message plugin the
+// renderer's id allows (ids.h) also follows the render view's camera through undo and redo of the
+// IPR's "Camera with Cycles Camera Tag" (ipr/ipr_add.h), which needs the same moments.
 class BakedFilesWatch : public cinema::MessageData
 {
 public:
 	virtual cinema::Int32 GetTimer() override { return 1000; }
 	virtual cinema::Bool CoreMessage(cinema::Int32 id, const cinema::BaseContainer& bc) override
 	{
-		if (id == EVMSG_CHANGE)
-			CheckDocuments(false);
-		else if (id == MSG_TIMER)
-			CheckDocuments(true);
+		if (id == EVMSG_CHANGE || id == MSG_TIMER)
+		{
+			FollowAddedCameras();
+			CheckDocuments(id == MSG_TIMER);
+		}
 		return true;
 	}
 };

@@ -117,6 +117,11 @@ public:
 				data = cinema::GeData(DevicesStatus());
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
+
+			case PREF_CYCLES_IPR_SKIP_UNCHANGED:
+				data = cinema::GeData(GetIprSkipUnchangedMeshes());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
 		}
 		const maxon::Int32 index = id[0].id - PREF_CYCLES_DEVICE_FIRST;
 		if (index >= 0 && id[0].id <= PREF_CYCLES_DEVICE_LAST)
@@ -155,6 +160,11 @@ public:
 				cinema::GeUpdateUI();
 				return true;
 			}
+
+			case PREF_CYCLES_IPR_SKIP_UNCHANGED:
+				SetIprSkipUnchangedMeshes(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				return true;
 		}
 		const maxon::Int32 index = id[0].id - PREF_CYCLES_DEVICE_FIRST;
 		if (index >= 0 && id[0].id <= PREF_CYCLES_DEVICE_LAST)

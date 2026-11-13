@@ -24,7 +24,9 @@ struct FramePrefix
 #pragma pack(pop)
 
 static const maxon::UInt32 MAX_HEADER_BYTES = 16 * 1024 * 1024;
-static const maxon::UInt32 MAX_BLOBS = 4096;
+// A scene of a few thousand meshes has five blobs per mesh (protocol/protocol.md, "Frames"); the
+// 4096 of protocol version 0 as released in 0.1.0 were reached by 820 meshes.
+static const maxon::UInt32 MAX_BLOBS = 1048576;
 
 static maxon::Result<void> Send(platform::SocketHandle socket, const void* data, maxon::Int size)
 {

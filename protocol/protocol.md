@@ -38,7 +38,7 @@ Every message, in both directions, is one frame. All integers are little-endian.
 | header | UTF-8 JSON object | see below |
 | blobs | raw bytes | back to back, in order |
 
-Limits: `header_length` ≤ 16 MiB, `blob_count` ≤ 4096. A frame that breaks a limit or has a wrong magic or version ends the connection.
+Limits: `header_length` ≤ 16 MiB, `blob_count` ≤ 1,048,576 (2^20; 4096 up to 0.1.0, which a scene of 820 meshes reached: a bridge of 0.1.0 ends the connection on more). A frame that breaks a limit or has a wrong magic or version ends the connection.
 
 Blobs carry bulk data (mesh arrays, pixels) as raw little-endian arrays. The header says what each blob is; a blob is referred to by its index.
 
@@ -100,7 +100,7 @@ A blob is referred to from a header by its index in the frame (a plain integer).
 
 ## Scene items
 
-`items` is a list of objects, built in the order given: an item must come after the items it refers to. Each has a `kind` and an `id` (a string chosen by the plugin; sending an existing id replaces that item, in place where Blender allows it, so things that refer to it keep working). An item with blobs carries `blobs`: the frame index of its first blob. Blob indices in the item's other fields count from there. (A request that leaves unchanged items out still sends the same number of blobs; the ones of the items left out are empty.) Everything is already in Blender's terms: right-handed, Z up, metres, and a `matrix` is the 4×4 world matrix as 16 numbers in row-major order.
+`items` is a list of objects, built in the order given: an item must come after the items it refers to. Each has a `kind` and an `id` (a string chosen by the plugin; sending an existing id replaces that item, in place where Blender allows it, so things that refer to it keep working). An item with blobs carries `blobs`: the frame index of its first blob. Blob indices in the item's other fields count from there. A request carries the blobs of the items it contains only (up to 0.1.0 the plugin also sent an empty blob for each blob of an unchanged item it left out; the bridge never relied on either). Everything is already in Blender's terms: right-handed, Z up, metres, and a `matrix` is the 4×4 world matrix as 16 numbers in row-major order.
 
 | kind | Fields | Notes |
 |---|---|---|

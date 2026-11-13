@@ -5,6 +5,7 @@
 #include "c4d.h"
 
 #include "../platform/shared_memory.h"
+#include "ipr_trace.h"
 #include "ipr_worker.h"
 
 namespace cyclesrender
@@ -215,6 +216,7 @@ void IprWorker::Main()
 				Fail(blenderGone ? "Blender has stopped unexpectedly."_s : err.GetMessage());
 			}
 		}
+		TraceIpr("answered", task->kind == IprTask::KIND::SCENE ? 2.0 : task->kind == IprTask::KIND::REQUEST ? 1.0 : 0.0);
 		DeleteObj(task);
 		_pending.SwapDecrement();
 	}

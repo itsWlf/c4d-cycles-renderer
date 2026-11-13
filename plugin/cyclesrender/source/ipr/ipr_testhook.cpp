@@ -22,7 +22,10 @@
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
 #include "ipr_testhook.h"
+#include "ipr_trace.h"
 #include "../materials/baked_files.h"
+#include "../platform/shared_memory.h"
+#include "../scene/scene_exporter.h"
 #include "../materials/material_export.h"
 #include "../materials/native_material.h"
 #include "../prefs/devices.h"
@@ -589,6 +592,37 @@ static maxon::String Execute(const maxon::String& commandLine)
 		fetched = Frame();
 		return "{\"state\":\"freed\"}"_s;
 	}
+	else if (command == "verify"_s)
+	{
+		// The active document exported whole against what Blender holds (IprController::VerifySync).
+		iferr (const maxon::String answer = ipr.VerifySync())
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		return answer;
+	}
+	else if (command == "sources"_s)
+	{
+		// What the mesh leaves of the active document were made from (SceneExporter::GetSourceListing).
+		cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+		if (!doc)
+			return "{\"problem\":\"no document\"}"_s;
+		SceneExporter exporter(doc, ExportSettings());
+		iferr (exporter.Collect())
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		iferr (const maxon::String listing = exporter.GetSourceListing())
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		return listing;
+	}
+	else if (command == "trace"_s)
+	{
+		// "trace on" / "trace off" switch the timeline (ipr_trace.h) and forget it; "trace" hands it
+		// over and forgets it.
+		if (argument == "on"_s || argument == "off"_s)
+		{
+			SetIprTracing(argument == "on"_s);
+			return "{\"trace\":[]}"_s;
+		}
+		return FormatString("{\"trace\":@,\"now\":@}", TakeIprTrace(), maxon::String::FloatToString(platform::UnixTime(), -1, 6));
+	}
 	else if (command == "curve"_s)
 	{
 		iferr (const maxon::String answer = CurveCommand(argument))
@@ -598,7 +632,13 @@ static maxon::String Execute(const maxon::String& commandLine)
 	else if (command == "add"_s)
 	{
 		// What the window's "Add" menu does, without the window: material, camera, camera_tag,
-		// object_tag, light, light_tag.
+		// object_tag, light, light_tag. "add follow" runs what the message plugin runs after a change
+		// (c4dpy has no message loop): the render view through undo and redo of "add camera".
+		if (argument == "follow"_s)
+		{
+			const maxon::Int set = FollowAddedCameras();
+			return FormatString("{\"views_set\":@,\"switches\":@}", set, GetAddedCameraSwitchCount());
+		}
 		const IPRADD what = argument == "material"_s ? IPRADD::CYCLES_MATERIAL : argument == "camera"_s ? IPRADD::CAMERA_WITH_TAG
 			: argument == "camera_tag"_s ? IPRADD::CAMERA_TAG : argument == "light"_s ? IPRADD::CYCLES_LIGHT
 			: argument == "light_tag"_s ? IPRADD::LIGHT_TAG : IPRADD::OBJECT_TAG;
@@ -727,6 +767,11 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.Int("scenes_sent", ipr.GetSentSceneCount());
 	json.Int("requests_sent", ipr.GetSentRequestCount());
 	json.Int("changes", ipr.GetLastChangeCount());
+	json.Int("meshes_exported", ipr.GetLastExportStats().meshesExported);
+	json.Int("meshes_kept", ipr.GetLastExportStats().meshesKept);
+	json.Int("meshes_by_identity", ipr.GetLastExportStats().meshesByIdentity);
+	json.Float("export_ms", ipr.GetLastExportMilliseconds());
+	json.Float("mesh_ms", ipr.GetLastExportStats().meshMilliseconds);
 	json.Int("engine", ipr.GetEngine());
 	json.Int("pass", ipr.GetPass());
 	json.Int("pass_count", ipr.GetPasses().GetCount());

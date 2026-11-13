@@ -33,9 +33,9 @@ run one after another in a fixed order, which is printed; each starts from a kno
 (tests\c4d\lib\crrun.py) and has its own result and time. A capture or dump file is one per
 start and is emptied before every script. When c4dpy ends before every test of a start has
 reported, the test that was running fails and the ones not yet run are run again, each alone.
-The last two tests, ipr_window_checks and baked_files_window, need windows and start the
-regular Cinema 4D for about half a minute each, with a preferences folder of their own so that
-the user's preferences and layout stay untouched.
+The last three tests, ipr_window_checks, ipr_follow_window and baked_files_window, need windows
+and start the regular Cinema 4D for about half a minute each, with a preferences folder of their
+own so that the user's preferences and layout stay untouched.
 
 Details of a failed test: its JSON result is %TEMP%\cyclesrender_c4d_tests\<name>.result.json,
 the output of its start <start>.txt next to it (the start is printed with each group), and it
@@ -138,7 +138,11 @@ $c4dTests = @(
      Covers = @("${P}tags/camera_tag.*", "${R}description/tcyclescamera.*", "${R}strings_en-US/description/tcyclescamera.str", "${P}scene/camera_export.*",
                 "${B}scene/cameras.py", "${P}ipr/ipr_controller.*", "${R}icons/*", "tools/make_icons.py") },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
-     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}platform/process_stats*", "${B}viewport/*") },
+     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}ipr/ipr_trace.*", "${P}platform/process_stats*", "${B}viewport/*") },
+  @{ Name = "ipr_reuse"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}scene/scene_writer.*", "${P}scene/scene_exporter.*", "${P}scene/mesh_export.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*",
+                "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
+                "${P}session/protocol.*", "${B}protocol.py", "${B}scene/__init__.py") },
   @{ Name = "output"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}videopost/output_settings.*", "${P}videopost/render_settings_*", "${P}videopost/cycles_videopost.*", "${P}scene/camera_export.*", "${P}ipr/ipr_controller.*",
                 "${R}description/vpcyclesrender.*", "${R}strings_en-US/description/vpcyclesrender.str", "tools/make_settings.py", "${B}final/__init__.py") },
@@ -159,7 +163,9 @@ $c4dTests = @(
   @{ Name = "baked_files"; Settings = @{ g_cyclesRenderIprTest = "true" }; GoneAfter = $true
      Covers = @("${P}materials/baked_files.*", "${P}platform/file_lock*", "${P}materials/shader_translate.*") },
   @{ Name = "ipr_window_checks"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
-     Covers = @("${P}ipr/*", "${R}icons/*", "tools/make_icons.py", "${P}materials/material_preview.*", "${P}prefs/*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str", "tests/c4d/harness/*") },
+     Covers = @("${P}ipr/*", "${R}icons/*", "tools/make_icons.py", "${P}materials/material_preview.*", "${P}materials/baked_files.*", "${P}prefs/*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str", "tests/c4d/harness/*") },
+  @{ Name = "ipr_follow_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_image_area.*", "${P}session/frame_watcher.*", "${B}viewport/*", "tests/c4d/harness/*") },
   @{ Name = "baked_files_window"; Window = $true; CleanPrefs = $true; GoneAfter = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}materials/baked_files.*", "${P}materials/material_preview.*", "tests/c4d/harness/*") }
 )

@@ -19,6 +19,7 @@
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
+#include "ipr_trace.h"
 
 namespace cyclesrender
 {
@@ -245,6 +246,7 @@ private:
 	maxon::String _shownVram;
 	maxon::Float64 _shownZoom = 0.0;	///< the zoom last written into the zoom field
 	maxon::Int _ticks = 0;
+	maxon::Float64 _lastTimer = 0.0;	///< when Timer() last ran (GeGetMilliSeconds); see CoreMessage()
 };
 
 static IprDialog* g_dialog = nullptr;
@@ -530,10 +532,13 @@ void IprDialog::ShowNewFrame()
 	const maxon::Bool wider = framing.frameWidth < maxon::Float64(framing.width) - 0.5 || framing.frameHeight < maxon::Float64(framing.height) - 0.5;
 	_image.SetFrame(_incoming, cinema::GetActiveDocument(), wider ? ipr.GetFrameAspect() : 0.0);
 	ipr.NoteFrame(_image.GetFrame());
+	TraceIpr("shown", maxon::Float64(_image.GetFrame().frameId));
 }
 
 void IprDialog::Timer(const cinema::BaseContainer& msg)
 {
+	TraceIpr("timer");
+	_lastTimer = cinema::GeGetMilliSeconds();
 	IprController& ipr = IprController::Get();
 	// The render follows the size of the picture area ("Fit Window").
 	ipr.SetWindowSize(_image.GetWidth(), _image.GetHeight());
@@ -559,8 +564,40 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 	if (id == ID_CORE_MESSAGE)
 	{
 		// The frame thread has a new frame.
+		TraceIpr("framemsg");
 		ShowNewFrame();
 		return true;
+	}
+	if (IsIprTracing())
+	{
+		if (id == EVMSG_CHANGE)
+			TraceIpr("change");
+		else if (id == EVMSG_DOCUMENTRECALCULATED)
+			TraceIpr("recalc");
+		else if (id == EVMSG_ASYNCEDITORMOVE)
+			TraceIpr("editormove", maxon::Float64(reinterpret_cast<maxon::UInt>(msg.GetVoid(cinema::BFM_CORE_PAR1))));
+		else
+			TraceIpr("core", maxon::Float64(id));
+	}
+	// While Cinema 4D is in a modal loop, such as a tool's drag in a view, the window's timer does
+	// not run (measured: not once during an emulated drag, so the IPR followed a drag only at its
+	// end), but a tool tells the managers about every step at once (EVMSG_ASYNCEDITORMOVE, sent with
+	// GeSyncMessage). Then the IPR does here what the timer would: it sends what changed while
+	// Blender is idle and shows the newest frame. Any other message in such a loop moves the camera.
+	if (cinema::GeGetMilliSeconds() - _lastTimer > 3.0 * TIMER_MILLISECONDS)
+	{
+		IprController& ipr = IprController::Get();
+		if (id == EVMSG_ASYNCEDITORMOVE)
+		{
+			TraceIpr("drag_step");
+			ipr.MarkSceneChanged();
+			ipr.Tick();
+		}
+		else
+		{
+			ipr.FollowCamera();
+		}
+		ShowNewFrame();
 	}
 	if (id == EVMSG_CHANGE || id == EVMSG_DOCUMENTRECALCULATED)
 	{

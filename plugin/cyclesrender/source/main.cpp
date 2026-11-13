@@ -10,6 +10,7 @@
 
 #include "ids.h"
 #include "materials/baked_files.h"
+#include "ipr/ipr_add.h"
 #include "ipr/ipr_controller.h"
 #include "ipr/ipr_dialog.h"
 #include "ipr/ipr_testhook.h"
@@ -66,6 +67,7 @@ cinema::Bool cinema::PluginStart()
 void cinema::PluginEnd()
 {
 	cyclesrender::FreeIprDialog();
+	cyclesrender::FreeAddedCameraSwitches();
 	cyclesrender::FreeNativeMaterialEditing();
 	cyclesrender::FreeMaterialPreviews();
 	// Ends the IPR's worker thread and its Blender.
