@@ -148,7 +148,14 @@ maxon::Result<void> IprWorker::Run(IprTask& task)
 			if (_client)
 				return maxon::OK;
 			_client = NewObj(BridgeClient) iferr_return;
-			_client->Open(BRIDGEMODE::VIEWPORT) iferr_return;
+			iferr (_client->Open(BRIDGEMODE::VIEWPORT))
+			{
+				// Without this the failure looked like a Blender that had stopped (Main() reads a client
+				// that is not alive so), and the IPR said "Blender has stopped unexpectedly." whatever
+				// the reason was: no Blender selected, none at that path, not supported (0.2.0, B7).
+				DeleteObj(_client);
+				return err;
+			}
 			maxon::ScopedLock guard(_lock);
 			_token = _client->GetToken();
 			_processId = _client->GetProcessId();

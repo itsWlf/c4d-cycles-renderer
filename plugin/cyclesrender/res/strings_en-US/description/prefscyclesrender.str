@@ -7,6 +7,11 @@ STRINGTABLE Prefscyclesrender
 	PREF_CYCLES_BLENDER_STATUS    "Status";
 	PREF_CYCLES_DETECT            "Detect Blender";
 
+	PREF_CYCLES_NEW_GROUP         "New Render Settings";
+	PREF_CYCLES_DEFAULT_ENGINE    "Default Engine";
+	PREF_CYCLES_DEFAULT_ENGINE_CYCLES "Cycles";
+	PREF_CYCLES_DEFAULT_ENGINE_EEVEE "Eevee";
+
 	PREF_CYCLES_DEVICE_GROUP      "Cycles Render Devices";
 	PREF_CYCLES_DEVICE_NOTE       "";
 	PREF_CYCLES_DEVICE_TYPE       "Device Type";

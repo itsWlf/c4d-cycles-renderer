@@ -2,12 +2,19 @@
 // Finding Blender and the bridge on this machine (blender_install.h).
 
 #include "c4d.h"
+#include "maxon/configuration.h"
 #include "maxon/file_utilities.h"
 #include "maxon/iobrowse.h"
 #include "maxon/system_process.h"
 
 #include "../platform/environment.h"
 #include "blender_install.h"
+
+// Tests make detection look elsewhere, so that a machine with Blender installed can be a machine
+// without one (an empty folder: detection finds nothing), without touching the installation:
+//   g_cyclesRenderBlenderSearch=<folder>
+MAXON_CONFIGURATION_STRING(g_cyclesRenderBlenderSearch, "", maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
+	"Cycles Render: the folder detection looks for Blender in, instead of C:\\Program Files\\Blender Foundation.");
 
 namespace cyclesrender
 {
@@ -120,24 +127,55 @@ maxon::Bool IsSupportedBlender(maxon::Int32 major, maxon::Int32 minor)
 // The version when Blender's own answer is missing. Measured in c4dpy (2026-11-16, Blender 5.0.0):
 // the file was found and ran, yet the captured output of --version held no version line, so the
 // IPR's first export did not know the version and sent a setting 5.0 lacks. Blender keeps its data
-// in a folder named "<major>.<minor>" next to the executable; a supported one tells the version that
-// matters here (the patch stays 0).
+// in a folder named "<major>.<minor>" next to the executable, which tells the version that matters
+// here (the patch stays 0). Any such folder counts, not only a supported version's: measured with
+// Blender 4.2.11 (2026-11-17, B7), whose answer was missing on one start of two, so that it passed
+// as "version unknown" and was started, instead of being named as not supported.
 static maxon::Result<void> VersionFromDataFolder(BlenderInstall& install)
 {
 	iferr_scope;
 	if (install.versionText.IsPopulated())
 		return maxon::OK;
 	const maxon::Url installFolder = install.executable.GetDirectory();
-	for (const SupportedVersion& version : SUPPORTED_VERSIONS)
+	if (installFolder.IoDetect() != maxon::IODETECT::DIRECTORY)
+		return maxon::OK;
+	for (const auto& it : installFolder.GetBrowseIterator(maxon::GETBROWSEITERATORFLAGS::NONE))
 	{
-		const maxon::Url dataFolder = (installFolder + maxon::String(version.folder)) iferr_return;
-		if (dataFolder.IoDetect() != maxon::IODETECT::DIRECTORY)
+		const maxon::IoBrowseRef& entry = (it) iferr_return;
+		if (!(entry.IoGetFlags() & maxon::IOBROWSEFLAGS::IS_DIRECTORY))
 			continue;
-		install.major = version.major;
-		install.minor = version.minor;
+		// "<digits>.<digits>" and nothing else.
+		const maxon::String name = entry.GetCurrentPath().GetName();
+		maxon::Int32 numbers[2] = { 0, 0 };
+		maxon::Int digits[2] = { 0, 0 };
+		maxon::Int part = 0;
+		maxon::Bool valid = name.GetLength() >= 3;
+		for (maxon::Int i = 0; i < name.GetLength() && valid; ++i)
+		{
+			const maxon::Utf32Char c = name[i];
+			if (c >= '0' && c <= '9' && digits[part] < 4)
+			{
+				numbers[part] = numbers[part] * 10 + maxon::Int32(c - '0');
+				++digits[part];
+			}
+			else if (c == '.' && part == 0)
+			{
+				part = 1;
+			}
+			else
+			{
+				valid = false;
+			}
+		}
+		if (!valid || part != 1 || digits[0] == 0 || digits[1] == 0)
+			continue;
+		install.major = numbers[0];
+		install.minor = numbers[1];
 		install.patch = 0;
-		install.versionText = maxon::String(version.folder);
-		install.supported = true;
+		install.versionText = name;
+		install.supported = IsSupportedBlender(install.major, install.minor);
+		if (install.supported)
+			break;	// of several (not seen), a supported one
 	}
 	return maxon::OK;
 }
@@ -191,8 +229,12 @@ maxon::Result<BlenderInstall> DetectBlender()
 	maxon::Bool bestPreferred = false;
 
 #ifdef MAXON_TARGET_WINDOWS
-	// The official installer puts each version in its own folder below this one.
-	const maxon::Url root("file:///C:/Program Files/Blender Foundation"_s);
+	// The official installer puts each version in its own folder below this one (tests name another).
+	maxon::Url root("file:///C:/Program Files/Blender Foundation"_s);
+	if (!g_cyclesRenderBlenderSearch.IsEmpty())
+	{
+		root.SetSystemPath(maxon::String(g_cyclesRenderBlenderSearch)) iferr_return;
+	}
 	if (root.IoDetect() != maxon::IODETECT::DIRECTORY)
 		return best;
 

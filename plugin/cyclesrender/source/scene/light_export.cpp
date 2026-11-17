@@ -52,6 +52,17 @@ static void Warn(SceneWriter* writer, const maxon::String& message)
 		writer->Warn(message);
 }
 
+// A Redshift light's own "Shadow" switch (on for a new light; Redshift renders none without it).
+static maxon::Bool RedshiftLightCastsShadow(const cinema::BaseObject* light)
+{
+	return GetBoolParameter(light, REDSHIFT_LIGHT_SHADOW, true);
+}
+
+maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light)
+{
+	return light && light->GetDeformMode();
+}
+
 //----------------------------------------------------------------------------------------
 // A Redshift light. Unlike Cinema 4D's standard lights these are physical, so the conversion
 // is exact. Measured by rendering a white wall with Redshift (docs/reference/c4d-sdk.md,
@@ -86,7 +97,7 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 		Warn(writer, FormatString("Light \"@\": the colour temperature is not translated; the colour of the light is used.", light->GetName()));
 
 	out.color = GetVectorParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLOR, cinema::Vector(1.0));
-	out.useShadow = true;
+	out.useShadow = RedshiftLightCastsShadow(light);
 	switch (type)
 	{
 		case REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE:
@@ -156,7 +167,12 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 	if (brightness <= 0.0)
 		return false;
 	out.color = colors.Input(GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0)));
-	out.useShadow = GetIntParameter(light, LIGHT_SHADOWTYPE, LIGHT_SHADOWTYPE_NONE) != LIGHT_SHADOWTYPE_NONE;
+	// Every standard light casts shadows, also with "Shadow" set to None (Cinema 4D's default, under
+	// which the Standard renderer casts none): the maintainer's decision for 0.2.0 (F20). A Cycles
+	// Light tag's Settings tab turns them off (ExportLight). The shadow types carry nothing else
+	// across: Shadow Maps (Soft), Raytraced (Hard) and Area all give Blender's shadow of the light's
+	// own size (sharp for an omni, spot or infinite light, soft for an area light).
+	out.useShadow = true;
 
 	// The distance, in metres, at which the Blender light is as bright as the Cinema 4D light.
 	const maxon::Float64 reference = maxon::Max(coords.Length(GetFloatParameter(light, LIGHT_DETAILS_OUTERDISTANCE, 500.0)), 1e-4);
@@ -372,6 +388,11 @@ static void NoteCameraVisibility(SceneWriter& writer, const cinema::BaseObject* 
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights)
 {
+	// The green check in the Object Manager. The walk leaves such a light out already; this keeps a
+	// light written alone (the IPR during a drag, SceneExporter::WriteLightAlone) in step with it.
+	if (!IsLightSwitchedOn(light))
+		return false;
+
 	BlenderLight values;
 	if (light->GetType() == ID_LIGHT_OBJECT)
 	{
@@ -393,9 +414,9 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 	{
 		if (light->GetType() == Olight && GetBoolParameter(light, LIGHT_NOLIGHTRADIATION, false))
 			return false;
-		// The light's own shadow setting stays until the Settings tab says otherwise.
-		const maxon::Bool shadow = light->GetType() == Orslight ||
-			GetIntParameter(light, LIGHT_SHADOWTYPE, LIGHT_SHADOWTYPE_NONE) != LIGHT_SHADOWTYPE_NONE;
+		// Shadows as without the Light tab (TranslateLight: always for a standard light, the light's
+		// own switch for a Redshift light) until the Settings tab says otherwise.
+		const maxon::Bool shadow = light->GetType() != Orslight || RedshiftLightCastsShadow(light);
 		ReadLightPanel(tag, coords, colors, values);
 		values.useShadow = shadow;
 		values.energy *= multiplier;

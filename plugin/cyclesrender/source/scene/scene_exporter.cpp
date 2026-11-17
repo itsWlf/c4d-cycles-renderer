@@ -545,8 +545,10 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	}
 	else if (type == Olight || type == Orslight || type == ID_LIGHT_OBJECT)
 	{
-		// A Redshift light carries the "used by a generator" mark itself, like a Hair object.
-		const maxon::Bool shines = type == Orslight ? (inherited.visible && layerVisible) : renders;
+		// A Redshift light carries the "used by a generator" mark itself, like a Hair object. A light
+		// whose green check is off renders nothing (a dome light included), and its check does not
+		// reach the lights below it (measured with the Standard renderer and Redshift).
+		const maxon::Bool shines = (type == Orslight ? (inherited.visible && layerVisible) : renders) && IsLightSwitchedOn(op);
 		if (shines && type == Orslight && GetIntParameter(op, REDSHIFT_LIGHT_TYPE, 0) == REDSHIFT_LIGHT_TYPE_DOME)
 		{
 			// A dome light is the environment, not a lamp.

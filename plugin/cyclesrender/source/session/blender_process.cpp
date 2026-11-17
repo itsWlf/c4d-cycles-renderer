@@ -106,12 +106,13 @@ maxon::Result<void> BlenderProcess::Start(BRIDGEMODE mode)
 {
 	iferr_scope;
 
+	// None selected or found, a file that is gone, a version that is not supported: said in words
+	// that name where to choose another (0.2.0, B7).
+	const maxon::String problem = GetBlenderProblem();
+	if (problem.IsPopulated())
+		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, problem);
 	const cinema::Filename blender = GetBlenderPathOrDetect();
-	if (!blender.IsPopulated())
-		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, "No Blender is set. Choose it in Preferences > Renderer > Cycles Render."_s);
 	const maxon::Url executable = cinema::MaxonConvert(blender, cinema::MAXONCONVERTMODE::NONE);
-	if (executable.IoDetect() != maxon::IODETECT::FILE)
-		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, "The Blender set in the Preferences does not exist."_s);
 
 	const maxon::String script = BridgeScriptPath(executable) iferr_return;
 
@@ -172,9 +173,13 @@ maxon::Result<void> BlenderProcess::Start(BRIDGEMODE mode)
 	const maxon::TimeValue deadline = maxon::TimeValue::GetTime() + maxon::Seconds(HANDSHAKE_TIMEOUT_SECONDS);
 	while (_handshakeFile.IoDetect() != maxon::IODETECT::FILE)
 	{
-		if (!_process.IsRunning())
+		// A bridge that refuses writes the file and exits at once: the file is looked for once more
+		// before the exit counts (measured with Blender 4.2, 2026-11-17: the refusal was lost so).
+		if (!_process.IsRunning() && _handshakeFile.IoDetect() != maxon::IODETECT::FILE)
 			return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, FormatString("Blender exited with code @ before the bridge started. Its output ended with: @",
 				_process.GetExitCode(), ReadLogTail(_process.GetLogFile())));
+		if (!_process.IsRunning())
+			break;
 		if (maxon::TimeValue::GetTime() > deadline)
 		{
 			Kill();
@@ -198,9 +203,12 @@ maxon::Result<void> BlenderProcess::Start(BRIDGEMODE mode)
 	}
 	const maxon::DataDictionary handshake = ParseJson(maxon::String(bytes.GetFirst(), bytes.GetCount())) iferr_return;
 
+	// The bridge cannot run in this Blender (a version it does not list, when the version could not
+	// be learned before): its reason, and where to choose another.
 	const maxon::String refusal = GetJsonString(handshake, "error"_s);
 	if (!refusal.IsEmpty())
-		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, refusal);
+		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, FormatString("@ Cycles Render needs Blender @: choose one in @.", refusal,
+			SupportedBlenderVersionsText(), BlenderPreferencesPlace()));
 
 	_port = maxon::Int32(GetJsonInt(handshake, "port"_s, 0));
 	_pid = maxon::Int(GetJsonInt(handshake, "pid"_s, 0));

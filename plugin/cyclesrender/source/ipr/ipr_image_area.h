@@ -119,8 +119,10 @@ public:
 	/// where the picture is about to be rendered again at the area's size.
 	void SetFill(maxon::Bool fill);
 
-	/// A line of text over the picture, for "starting" and error states. Empty: none.
+	/// A text over the picture, for "starting" and error states, wrapped to the area's width; a "\n"
+	/// starts a new line. Empty: none.
 	void SetMessage(const maxon::String& message);
+	const maxon::String& GetMessage() const { return _message; }
 
 	/// Who moves the camera when a drag navigates (NavigationForDrag); nullptr: no drag navigates.
 	void SetNavigationHandler(IprNavigationHandler* handler) { _navigation = handler; }
@@ -145,6 +147,8 @@ private:
 	void Convert(cinema::BaseDocument* doc);
 	void ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::Float64 areaY);
 	void NotifyParent(cinema::Int32 what);
+	/// The message as lines no wider than @p width pixels (whole words; a longer word stands alone).
+	maxon::Result<void> WrapMessage(cinema::Int32 width, maxon::BaseArray<maxon::String>& lines);
 	/// The modal loop of a navigating drag that began at (@p mouseX, @p mouseY), area pixels.
 	void NavigationDrag(IPRNAV mode, cinema::Int32 channel, cinema::Int32 mouseX, cinema::Int32 mouseY, cinema::Int32 qualifier);
 

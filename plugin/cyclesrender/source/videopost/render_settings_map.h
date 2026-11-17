@@ -56,7 +56,8 @@ void HideSettingsOfOtherEngine(const cinema::BaseContainer& data, cinema::Descri
 maxon::Bool IsSettingEnabled(const cinema::BaseContainer& data, maxon::Int32 id);
 
 /// The Cycles Render settings of the document's active render settings, or the defaults when
-/// Cycles Render is not set up there.
+/// Cycles Render is not set up there: Blender's, with the engine of the Preferences' Default Engine
+/// (prefs/settings.h, GetDefaultEngine), as the renderer has them when it is added.
 cinema::BaseContainer GetDocumentRenderSettings(cinema::BaseDocument* doc);
 
 /// The settings that steer the scene export rather than a Blender render property.

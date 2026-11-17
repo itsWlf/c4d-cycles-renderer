@@ -204,6 +204,17 @@ void IprController::Start()
 	if (_state != IPRSTATE::STOPPED && _state != IPRSTATE::FAILED)
 		return;
 
+	// Before anything is started: a Blender that cannot be started as chosen is said as such, with
+	// where to choose another (0.2.0, B7). The worker would find the same (BlenderProcess::Start).
+	_blenderMissing = false;
+	const maxon::String problem = GetBlenderProblem();
+	if (problem.IsPopulated())
+	{
+		Fail(problem);
+		_blenderMissing = true;
+		return;
+	}
+
 	iferr (EnsureWorker())
 	{
 		Fail(err.GetMessage());

@@ -62,9 +62,10 @@ run one after another in a fixed order, which is printed; each starts from a kno
 (tests\c4d\lib\crrun.py) and has its own result and time. A capture or dump file is one per
 start and is emptied before every script. When c4dpy ends before every test of a start has
 reported, the test that was running fails and the ones not yet run are run again, each alone.
-The last five tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window and
-baked_files_window, need windows and start the regular Cinema 4D for about half a minute each, with a
-preferences folder of their own so that the user's preferences and layout stay untouched.
+The last seven tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window,
+baked_files_window, blender_missing_window and default_engine_window, need windows and start the
+regular Cinema 4D for about half a minute each, with a preferences folder of their own so that the
+user's preferences and layout stay untouched (and, field PrefsFiles, files put into it before the start).
 ipr_navigate_window posts mouse and key messages to that Cinema 4D's IPR window from a process of its
 own (tests\c4d\lib\post_input.ps1); the real mouse pointer is not moved.
 
@@ -223,9 +224,15 @@ $c4dTests = @(
   @{ Name = "cycles_lights"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}lights/*", "${R}description/ocycleslight.*", "${R}description/tcycleslight.*", "${R}strings_en-US/description/ocycleslight.str",
                 "${R}strings_en-US/description/tcycleslight.str", "${P}scene/light_export.*", "${B}scene/lights.py", "${R}icons/*", "tools/make_icons.py") },
+  @{ Name = "light_enable"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}scene/light_export.*", "${P}scene/scene_exporter.*", "${P}lights/*", "${P}ipr/ipr_controller.*", "${B}scene/lights.py", "tests/scenes/old/*") },
+  @{ Name = "light_shadows"; Covers = @("${P}scene/light_export.*", "${P}lights/*", "${B}scene/lights.py") },
   @{ Name = "devices"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}prefs/devices.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
                 "${P}videopost/render_settings_map.*", "${B}render/devices.py", "${B}render/settings.py", "${P}ipr/ipr_testhook.*") },
+  @{ Name = "default_engine"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
+                "${P}videopost/cycles_videopost.*", "${P}videopost/render_settings_map.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "tools/make_settings.py") },
   @{ Name = "ipr_region"; Settings = @{ g_cyclesRenderIprTest = "true" }; Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${B}viewport/*") },
   @{ Name = "colour"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/document_colors.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_controller.*", "${P}materials/shader_translate.*", "${P}materials/material_export.*", "${B}render/settings.py") },
@@ -245,7 +252,22 @@ $c4dTests = @(
                 "${P}ipr/ipr_scenehook.*", "${P}prefs/prefs_page.*", "${P}prefs/settings.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "${P}session/frame_watcher.*", "tests/c4d/lib/post_input.ps1", "tests/c4d/harness/*") },
   @{ Name = "baked_files_window"; Window = $true; CleanPrefs = $true; GoneAfter = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
-     Covers = @("${P}materials/baked_files.*", "${P}materials/material_preview.*", "tests/c4d/harness/*") }
+     Covers = @("${P}materials/baked_files.*", "${P}materials/material_preview.*", "tests/c4d/harness/*") },
+  # No g_cyclesRenderBlender: the Blender is the one the Preferences page holds; detection looks in an
+  # empty folder (g_cyclesRenderBlenderSearch), so this machine's Blenders are not found. The supported
+  # one it renders with at one point comes as CYCLESRENDER_TEST_BLENDER, which Cinema 4D does not read.
+  @{ Name = "blender_missing_window"; Window = $true; CleanPrefs = $true
+     Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlenderSearch = (Join-Path $out "no_blender_here"); CYCLESRENDER_TEST_BLENDER = $Blender }
+     Covers = @("${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${P}session/blender_install.*", "${P}session/blender_process.*", "${P}ipr/ipr_controller.*",
+                "${P}ipr/ipr_worker.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_image_area.*", "${P}materials/material_preview.*", "${P}nodespace/cycles_nodespace.*",
+                "${P}videopost/cycles_videopost.*", "${B}main.py", "tests/c4d/harness/*") },
+  # The user's template scene (new.c4d, saved by Cinema 4D 2024 so that every version reads it) is in
+  # the preferences folder before the start: Cinema 4D reads it only then.
+  @{ Name = "default_engine_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     PrefsFiles = @{ "new.c4d" = "tests\scenes\templates\new_cycles_render.c4d" }
+     Covers = @("${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
+                "${P}videopost/cycles_videopost.*", "${P}videopost/render_settings_map.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*",
+                "tests/scenes/templates/*", "tests/c4d/harness/*") }
 )
 
 # Everybody's files: a change in one of them runs the core set (and the tests that cover the file
@@ -464,6 +486,9 @@ foreach ($start in $starts) {
     $prefs = Join-Path $out "prefs_$($start.Name)"
     New-PrefsFolder $prefs -Fresh
     $settings.g_prefsPath = $prefs
+    # Files a test needs in its preferences folder before Cinema 4D starts (PrefsFiles: name in the
+    # folder = file of the repository), such as the user's template scene new.c4d, read only at start.
+    if ($first.PrefsFiles) { foreach ($name in $first.PrefsFiles.Keys) { Copy-Item $first.PrefsFiles[$name] (Join-Path $prefs $name) } }
   }
   elseif (-not $first.Window) {
     # c4dpy: one preferences folder per version, kept between runs like c4dpy's own.

@@ -18,6 +18,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../prefs/settings.h"
 #include "../scene/document_colors.h"
 #include "../scene/scene_exporter.h"
 #include "../scene/scene_writer.h"
@@ -43,7 +44,12 @@ cinema::Bool CyclesVideoPost::Init(cinema::GeListNode* node, cinema::Bool isClon
 
 	if (!isCloneInit)
 	{
+		// Blender's defaults, with the engine of the Preferences' "Default Engine" (0.2.0, F21). A
+		// renderer that is loaded or copied gets its stored settings over these right after, so only
+		// one that is added to render settings anew starts with it (docs/reference/c4d-sdk.md, "The
+		// default engine of new render settings").
 		InitRenderSettings(item->GetDataInstanceRef());
+		item->GetDataInstanceRef().SetInt32(CYCLES_ENGINE, GetDefaultEngine());
 		// The name of the entry in the Render Settings' list; the renderer itself is "Cycles Render".
 		item->SetName("Cycles"_s);
 	}
@@ -539,6 +545,18 @@ cinema::RENDERRESULT CyclesVideoPost::Execute(cinema::BaseVideoPost* node, cinem
 
 	if (!rgba)
 		return cinema::RENDERRESULT::FAILED;
+
+	// No Blender that can be started (0.2.0, B7): said in the words that name where to choose one,
+	// without the place in the source that a failure further on is printed with.
+	if (!_client)
+	{
+		const maxon::String problem = GetBlenderProblem();
+		if (problem.IsPopulated())
+		{
+			ApplicationOutput("Cycles Render: the frame could not be rendered. @", problem);
+			return cinema::RENDERRESULT::FAILED;
+		}
+	}
 
 	iferr (RenderFrame(node->GetDataInstanceRef(), vps, rgba))
 	{

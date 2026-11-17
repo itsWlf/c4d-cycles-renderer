@@ -438,17 +438,53 @@ void IprImageArea::DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2,
 
 	if (!_message.IsEmpty())
 	{
-		// On a dark plate, so the text reads on any picture.
-		const cinema::Int32 textWidth = DrawGetTextWidth(_message);
-		const cinema::Int32 textHeight = DrawGetFontHeight();
+		// On a dark plate, so the text reads on any picture. Lines as long as the area allows: a
+		// message that says where to choose a Blender is longer than a small window (0.2.0, B7).
+		maxon::BaseArray<maxon::String> lines;
+		iferr (WrapMessage(areaWidth - 60, lines))
+			lines.Reset();
+		cinema::Int32 textWidth = 0;
+		for (const maxon::String& line : lines)
+			textWidth = maxon::Max(textWidth, DrawGetTextWidth(line));
+		const cinema::Int32 lineHeight = DrawGetFontHeight() + 3;
+		const cinema::Int32 textHeight = lineHeight * cinema::Int32(lines.GetCount()) - 3;
 		const cinema::Int32 left = (areaWidth - textWidth) / 2;
 		const cinema::Int32 top = (areaHeight - textHeight) / 2;
 		const cinema::Vector plate(0.07);
 		DrawSetPen(plate);
 		DrawRectangle(left - 14, top - 9, left + textWidth + 14, top + textHeight + 9);
 		DrawSetTextCol(cinema::Vector(0.9), plate);
-		DrawText(_message, left, top);
+		for (maxon::Int i = 0; i < lines.GetCount(); ++i)
+			DrawText(lines[i], (areaWidth - DrawGetTextWidth(lines[i])) / 2, top + cinema::Int32(i) * lineHeight);
 	}
+}
+
+maxon::Result<void> IprImageArea::WrapMessage(cinema::Int32 width, maxon::BaseArray<maxon::String>& lines)
+{
+	iferr_scope;
+	maxon::BaseArray<maxon::String> paragraphs;
+	_message.Split("\n"_s, false, paragraphs) iferr_return;
+	for (const maxon::String& paragraph : paragraphs)
+	{
+		maxon::BaseArray<maxon::String> words;
+		paragraph.Split(" "_s, false, words) iferr_return;
+		maxon::String line;
+		for (const maxon::String& word : words)
+		{
+			const maxon::String longer = line.IsEmpty() ? word : line + " "_s + word;
+			if (line.IsPopulated() && DrawGetTextWidth(longer) > width)
+			{
+				lines.Append(line) iferr_return;
+				line = word;
+			}
+			else
+			{
+				line = longer;
+			}
+		}
+		lines.Append(line) iferr_return;
+	}
+	return maxon::OK;
 }
 
 cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)

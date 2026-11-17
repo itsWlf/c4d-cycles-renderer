@@ -72,6 +72,12 @@ namespace cyclesrender
 /// the mouse goes (dx, dy) screen pixels, right and down positive; the camera is sent after each
 /// step. It answers {"refused" (empty when it navigated, else the status bar's text), "camera",
 /// "editor_camera", "picked", "pivot", "pick_ms", "prefs" (the navigation preferences it followed)}.
+/// The Preferences (0.2.0, B7 and F21): blender [<path>|none|detect] stores the Blender as the page's
+/// field does (none: empty; detect: the Detect button) and answers {"path", "in_use" (the path
+/// detection gives while none is stored), "status" (the page's line), "problem" (GetBlenderProblem:
+/// why none can be started; empty when one can), "detected"}; defaultengine [<0|1>] sets the
+/// page's Default Engine and answers {"default_engine"}. The status has blender_missing
+/// (IprController::IsBlenderMissing) and window_message (the text on the window's picture).
 /// With the window open the status also has image_rect (where the picture is on the screen: left,
 /// top, width, height) and image_center (the image point in its middle), for tests that post mouse
 /// messages to it.

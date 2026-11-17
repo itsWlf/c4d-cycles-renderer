@@ -10,6 +10,12 @@ enum
 	PREF_CYCLES_BLENDER_STATUS = 1001,
 	PREF_CYCLES_DETECT = 1002,
 
+	// Settings made new (0.2.0, F21): prefs/settings.h, GetDefaultEngine.
+	PREF_CYCLES_NEW_GROUP = 996,
+	PREF_CYCLES_DEFAULT_ENGINE = 1009,
+		PREF_CYCLES_DEFAULT_ENGINE_CYCLES = 0,   // the same numbers as CYCLES_ENGINE_CYCLES and _EEVEE (vpcyclesrender.h)
+		PREF_CYCLES_DEFAULT_ENGINE_EEVEE = 1,
+
 	// Cycles Render Devices (as in Blender's Preferences > System)
 	PREF_CYCLES_DEVICE_GROUP = 998,
 	PREF_CYCLES_DEVICE_NOTE = 1006,

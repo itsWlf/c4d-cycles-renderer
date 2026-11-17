@@ -25,7 +25,9 @@ void OpenIprDialog();
 /// For tests (ipr_testhook): what the window's own controls do.
 ///   open, zoom <percent>, type_zoom <percent> (as if typed into the zoom field), fit, snapshot, save <file>,
 ///   pick_camera <position in the dropdown's list of cameras>,
-///   click start|pause|reload|lock|snapshot|frame|settings|close|restart_blender|show_blender|scale_50|scale_100
+///   click start|pause|reload|lock|snapshot|frame|settings|close|restart_blender|show_blender|scale_50|scale_100,
+///   click image (a plain click on the picture: starts again after a failure, or opens the Preferences
+///   when no Blender can be started, IprController::IsBlenderMissing())
 /// @param[out] problem  Why the command could not be carried out.
 /// @return              False when @p command is not a window command.
 //----------------------------------------------------------------------------------------
@@ -51,6 +53,10 @@ const Frame* GetIprDialogFrame();
 /// Zoom of the window's picture and the value its zoom field holds (1 = 100 %; the field 0 when
 /// the window is closed), and the time the last display conversion took, for tests.
 void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open);
+
+/// The text the window's picture shows ("Press Start ...", why the IPR failed); empty when there is
+/// none or the window is closed. For tests.
+maxon::String GetIprDialogMessage();
 
 /// Where the window's picture is on the screen, in screen pixels, and the image point shown in its
 /// middle (render pixels). False while the window is closed. For tests that post mouse messages to it.

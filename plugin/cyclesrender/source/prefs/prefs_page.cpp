@@ -128,6 +128,11 @@ public:
 				data = cinema::GeData(GetIprNavigate());
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
+
+			case PREF_CYCLES_DEFAULT_ENGINE:
+				data = cinema::GeData(GetDefaultEngine());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
 		}
 		const maxon::Int32 index = id[0].id - PREF_CYCLES_DEVICE_FIRST;
 		if (index >= 0 && id[0].id <= PREF_CYCLES_DEVICE_LAST)
@@ -174,6 +179,11 @@ public:
 
 			case PREF_CYCLES_IPR_NAVIGATE:
 				SetIprNavigate(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				return true;
+
+			case PREF_CYCLES_DEFAULT_ENGINE:
+				SetDefaultEngine(data.GetInt32());
 				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
 				return true;
 		}

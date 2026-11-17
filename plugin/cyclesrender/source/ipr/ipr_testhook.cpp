@@ -30,6 +30,7 @@
 #include "../materials/material_export.h"
 #include "../materials/native_material.h"
 #include "../prefs/devices.h"
+#include "../prefs/settings.h"
 #include "../sdk_compat.h"
 #include "../session/blender_install.h"
 
@@ -792,6 +793,37 @@ static maxon::String Execute(const maxon::String& commandLine)
 		}
 		return DescribeDeviceSettings();
 	}
+	else if (command == "blender"_s)
+	{
+		// The Preferences page's Blender (0.2.0, B7): "blender <path>" stores a path as the page's field
+		// does, "blender none" empties it, "blender detect" is the Detect button; then what the plugin
+		// makes of it: the path, the page's status line, and why no Blender can be started (empty when
+		// one can, GetBlenderProblem).
+		maxon::Bool detected = false;
+		if (argument == "none"_s)
+			SetBlenderPath(cinema::Filename());
+		else if (argument == "detect"_s)
+			detected = DetectAndStoreBlender();
+		else if (argument.IsPopulated())
+			SetBlenderPath(cinema::Filename(argument));
+		JsonWriter json;
+		json.BeginObject();
+		json.String("path", GetBlenderPath().GetString());
+		json.String("in_use", GetBlenderPathOrDetect().GetString());
+		json.String("status", GetBlenderStatus());
+		json.String("problem", GetBlenderProblem());
+		json.Bool("detected", detected);
+		json.EndObject();
+		return json.GetText();
+	}
+	else if (command == "defaultengine"_s)
+	{
+		// The Preferences page's Default Engine (0.2.0, F21): "defaultengine <0|1>" sets it as the page
+		// does; then {"default_engine"}.
+		if (argument.IsPopulated())
+			SetDefaultEngine(number);
+		return FormatString("{\"default_engine\":@}", GetDefaultEngine());
+	}
 	else if (command == "bakes"_s)
 	{
 		// The baked files instead of the status; "bakes check" first compares the documents with
@@ -837,6 +869,8 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.BeginObject();
 	json.String("state", maxon::String(StateName(ipr.GetState())));
 	json.String("message", ipr.GetMessage());
+	json.Bool("blender_missing", ipr.IsBlenderMissing());
+	json.String("window_message", GetIprDialogMessage());
 	json.String("problem", problem);
 	json.Bool("idle", ipr.IsIdle());
 	json.Int("frame", maxon::Int64(status.frameId));

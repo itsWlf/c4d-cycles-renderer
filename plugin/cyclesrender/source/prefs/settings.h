@@ -21,6 +21,20 @@ cinema::Filename GetBlenderPathOrDetect();
 /// The line describing whether that executable can be used (see DescribeBlender()).
 cinema::String GetBlenderStatus();
 
+/// Where the user chooses the Blender, for messages: "Preferences > Renderer > Cycles Render".
+maxon::String BlenderPreferencesPlace();
+
+//----------------------------------------------------------------------------------------
+/// Why no Blender can be started now, in words for the user that say where to choose one (0.2.0,
+/// B7); empty when the Blender in use (GetBlenderPathOrDetect()) can be started. Tells apart: none
+/// is selected and detection found none; the selected file does not exist; a Blender whose version
+/// is not supported (as DescribeBlender() says it). A file whose version could not be learned is
+/// started, and the bridge decides. Every start of Blender asks this first (session/blender_process.h),
+/// the IPR before it starts (ipr/ipr_controller.h). May be called from any thread; it may block for
+/// about a second the first time it meets a path (GetBlenderInUse()).
+//----------------------------------------------------------------------------------------
+maxon::String GetBlenderProblem();
+
 //----------------------------------------------------------------------------------------
 /// The Blender that renders (GetBlenderPathOrDetect()) and its version, for what depends on the
 /// version: nodes, sockets and settings a version lacks are left out of what is sent, and the
@@ -46,8 +60,9 @@ cinema::Bool DetectAndStoreBlender();
 
 /// Detects Blender when the user has not chosen one yet, so that a fresh installation renders
 /// without a visit to the Preferences. Does nothing once a path is stored (a path the user
-/// set is never replaced) or named by g_cyclesRenderBlender. Call on the main thread; it may
-/// block for about a second the one time it finds a Blender.
+/// set is never replaced) or named by g_cyclesRenderBlender. Says in the console what it found,
+/// or that it found none and where to choose one. Call on the main thread; it may block for
+/// about a second the one time it finds a Blender.
 void DetectBlenderOnFirstStart();
 
 /// Preferences > Renderer > Cycles Render > IPR, "Skip Unchanged Meshes": the IPR leaves a mesh
@@ -62,6 +77,18 @@ void SetIprSkipUnchangedMeshes(cinema::Bool skip);
 /// (ipr/ipr_navigation.h). On by default; off, such a drag pans the picture as every drag did before.
 cinema::Bool GetIprNavigate();
 void SetIprNavigate(cinema::Bool navigate);
+
+//----------------------------------------------------------------------------------------
+/// Preferences > Renderer > Cycles Render > New Render Settings, "Default Engine" (0.2.0, F21):
+/// CYCLES_ENGINE_CYCLES (the default) or CYCLES_ENGINE_EEVEE (res/description/vpcyclesrender.h).
+/// The engine Cycles Render's settings start with when they are made new: when the renderer is
+/// added to render settings that did not have it (videopost/cycles_videopost.cpp, Init), and the
+/// settings the IPR and others use for a document without them (GetDocumentRenderSettings). Settings
+/// that are loaded or copied keep the engine they store. The Render Settings page's own default
+/// stays Blender's (Cycles; tools/make_settings.py).
+//----------------------------------------------------------------------------------------
+maxon::Int32 GetDefaultEngine();
+void SetDefaultEngine(maxon::Int32 engine);
 
 } // namespace cyclesrender
 

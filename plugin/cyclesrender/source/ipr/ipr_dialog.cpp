@@ -11,11 +11,13 @@
 #include "c4d_resource.h"
 #include "c4d_symbols.h"
 #include "customgui_bitmapbutton.h"
+#include "lib_prefs.h"
 #include "maxon/atomictypes.h"
 
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../videopost/render_settings_map.h"
 #include "ipr_add.h"
 #include "../sdk_compat.h"
 #include "ipr_controller.h"
@@ -488,15 +490,20 @@ void IprDialog::RefreshControls(maxon::Bool force)
 			_pauseButton->SetToggleState(state == IPRSTATE::PAUSED);
 		SetButtonIcon(_pauseButton, state == IPRSTATE::PAUSED ? ICON::PAUSE_ACTIVE : ICON::PAUSE);
 		Enable(ID_BUTTON_PAUSE, state == IPRSTATE::RUNNING || state == IPRSTATE::PAUSED);
-
-		switch (state)
-		{
-			case IPRSTATE::STARTING: _image.SetMessage("Starting Blender..."_s); break;
-			case IPRSTATE::FAILED: _image.SetMessage(ipr.GetMessage() + "  Click here or press Start to start again."_s); break;
-			case IPRSTATE::STOPPED: _image.SetMessage(_image.GetFrame().frameId == 0 ? "Press Start to render the scene."_s : maxon::String()); break;
-			default: _image.SetMessage(maxon::String()); break;
-		}
 		_shownState = state;
+	}
+	// Every time, not only when the state changes: a second failure can have another reason
+	// (SetMessage redraws only when the text differs).
+	switch (state)
+	{
+		case IPRSTATE::STARTING: _image.SetMessage("Starting Blender..."_s); break;
+		case IPRSTATE::FAILED:
+			// No usable Blender (0.2.0, B7): the click opens the page where one is chosen.
+			_image.SetMessage(ipr.GetMessage() + (ipr.IsBlenderMissing() ? "\nClick here to open the Preferences, or press Start to try again."_s
+				: "  Click here or press Start to start again."_s));
+			break;
+		case IPRSTATE::STOPPED: _image.SetMessage(_image.GetFrame().frameId == 0 ? "Press Start to render the scene."_s : maxon::String()); break;
+		default: _image.SetMessage(maxon::String()); break;
 	}
 	if (force || !_controlsShown || ipr.IsCameraLocked() != _shownLock)
 	{
@@ -804,6 +811,8 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 			const cinema::Int32 what = msg.GetInt32(cinema::BFM_ACTION_VALUE);
 			if (what == IPR_IMAGE_ZOOM_CHANGED)
 				ShowZoom();
+			else if (what == IPR_IMAGE_CLICKED && ipr.IsBlenderMissing())
+				cinema::PrefsLib_OpenDialog(ID_PREFERENCES);	// Preferences > Renderer > Cycles Render
 			else if (what == IPR_IMAGE_CLICKED && ipr.GetState() == IPRSTATE::FAILED)
 				ipr.Start();
 			break;
@@ -848,15 +857,11 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 			cinema::Int32 engine = CYCLES_ENGINE_CYCLES;
 			if (GetInt32(ID_COMBO_ENGINE, engine))
 			{
-				// Choosing the engine of the Render Settings means "follow the Render Settings" again.
+				// Choosing the engine of the Render Settings means "follow the Render Settings" again. A
+				// document without Cycles Render's settings has those of the Preferences' Default Engine
+				// (0.2.0, F21; GetDocumentRenderSettings).
 				cinema::BaseDocument* const doc = cinema::GetActiveDocument();
-				cinema::RenderData* const renderData = doc ? doc->GetActiveRenderData() : nullptr;
-				cinema::Int32 fromSettings = CYCLES_ENGINE_CYCLES;
-				for (cinema::BaseVideoPost* post = renderData ? renderData->GetFirstVideoPost() : nullptr; post; post = post->GetNext())
-				{
-					if (post->GetType() == ID_CYCLES_VIDEOPOST)
-						fromSettings = post->GetDataInstanceRef().GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
-				}
+				const cinema::Int32 fromSettings = GetDocumentRenderSettings(doc).GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
 				ipr.SetEngineOverride(engine == fromSettings ? NOTOK : engine);
 				RefreshPasses(false);
 			}
@@ -989,6 +994,11 @@ const Frame* GetIprDialogFrame()
 	return g_dialog && g_dialog->IsOpen() ? &g_dialog->GetImage().GetFrame() : nullptr;
 }
 
+maxon::String GetIprDialogMessage()
+{
+	return g_dialog && g_dialog->IsOpen() ? g_dialog->GetImage().GetMessage() : maxon::String();
+}
+
 void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open)
 {
 	open = g_dialog && g_dialog->IsOpen();
@@ -1030,7 +1040,14 @@ maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::Strin
 		return true;
 	}
 
-	if (command == "click"_s)
+	if (command == "click"_s && argument == "image"_s)
+	{
+		// A plain click on the picture, as the area reports it.
+		cinema::BaseContainer action(cinema::BFM_ACTION);
+		action.SetInt32(cinema::BFM_ACTION_VALUE, IPR_IMAGE_CLICKED);
+		g_dialog->Command(ID_AREA_IMAGE, action);
+	}
+	else if (command == "click"_s)
 	{
 		// The same call a click on the control makes.
 		static const struct { const maxon::Char* name; cinema::Int32 id; } CONTROLS[] = {

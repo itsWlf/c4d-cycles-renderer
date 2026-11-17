@@ -13,7 +13,8 @@ namespace cyclesrender
 /// values (res/description/ocycleslight.h, with Blender's defaults: lights/light_settings.h) and draws
 /// its type, size and cone in the viewport; it emits along its +Z axis, as Cinema 4D's lights do.
 /// The exporter finds it in the walk like any light and sends its values as they are
-/// (scene/light_export.cpp). It does not light Cinema 4D's own viewport or renderers.
+/// (scene/light_export.cpp). It does not light Cinema 4D's own viewport or renderers. It has the
+/// green "enabled" check in the Object Manager (since 0.2.0); unchecked it is not exported.
 cinema::Bool RegisterLightObject();
 
 } // namespace cyclesrender

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// The plugin's own settings in Cinema 4D's preferences: which Blender to use (settings.h).
+// The plugin's own settings in Cinema 4D's preferences: which Blender to use, and the switches of
+// the Preferences page (settings.h).
 
 #include "c4d.h"
 #include "maxon/configuration.h"
 #include "maxon/spinlock.h"
+
+#include "vpcyclesrender.h"
 
 #include "../ids.h"
 #include "../session/blender_install.h"
@@ -17,8 +20,10 @@ MAXON_CONFIGURATION_STRING(g_cyclesRenderBlender, "", maxon::CONFIGURATION_CATEG
 namespace cyclesrender
 {
 
-// Keys inside the plugin's container in Cinema 4D's preferences. Never renumber. (prefs/devices.cpp
-// uses 1010 to 1012, the IPR's test hook 9000 and 9001.)
+// Keys inside the plugin's container in Cinema 4D's preferences. Never renumber, never reuse.
+// (prefs/devices.cpp uses 1010 to 1012, the IPR's test hook 9000 and 9001. 1006 to 1009 and 1013
+// to 1019 have never been used; 1022 on is kept for further switches of the IPR, 1031 on for
+// further defaults of new render settings.)
 enum
 {
 	SETTING_BLENDER_PATH = 1000,
@@ -28,7 +33,8 @@ enum
 	SETTING_BLENDER_PATCH = 1004,
 	SETTING_BLENDER_VERSION_TEXT = 1005,
 	SETTING_IPR_SKIP_UNCHANGED = 1020,
-	SETTING_IPR_NAVIGATE = 1021
+	SETTING_IPR_NAVIGATE = 1021,
+	SETTING_DEFAULT_ENGINE = 1030		///< 0.2.0 (F21): GetDefaultEngine()
 };
 
 // The container is keyed by the renderer's issued plugin ID so it survives ID changes elsewhere.
@@ -132,7 +138,10 @@ BlenderInstall GetBlenderInUse()
 		if (probed == maxon::OK)
 			install = probed.GetValue();
 	}
-	RememberBlender(path, install);	return install;
+	// A path without a file is not remembered: the file may be put there later.
+	if (install.found)
+		RememberBlender(path, install);
+	return install;
 }
 
 void NoteBlenderVersion(const cinema::Filename& executable, maxon::Int32 major, maxon::Int32 minor, maxon::Int32 patch,
@@ -149,6 +158,37 @@ void NoteBlenderVersion(const cinema::Filename& executable, maxon::Int32 major, 
 	g_inUse.patch = patch;
 	g_inUse.versionText = versionText;
 	g_inUse.supported = IsSupportedBlender(major, minor);
+}
+
+maxon::String BlenderPreferencesPlace()
+{
+	return "Preferences > Renderer > Cycles Render"_s;
+}
+
+maxon::String GetBlenderProblem()
+{
+	const cinema::Filename path = GetBlenderPathOrDetect();
+	if (!path.IsPopulated())
+	{
+		return FormatString("No Blender is selected, and no Blender @ was found where its installer puts it. Choose blender.exe in @.",
+			SupportedBlenderVersionsText(), BlenderPreferencesPlace());
+	}
+	// A path named at start (tests, render nodes) is not the user's choice in the Preferences.
+	const maxon::Bool named = !g_cyclesRenderBlender.IsEmpty();
+	const maxon::Url executable = cinema::MaxonConvert(path, cinema::MAXONCONVERTMODE::NONE);
+	if (executable.IoDetect() != maxon::IODETECT::FILE)
+	{
+		if (named)
+			return FormatString("The Blender named by g_cyclesRenderBlender does not exist: @", path.GetString());
+		return FormatString("The Blender selected in @ does not exist: @. Choose blender.exe there again.", BlenderPreferencesPlace(), path.GetString());
+	}
+	const BlenderInstall install = GetBlenderInUse();
+	if (install.found && install.Code() > 0 && !install.supported)
+	{
+		return FormatString("Blender @ is not supported. Cycles Render needs Blender @: choose one in @.", install.versionText,
+			SupportedBlenderVersionsText(), named ? "g_cyclesRenderBlender"_s : BlenderPreferencesPlace());
+	}
+	return maxon::String();
 }
 
 cinema::String GetBlenderStatus()
@@ -210,12 +250,34 @@ void SetIprNavigate(cinema::Bool navigate)
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
 }
 
+maxon::Int32 GetDefaultEngine()
+{
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	const maxon::Int32 engine = stored ? stored->GetInt32(SETTING_DEFAULT_ENGINE, CYCLES_ENGINE_CYCLES) : CYCLES_ENGINE_CYCLES;
+	return engine == CYCLES_ENGINE_EEVEE ? CYCLES_ENGINE_EEVEE : CYCLES_ENGINE_CYCLES;
+}
+
+void SetDefaultEngine(maxon::Int32 engine)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetInt32(SETTING_DEFAULT_ENGINE, engine == CYCLES_ENGINE_EEVEE ? CYCLES_ENGINE_EEVEE : CYCLES_ENGINE_CYCLES);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
 void DetectBlenderOnFirstStart()
 {
 	if (!g_cyclesRenderBlender.IsEmpty() || ReadSettings().GetFilename(SETTING_BLENDER_PATH).IsPopulated())
 		return;
 	if (DetectAndStoreBlender())
-		ApplicationOutput("Cycles Render: found @ and will use it. Another one can be chosen in Preferences > Renderer > Cycles Render.", GetBlenderPath().GetString());
+	{
+		ApplicationOutput("Cycles Render: found @ and will use it. Another one can be chosen in @.", GetBlenderPath().GetString(), BlenderPreferencesPlace());
+	}
+	else
+	{
+		// Said at every start until one is chosen: nothing renders before.
+		ApplicationOutput("Cycles Render: no Blender is selected, and no Blender @ was found where its installer puts it. Choose blender.exe in @.",
+			SupportedBlenderVersionsText(), BlenderPreferencesPlace());
+	}
 }
 
 } // namespace cyclesrender

@@ -114,6 +114,10 @@ struct BlenderLight
 /// (Orslight) is physical and converts exactly: infinite, point, spot and area lights in the
 /// unit "Image".
 ///
+/// Shadows (0.2.0, F20): a standard light always casts them, whatever its "Shadow" type, also
+/// "None", Cinema 4D's default (the Standard renderer casts none then); a Cycles Light tag's
+/// Settings tab turns them off. A Redshift light follows its own "Shadow" switch.
+///
 /// @param[in] colors      The document's colour settings: a standard light's colour is a colour
 ///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored.
 /// @param[in] multiplier  The "Light Multiplier" render setting.
@@ -123,15 +127,25 @@ maxon::Bool TranslateLight(const cinema::BaseObject* light, const Coords& coords
 	BlenderLight& out, SceneWriter* writer);
 
 //----------------------------------------------------------------------------------------
+/// Whether @p light is switched on by its green check in the Object Manager (the object's deform
+/// mode, `ID_BASEOBJECT_GENERATOR_FLAG`): Cinema 4D's light, a Redshift light and, since 0.2.0, the
+/// Cycles Light object have it. Measured with the Standard renderer and Redshift (2024.5, 2026.3,
+/// 2027.0): a light whose check is off emits nothing, and the check counts for that light only, not
+/// for lights below it (docs/reference/c4d-sdk.md, "Lights switched off").
+//----------------------------------------------------------------------------------------
+maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light);
+
+//----------------------------------------------------------------------------------------
 /// Exports the light @p light, whose global matrix is @p mg, under the id @p id: a standard
 /// light, a Redshift light (both through TranslateLight, and changed by a Cycles Light tag on
 /// them: lights/light_tag.h) or the plugin's Cycles Light object (its values as they are).
+/// A light switched off by its check (IsLightSwitchedOn) is skipped.
 ///
 /// @param[in] multiplier  The "Light Multiplier" render setting, applied to every light.
 /// @param[in] eeveeHidesLights  The frame is rendered by an Eevee that shows no light to the camera
 ///                        (Blender 5.0 and 5.1, measured): a light whose Camera visibility is on
 ///                        is named in a warning.
-/// @return  False when the light emits nothing and was skipped.
+/// @return  False when the light emits nothing or is switched off, and was skipped.
 //----------------------------------------------------------------------------------------
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking = nullptr,

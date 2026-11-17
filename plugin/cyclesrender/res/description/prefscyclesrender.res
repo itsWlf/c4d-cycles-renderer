@@ -12,6 +12,23 @@ CONTAINER Prefscyclesrender
 		BUTTON PREF_CYCLES_DETECT { }
 	}
 
+	// What Cycles Render's settings start with when the renderer is added to render settings.
+	GROUP PREF_CYCLES_NEW_GROUP
+	{
+		DEFAULT 1;
+		COLUMNS 1;
+
+		LONG PREF_CYCLES_DEFAULT_ENGINE
+		{
+			ANIM OFF;
+			CYCLE
+			{
+				PREF_CYCLES_DEFAULT_ENGINE_CYCLES;
+				PREF_CYCLES_DEFAULT_ENGINE_EEVEE;
+			}
+		}
+	}
+
 	// Blender's Preferences > System > Cycles Render Devices. The device list comes from a Blender
 	// (the button); one checkbox per device of the chosen type is added by the page.
 	GROUP PREF_CYCLES_DEVICE_GROUP

@@ -151,6 +151,10 @@ public:
 
 	IPRSTATE GetState() const { return _state; }
 	const maxon::String& GetMessage() const { return _message; }
+	/// True while the IPR has failed because no Blender can be started as chosen (none selected or
+	/// found, the file is gone, a version that is not supported: GetBlenderProblem()). The window
+	/// then offers to open the Preferences instead of starting again (0.2.0, B7).
+	maxon::Bool IsBlenderMissing() const { return _state == IPRSTATE::FAILED && _blenderMissing; }
 
 	/// Moves the newest frame into @p frame if this has not returned it before. The window calls
 	/// it when the core message ID_CORE_MESSAGE arrives (see FrameWatcher).
@@ -227,6 +231,7 @@ private:
 
 	IPRSTATE _state = IPRSTATE::STOPPED;
 	maxon::String _message;
+	maxon::Bool _blenderMissing = false;	///< IsBlenderMissing()
 	maxon::Bool _sceneDirty = false;
 	maxon::Bool _viewStarted = false;			///< Blender's viewport is in Rendered mode
 	const cinema::BaseDocument* _document = nullptr;	///< the document Blender holds; compared, never dereferenced

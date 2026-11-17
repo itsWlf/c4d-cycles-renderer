@@ -19,8 +19,8 @@ namespace cyclesrender
 // The id of the material in the preview Blender: each preview replaces the one before.
 static const maxon::Char* const PREVIEW_MATERIAL_ID = "preview_material";
 static const maxon::Int PREVIEW_SAMPLES = 32;
-// After Blender could not be started (not installed, no bridge), it is not tried again for
-// this long: Cinema 4D asks for previews often.
+// After Blender could not be started (no bridge, it ended at start), it is not tried again for
+// this long: Cinema 4D asks for previews often. (No Blender selected is checked before, every time.)
 static const maxon::Float64 RETRY_SECONDS = 30.0;
 
 // One Blender for all previews; one preview at a time. A preview takes about a second, so
@@ -28,6 +28,7 @@ static const maxon::Float64 RETRY_SECONDS = 30.0;
 static std::mutex g_mutex;
 static BridgeClient* g_client = nullptr;       // guarded by g_mutex
 static maxon::Float64 g_failedAt = -1.0e30;    // guarded by g_mutex
+static maxon::String g_failure;                // guarded by g_mutex; why Blender could not be started then
 static maxon::Bool g_closed = false;           // guarded by g_mutex; set when the plugin is unloaded
 
 maxon::Result<void> MaterialPreview::Prepare(const maxon::GraphModelRef& graph)
@@ -57,13 +58,21 @@ maxon::Result<void> MaterialPreview::Render(maxon::Int size, maxon::BaseArray<ma
 	if (!g_client)
 	{
 		const maxon::Float64 now = maxon::TimeValue::GetTime().GetSeconds();
+		// No Blender that can be started as chosen (0.2.0, B7): said at once and in those words,
+		// and looked at again for every preview, so that a Blender chosen meanwhile is used at once.
+		const maxon::String problem = GetBlenderProblem();
+		if (problem.IsPopulated())
+			return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, problem);
+		// Another reason (no bridge, Blender ended at start): the same words as the first time, so
+		// that the console has one line for it and not a second, vaguer one.
 		if (now - g_failedAt < RETRY_SECONDS)
-			return maxon::UnexpectedError(MAXON_SOURCE_LOCATION, "Blender could not be started for material previews"_s);
+			return maxon::UnexpectedError(MAXON_SOURCE_LOCATION, g_failure);
 		g_client = NewObj(BridgeClient) iferr_return;
 		iferr (g_client->Open(BRIDGEMODE::FINAL))
 		{
 			DeleteObj(g_client);
 			g_failedAt = now;
+			g_failure = err.GetMessage();
 			return err;
 		}
 	}

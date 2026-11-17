@@ -10,6 +10,7 @@
 
 #include "../ids.h"
 #include "../prefs/devices.h"
+#include "../prefs/settings.h"
 #include "../scene/document_colors.h"
 #include "../session/capture.h"
 #include "../session/blender_install.h"
@@ -254,8 +255,11 @@ cinema::BaseContainer GetDocumentRenderSettings(cinema::BaseDocument* doc)
 		if (post->GetType() == ID_CYCLES_VIDEOPOST)
 			return post->GetDataInstanceRef();
 	}
+	// Settings made new, as the renderer added now would have them: with the Preferences' Default
+	// Engine (0.2.0, F21), which the IPR then renders with.
 	cinema::BaseContainer defaults;
 	InitRenderSettings(defaults);
+	defaults.SetInt32(CYCLES_ENGINE, GetDefaultEngine());
 	return defaults;
 }
 
