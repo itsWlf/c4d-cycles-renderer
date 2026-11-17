@@ -23,6 +23,7 @@
 
 #include "../scene/coords.h"
 #include "../scene/parameters.h"
+#include "../sdk_compat.h"
 #include "baked_files.h"
 #include "material_export.h"
 #include "native_material.h"
@@ -903,6 +904,27 @@ maxon::Int MaterialExporter::GetBakeCount()
 static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash)
 {
 	hash = (hash ^ maxon::UInt64(shader->GetType())) * 0x100000001B3ull;
+	// Links (a Filter's texture, a Layer's layers, a shader's object) are left out of what is
+	// written: a link is written as the identity of what it points to, which Cinema 4D 2024 gives
+	// anew in every render's copy of the document (measured 2026-11-16: every render baked a Filter
+	// over a bitmap again). What a link points to counts by its type and name here, and a shader
+	// inside by its own fingerprint below.
+	cinema::BaseContainer settings = shader->GetDataInstanceRef();
+	maxon::BaseArray<maxon::Int32> links;
+	for (maxon::Int32 index = 0; settings.GetIndexId(index) != NOTOK; ++index)
+	{
+		const maxon::Int32 id = settings.GetIndexId(index);
+		const cinema::GeData* const value = settings.GetIndexData(index);
+		if (!value || value->GetType() != cinema::DA_ALIASLINK)
+			continue;
+		const cinema::BaseList2D* const target = value->GetLink(doc);
+		hash = (hash ^ maxon::UInt64(id)) * 0x100000001B3ull;
+		hash = (hash ^ maxon::UInt64(target ? target->GetType() : 0) ^ maxon::UInt64(target ? target->GetName().GetHashCode() : 0)) * 0x100000001B3ull;
+		iferr (links.Append(id))
+			return hash;
+	}
+	for (const maxon::Int32 id : links)
+		settings.RemoveData(id);
 	cinema::AutoAlloc<cinema::HyperFile> file;
 	cinema::AutoAlloc<cinema::MemoryFileStruct> memory;
 	if (file && memory)
@@ -911,7 +933,7 @@ static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema:
 		name.SetMemoryWriteMode(memory);
 		if (file->Open(0, name, cinema::FILEOPEN::WRITE, cinema::FILEDIALOG::NONE))
 		{
-			file->WriteContainer(shader->GetDataInstanceRef());
+			file->WriteContainer(settings);
 			file->Close();
 			void* data = nullptr;
 			maxon::Int size = 0;
@@ -939,6 +961,47 @@ static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema:
 			hash = ShaderFingerprint(child, doc, hash);
 	}
 	return hash;
+}
+
+//----------------------------------------------------------------------------------------
+// Bakes a copy of @p shader in a document of its own, with @p doc's settings and path. The way
+// out when baking the shader where it is fails: Cinema 4D 2024.5 could not bake a shader with a
+// bitmap inside it (Filter, Fusion, Layer over a bitmap) in the render document it had prepared
+// for its own renderer, while the same shaders without a bitmap baked (measured 2026-11-16,
+// tests/c4d/shaders.py; 2026 and 2027 bake them in place).
+//----------------------------------------------------------------------------------------
+static maxon::Bool BakeCopy(cinema::BaseShader* shader, const cinema::BaseDocument* doc, cinema::BaseBitmap& bitmap, maxon::Int32 colorProfile,
+	maxon::Bool linearWorkflow, maxon::Int32 resolution)
+{
+	cinema::AutoAlloc<cinema::BaseDocument> own;
+	cinema::AutoAlloc<cinema::AliasTrans> links;
+	if (!own || !links || !links->Init(doc))
+		return false;
+	// The document's settings and its folder, for relative paths. The colour settings one by one
+	// as parameters, then OCIO's colour spaces made up to date: they decide how a bitmap's colours
+	// are taken in, and a new document of 2024 has Basic colour management.
+	own->SetData(cinema::DOCUMENTSETTINGS::DOCUMENT, doc->GetData(cinema::DOCUMENTSETTINGS::DOCUMENT));
+	for (const maxon::Int32 id : { cinema::DOCUMENT_COLOR_MANAGEMENT, cinema::DOCUMENT_LINEARWORKFLOW, cinema::DOCUMENT_COLORPROFILE,
+		cinema::DOCUMENT_OCIO_CONFIG, cinema::DOCUMENT_OCIO_RENDER_COLORSPACE, cinema::DOCUMENT_OCIO_DISPLAY_COLORSPACE,
+		cinema::DOCUMENT_OCIO_VIEW_TRANSFORM, cinema::DOCUMENT_OCIO_VIEW_TRANSFORM_THUMBNAILS })
+	{
+		cinema::GeData value;
+		if (doc->GetParameter(CreateDescID(cinema::DescLevel(id)), value, cinema::DESCFLAGS_GET::NONE))
+			own->SetParameter(CreateDescID(cinema::DescLevel(id)), value, cinema::DESCFLAGS_SET::NONE);
+	}
+	own->UpdateOcioColorSpaces();
+	own->SetDocumentPath(doc->GetDocumentPath());
+	cinema::BaseMaterial* const material = cinema::BaseMaterial::Alloc(Mmaterial);
+	if (!material)
+		return false;
+	own->InsertMaterial(material);
+	// The links between the shaders (a Filter's texture, a Layer's layers) point to the copies.
+	cinema::BaseShader* const copy = static_cast<cinema::BaseShader*>(shader->GetClone(cinema::COPYFLAGS::NONE, links));
+	if (!copy)
+		return false;
+	material->InsertShader(copy);
+	links->Translate(true);
+	return copy->BakeShaderIntoBaseBitmap(bitmap, *own, nullptr, false, colorProfile, linearWorkflow, true, 0, resolution - 1, 0, resolution - 1);
 }
 
 //----------------------------------------------------------------------------------------
@@ -1009,7 +1072,7 @@ maxon::Result<maxon::String> MaterialExporter::GetBakedImageId(cinema::BaseShade
 		if (!bitmap || bitmap->Init(_bakeResolution, _bakeResolution, 96) != cinema::IMAGERESULT::OK)
 			return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
 		const maxon::Bool baked = shader->BakeShaderIntoBaseBitmap(*bitmap, *_doc, nullptr, false, colorProfile, linearWorkflow,
-			true, 0, _bakeResolution - 1, 0, _bakeResolution - 1);
+			true, 0, _bakeResolution - 1, 0, _bakeResolution - 1) || BakeCopy(shader, _doc, *bitmap, colorProfile, linearWorkflow, _bakeResolution);
 		if (!baked || bitmap->Save(file, FILTER_EXR, nullptr, cinema::SAVEBIT::USE32BITCHANNELS) != cinema::IMAGERESULT::OK)
 		{
 			cinema::GeFKill(file);   // what was written before saving failed; the name is this session's own
@@ -1219,9 +1282,10 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseAr
 		if (_defaultId.IsEmpty())
 		{
 			// What Cinema 4D renders for an object without a material: its 80 % grey, which is
-			// 0.604 in linear light, with a soft highlight.
+			// 0.604 in linear light, with a soft highlight. Cinema 4D 2024 takes the grey as it
+			// stands in an OCIO document (sdk_compat.h).
 			_defaultId = "material_default"_s;
-			WritePlainMaterial(_defaultId, cinema::Vector(0.604), 0.5) iferr_return;
+			WritePlainMaterial(_defaultId, cinema::Vector(_colors.IsOcio() ? DEFAULT_GREY_OCIO : 0.604), 0.5) iferr_return;
 		}
 		return _defaultId;
 	}
@@ -1269,7 +1333,12 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseAr
 
 	const maxon::String id = FormatString("material_@", _materials.GetCount());
 	_materials.Insert(key, id) iferr_return;
+	const maxon::Int keyUses = _objectKeyUses;
 	WriteLayers(layers, id) iferr_return;
+	if (_objectKeyUses != keyUses)
+	{
+		_keyedMaterials.Insert(id, true) iferr_return;
+	}
 	return id;
 }
 

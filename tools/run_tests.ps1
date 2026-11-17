@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+﻿# SPDX-License-Identifier: Apache-2.0
 <#
 Runs the project's tests and prints one line per test: all of them (the baseline), the ones a
 change needs (-Changed), or the ones named (-Only).
@@ -8,6 +8,14 @@ without them this script has nothing to run. See docs\development.md, "Tests", f
 which: the tests of what changed for every piece of work, the whole baseline once per sprint,
 before a commit the maintainer asks for, and before a release.
 
+Which versions (the maintainer's rule, 2026-11-16): every run is Cinema 4D 2027 with Blender 5.2
+unless told otherwise, the baseline, -Changed and -Only alike; nothing here loops over versions.
+The sprint's baseline is that pair. Before a major release the baseline also runs on each other
+Cinema 4D version with Blender 5.2, and on each other Blender version with Cinema 4D 2027, one run
+after the other (never two at once: they share the output folder, the GPU and the plugin binary):
+  foreach ($y in "2024","2025","2026") { .\tools\run_tests.ps1 -C4D $y > baseline_c4d$y.txt }
+  foreach ($v in "5.0","5.1","5.3") { .\tools\run_tests.ps1 -SkipBuild -Blender $v > baseline_blender$v.txt }
+
   .\tools\run_tests.ps1              build, bridge tests, then every Cinema 4D test (the baseline)
   .\tools\run_tests.ps1 -SkipBuild   the same without rebuilding the plugin
   .\tools\run_tests.ps1 -Only lights,materials
@@ -15,6 +23,27 @@ before a commit the maintainer asks for, and before a release.
   .\tools\run_tests.ps1 -Changed -DryRun   only print what -Changed would run, and why
   .\tools\run_tests.ps1 -Changed -Files bridge/c4d_bridge/scene/lights.py   as if only that file had changed
   .\tools\run_tests.ps1 -Alone       every Cinema 4D test in a start of its own (the old way)
+  .\tools\run_tests.ps1 -Blender 5.0 the baseline with another supported Blender (a version from the
+                                     installer's usual place, or the path of a blender.exe)
+  .\tools\run_tests.ps1 -C4D 2026    the baseline in another supported Cinema 4D (a version from the
+                                     installer's usual place, or the folder of an installation)
+
+-Blender decides the Blender of every test: the bridge tests start it, and the Cinema 4D tests get
+it as g_cyclesRenderBlender (the window tests too). The default is Blender 5.2, the long-term
+support release; the other versions get the baseline before a major release (above).
+docs\development.md, "Tests", says which tests expect something different per version and why.
+
+-C4D decides the Cinema 4D of every Cinema 4D test, and with it the plugin build: the build of
+that version (tools\build_plugin.ps1 -Version <year>, build\plugin for 2027, build\plugin-<year>
+for the others; without -SkipBuild only that version is built). The default is 2027; the other
+versions get the baseline before a major release (above). Every start of c4dpy gets a preferences folder of its own,
+one per version (%TEMP%\cyclesrender_c4d_tests\prefs_c4dpy_<year>), and the window tests a fresh
+one each; a new preferences folder gets the licence method "Maxon App" (what Cinema 4D stores when
+it is chosen), as c4dpy otherwise asks for it. Plugins installed into the Cinema 4D folder itself
+(<installation>\plugins), other than Redshift, are left out of every start (g_moduleNegatives):
+they are not under test, and one of them ended c4dpy at start on this machine. A Cinema 4D without
+its Python runtime (resource\modules\python\libs) cannot run the tests at all, which is said and
+counted as failed.
 
 -Changed takes the files that differ from the last commit (git diff against HEAD, staged or
 not, and new files git does not ignore) and, because tests\ is not in git, the files in tests\
@@ -33,9 +62,11 @@ run one after another in a fixed order, which is printed; each starts from a kno
 (tests\c4d\lib\crrun.py) and has its own result and time. A capture or dump file is one per
 start and is emptied before every script. When c4dpy ends before every test of a start has
 reported, the test that was running fails and the ones not yet run are run again, each alone.
-The last three tests, ipr_window_checks, ipr_follow_window and baked_files_window, need windows
-and start the regular Cinema 4D for about half a minute each, with a preferences folder of their
-own so that the user's preferences and layout stay untouched.
+The last five tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window and
+baked_files_window, need windows and start the regular Cinema 4D for about half a minute each, with a
+preferences folder of their own so that the user's preferences and layout stay untouched.
+ipr_navigate_window posts mouse and key messages to that Cinema 4D's IPR window from a process of its
+own (tests\c4d\lib\post_input.ps1); the real mouse pointer is not moved.
 
 Details of a failed test: its JSON result is %TEMP%\cyclesrender_c4d_tests\<name>.result.json,
 the output of its start <start>.txt next to it (the start is printed with each group), and it
@@ -50,18 +81,46 @@ param(
   [string[]]$Files = @(),
   [switch]$DryRun,
   [switch]$Alone,
-  [string]$Blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
+  [string]$Blender = "5.2",
+  [string]$C4D = "2027"
 )
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repo
+# "5.3" stands for the Blender of that version in the installer's usual place.
+if ($Blender -match '^\d+\.\d+$') { $Blender = "C:\Program Files\Blender Foundation\Blender $Blender\blender.exe" }
+if (-not (Test-Path $Blender)) { Write-Output "-Blender: there is no $Blender"; exit 1 }
+# "2026" stands for the Cinema 4D of that year in the installer's usual place; the year of an
+# installation named by its folder is read from its executable.
+if ($C4D -match '^\d{4}$') { $C4D = "C:\Program Files\Maxon Cinema 4D $C4D" }
+$c4dExe = Join-Path $C4D "Cinema 4D.exe"
+$c4dPy = Join-Path $C4D "c4dpy.exe"
+if (-not (Test-Path $c4dPy) -or -not (Test-Path $c4dExe)) { Write-Output "-C4D: there is no Cinema 4D with c4dpy at $C4D"; exit 1 }
+$c4dYear = [string](Get-Item $c4dExe).VersionInfo.FileMajorPart
+if (@("2024", "2025", "2026", "2027") -notcontains $c4dYear) { Write-Output "-C4D: Cinema 4D $c4dYear is not supported (2024 to 2027)."; exit 1 }
+$c4dVersion = "Cinema 4D " + (Get-Item $c4dExe).VersionInfo.ProductVersion
+# Without Python inside Cinema 4D no test script can run (c4dpy ends at start, the harness never loads).
+$c4dPython = Test-Path (Join-Path $C4D "resource\modules\python\libs")
 if (-not (Test-Path "tests\c4d\run_c4d_test.ps1")) {
   Write-Output "The tests folder is not here: the tests are kept locally and are not part of the repository (docs\development.md, 'Tests')."
   exit 1
 }
 $out = Join-Path $env:TEMP "cyclesrender_c4d_tests"
 New-Item -ItemType Directory -Force $out | Out-Null
-$plugins = "build\plugin\bin\Release\plugins"
+$plugins = if ($c4dYear -eq "2027") { "build\plugin\bin\Release\plugins" } else { "build\plugin-$c4dYear\bin\Release\plugins" }
+# The licence method "Maxon App", as Cinema 4D writes it into licensetype.prf of a preferences folder
+# when it is chosen; without it c4dpy asks on its console. It holds no account data.
+$licenceMethod = [byte[]](("ff 4d 41 58 4f 4e 1f 6e 65 74 2e 6d 61 78 6f 6e 2e 66 69 6c 65 69 64 2e 6c 69 63 65 6e 73 65 74 79 70 65 2e 76 32 76 01 02 ff 00 06 " +
+  "75 69 6e 74 33 32 00 00 06 00 00 00") -split " " | ForEach-Object { [Convert]::ToByte($_, 16) })
+function New-PrefsFolder($folder, [switch]$Fresh) {
+  if ($Fresh -and (Test-Path $folder)) { Remove-Item $folder -Recurse -Force }
+  New-Item -ItemType Directory -Force $folder | Out-Null
+  $file = Join-Path $folder "licensetype.prf"
+  if (-not (Test-Path $file)) { [IO.File]::WriteAllBytes($file, $licenceMethod) }
+}
+# Plugins installed into the Cinema 4D folder itself, Redshift excepted: left out of every start.
+$foreignModules = @(Get-ChildItem (Join-Path $C4D "plugins") -Recurse -Filter *.xdl64 -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -notmatch '\\redshift\\' } | ForEach-Object { $_.BaseName } | Sort-Object -Unique)
 $results = @()
 $runWatch = [Diagnostics.Stopwatch]::StartNew()
 
@@ -77,15 +136,17 @@ $bridgeTests = @(
   @{ Name = "test_protocol"; Covers = @("${B}protocol.py", "${B}server.py", "${B}main.py") },
   @{ Name = "test_render"; Covers = @("${B}final/__init__.py", "${B}scene/meshes.py", "${B}scene/cameras.py", "${B}scene/lights.py") },
   @{ Name = "test_scene"; Covers = @("${B}scene/*", "${B}render/*") },
-  @{ Name = "test_geometry"; Covers = @("${B}scene/meshes.py", "${B}scene/instancers.py", "${B}scene/pointclouds.py", "${B}scene/curves.py", "${B}scene/materials.py") },
+  @{ Name = "test_geometry"; Covers = @("${B}scene/meshes.py", "${B}scene/instancers.py", "${B}scene/objects.py", "${B}scene/pointclouds.py", "${B}scene/curves.py", "${B}scene/materials.py") },
   @{ Name = "test_viewport"; Covers = @("${B}viewport/*") },
-  @{ Name = "test_native"; Covers = @("${B}scene/native.py") },
+  @{ Name = "test_native"; OnHold = "the Cycles Native Material is on hold"; Covers = @("${B}scene/native.py") },
   @{ Name = "test_preview"; Covers = @("${B}final/preview.py") },
   @{ Name = "test_cameras"; Covers = @("${B}scene/cameras.py") },
   @{ Name = "test_output"; Covers = @("${B}final/__init__.py", "${B}scene/objects.py", "${B}render/settings.py") },
   @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") },
   @{ Name = "test_lights"; Covers = @("${B}scene/lights.py") },
-  @{ Name = "test_devices"; Covers = @("${B}render/devices.py", "${B}render/settings.py") }
+  @{ Name = "test_devices"; Covers = @("${B}render/devices.py", "${B}render/settings.py") },
+  @{ Name = "test_versions"; Covers = @("${B}render/settings.py", "${B}scene/materials.py", "${P}videopost/render_settings_table.h", "tools/make_settings.py",
+                                        "tools/make_nodes.py") }
 )
 
 # Plugin inside Cinema 4D (c4dpy). Settings: for the start ("<file>" is a file of the start, emptied
@@ -128,11 +189,14 @@ $c4dTests = @(
   @{ Name = "fire_vdb"; Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
-  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${B}scene/materials.py") },
+  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py") },
+  @{ Name = "redshift_lookalikes"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}materials/redshift_lookalikes.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/material_export.*",
+                "${P}scene/scene_exporter.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/materials.py") },
   @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${B}scene/world.py") },
   @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}nodespace/*", "${P}materials/cycles_*", "${R}nodes/*", "tools/make_nodes.py", "tools/dump_blender_nodes.py", "${B}scene/materials.py", "${P}ipr/ipr_testhook.*") },
-  @{ Name = "native_material"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" }
+  @{ Name = "native_material"; OnHold = "the Cycles Native Material is on hold"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" }
      Covers = @("${P}materials/native_material.*", "${B}scene/native.py", "${R}description/mcyclesnative.*", "${R}strings_en-US/description/mcyclesnative.str", "${R}native_default.preview", "tools/make_native_placeholder.py") },
   @{ Name = "camera_tag"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}tags/camera_tag.*", "${R}description/tcyclescamera.*", "${R}strings_en-US/description/tcyclescamera.str", "${P}scene/camera_export.*",
@@ -143,6 +207,12 @@ $c4dTests = @(
      Covers = @("${P}scene/scene_writer.*", "${P}scene/scene_exporter.*", "${P}scene/mesh_export.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*",
                 "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
                 "${P}session/protocol.*", "${B}protocol.py", "${B}scene/__init__.py") },
+  @{ Name = "ipr_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/light_export.*",
+                "${P}lights/*", "${B}scene/lights.py") },
+  @{ Name = "ipr_navigate"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/camera_export.*", "${P}scene/scene_exporter.*",
+                "${P}tags/camera_tag.*", "${P}prefs/settings.*", "${B}viewport/*", "${B}scene/cameras.py") },
   @{ Name = "output"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}videopost/output_settings.*", "${P}videopost/render_settings_*", "${P}videopost/cycles_videopost.*", "${P}scene/camera_export.*", "${P}ipr/ipr_controller.*",
                 "${R}description/vpcyclesrender.*", "${R}strings_en-US/description/vpcyclesrender.str", "tools/make_settings.py", "${B}final/__init__.py") },
@@ -165,7 +235,15 @@ $c4dTests = @(
   @{ Name = "ipr_window_checks"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/*", "${R}icons/*", "tools/make_icons.py", "${P}materials/material_preview.*", "${P}materials/baked_files.*", "${P}prefs/*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str", "tests/c4d/harness/*") },
   @{ Name = "ipr_follow_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
-     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_image_area.*", "${P}session/frame_watcher.*", "${B}viewport/*", "tests/c4d/harness/*") },
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_scenehook.*", "${P}session/frame_watcher.*",
+                "${B}viewport/*", "tests/c4d/harness/*") },
+  @{ Name = "ipr_lights_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*", "${P}session/frame_watcher.*",
+                "${P}scene/light_export.*", "${P}lights/*", "tests/c4d/harness/*") },
+  @{ Name = "ipr_navigate_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*",
+                "${P}ipr/ipr_scenehook.*", "${P}prefs/prefs_page.*", "${P}prefs/settings.*", "${R}description/prefscyclesrender.*",
+                "${R}strings_en-US/description/prefscyclesrender.str", "${P}session/frame_watcher.*", "tests/c4d/lib/post_input.ps1", "tests/c4d/harness/*") },
   @{ Name = "baked_files_window"; Window = $true; CleanPrefs = $true; GoneAfter = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}materials/baked_files.*", "${P}materials/material_preview.*", "tests/c4d/harness/*") }
 )
@@ -182,9 +260,11 @@ $c4dTests = @(
 # geometry, a light and a material, against the Standard renderer (cycles_videopost, coords,
 # parameters.h, material_export, prefs/settings: the Blender path); sequence one Blender for a
 # sequence and only the changes sent; golden whole saved scenes against stored pictures. What it
-# does not reach is left to the sprint's full run.
+# does not reach is left to the sprint's full run. sdk_compat.h and the build script hold what
+# differs between the Cinema 4D versions: run the core set in each version the change concerns
+# (-C4D), and the whole baseline in all of them at the end of the sprint.
 $coreFiles = @(
-  "${P}main.cpp", "${P}ids.h", "${P}version.h", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/parameters.h",
+  "${P}main.cpp", "${P}ids.h", "${P}version.h", "${P}sdk_compat.h","${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/parameters.h",
   "${P}scene/coords.*", "${P}session/*", "${P}platform/socket*", "${P}platform/shared_memory*", "${P}platform/environment*",
   "${P}prefs/settings.*", "${P}videopost/cycles_videopost.*", "${P}materials/material_export.*",
   "plugin/cyclesrender/project/*", "${R}c4d_symbols.h", "${R}strings_en-US/c4d_strings.str",
@@ -218,8 +298,17 @@ $noTests = @(
 
 function Test-Like($file, $patterns) { foreach ($pattern in $patterns) { if ($file -like $pattern) { return $true } }; return $false }
 
+# Tests on hold (field OnHold, the reason) are in no run: not the baseline, not -Changed, not -Only.
+# A changed file that only they cover runs nothing and says so. To take one back in, remove the field.
+$onHold = @($bridgeTests + $c4dTests | Where-Object { $_.OnHold })
+$bridgeTests = @($bridgeTests | Where-Object { -not $_.OnHold })
+$c4dTests = @($c4dTests | Where-Object { -not $_.OnHold })
+if ($onHold.Count) { Write-Output ("on hold, not run: {0}" -f (($onHold | ForEach-Object { "$($_.Name) ($($_.OnHold))" }) -join ", ")) }
+
 $allTests = @($bridgeTests | ForEach-Object { $_.Name }) + @($c4dTests | ForEach-Object { $_.Name })
 foreach ($name in $Only) {
+  $held = @($onHold | Where-Object { $_.Name -eq $name })
+  if ($held.Count) { Write-Output "-Only: the test '$name' is on hold ($($held[0].OnHold)). Remove its OnHold field in tools\run_tests.ps1 to run it."; exit 1 }
   if ($allTests -notcontains $name) { Write-Output "-Only: there is no test '$name'. Tests: $($allTests -join ', ')"; exit 1 }
 }
 
@@ -251,6 +340,11 @@ if ($Changed) {
     $covering = @($bridgeTests + $c4dTests | Where-Object { Test-Like $file $_.Covers } | ForEach-Object { $_.Name })
     if ($covering.Count) { $tests += $covering; $why += "covered by " + ($covering -join ", ") }
     if (Test-Like $file $coreFiles) { $tests += $coreSet; $why += "everybody's file: the core set"; $coreUsed = $true }
+    $held = @($onHold | Where-Object { (Test-Like $file $_.Covers) -or ($isTestScript -and $_.Name -eq $own) } | Select-Object -First 1)
+    if (-not $tests.Count -and $held.Count) {
+      Write-Output ("  {0}: nothing to run (its test {1} is on hold: {2})" -f $file, $held[0].Name, $held[0].OnHold)
+      continue
+    }
     $known = @($noTests | Where-Object { $file -like $_.Pattern } | Select-Object -First 1)
     if (-not $tests.Count -and $known.Count) {
       if ($known[0].Smoke) { $needsTests = $true; Write-Output ("  {0}: the always-run set ({1})" -f $file, $known[0].Why) }
@@ -322,6 +416,11 @@ if ($DryRun) {
 
 # The user may have a Blender of their own open; only processes that appear during the run count.
 $blenderBefore = @(Get-Process blender -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+$blenderVersion = (& $Blender --version 2>$null | Select-Object -First 1)
+Write-Output ("Blender: {0} ({1})" -f $blenderVersion, $Blender)
+Write-Output ("{0} ({1}), plugin from {2}" -f $c4dVersion, $C4D, $plugins)
+if ($foreignModules.Count) { Write-Output ("left out of every start, installed into that Cinema 4D: {0}" -f ($foreignModules -join ", ")) }
+if (-not $c4dPython) { Write-Output "$c4dVersion has no Python runtime ($C4D\resource\modules\python\libs is missing): c4dpy ends at start and the test harness cannot load, so no Cinema 4D test can run. Repair or reinstall that Cinema 4D." }
 
 function Add-Result($name, $passed, $seconds, $note = "") {
   $script:results += [pscustomobject]@{ Test = $name; Result = $(if ($passed) { "passed" } else { "FAILED" }); Seconds = [int]$seconds }
@@ -331,12 +430,12 @@ function Add-Result($name, $passed, $seconds, $note = "") {
 $buildSeconds = 0
 if (-not $SkipBuild) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
-  & (Join-Path $PSScriptRoot "build_plugin.ps1") *> (Join-Path $out "build.log")
+  & (Join-Path $PSScriptRoot "build_plugin.ps1") -Version $c4dYear *> (Join-Path $out "build.log")
   # The exit code alone is not trusted: a build that fell back on old project files can end with 0.
   $built = ($LASTEXITCODE -eq 0) -and (Test-Path "$plugins\cyclesrender\cyclesrender.xdl64") -and
     -not (Select-String -Path (Join-Path $out "build.log") -Pattern "error C\d+|error :|LNK\d+|CMake Error" -Quiet)
   $buildSeconds = $watch.Elapsed.TotalSeconds
-  Add-Result "build" $built $buildSeconds
+  Add-Result "build ($c4dYear)" $built $buildSeconds
   if (-not $built) { Write-Output "see $out\build.log"; exit 1 }
 }
 
@@ -348,8 +447,13 @@ foreach ($test in $bridgeTests) {
 }
 
 foreach ($start in $starts) {
+  if (-not $c4dPython) {
+    foreach ($test in $start.Tests) { Add-Result $test.Name $false 0 " - not run: $c4dVersion has no Python runtime" }
+    continue
+  }
   $first = $start.Tests[0]
   $settings = $start.Settings.Clone()
+  if ($foreignModules.Count) { $settings.g_moduleNegatives = $foreignModules -join ";" }
   foreach ($key in @($settings.Keys)) {
     if ($settings[$key] -ne "<file>") { continue }
     # A file of this start: gone before it begins (the runner also empties it before every test).
@@ -358,8 +462,13 @@ foreach ($start in $starts) {
   }
   if ($first.CleanPrefs) {
     $prefs = Join-Path $out "prefs_$($start.Name)"
-    if (Test-Path $prefs) { Remove-Item $prefs -Recurse -Force }
-    New-Item -ItemType Directory -Force $prefs | Out-Null
+    New-PrefsFolder $prefs -Fresh
+    $settings.g_prefsPath = $prefs
+  }
+  elseif (-not $first.Window) {
+    # c4dpy: one preferences folder per version, kept between runs like c4dpy's own.
+    $prefs = Join-Path $out "prefs_c4dpy_$c4dYear"
+    New-PrefsFolder $prefs
     $settings.g_prefsPath = $prefs
   }
   if ($start.Tests.Count -gt 1) {
@@ -369,7 +478,7 @@ foreach ($start in $starts) {
   $summary = Join-Path $out "$($start.Name).summary.json"
   Remove-Item $summary -ErrorAction SilentlyContinue
   $arguments = @{ Headless = (-not $first.Window); Script = @($start.Tests | ForEach-Object { "tests\c4d\$($_.Name).py" }); ModulePath = $plugins
-                  TimeoutSec = 600; Settings = $settings; Name = $start.Name; SummaryFile = $summary }
+                  TimeoutSec = 600; Settings = $settings; Name = $start.Name; SummaryFile = $summary; Blender = $Blender; C4D = $c4dExe; C4DPy = $c4dPy }
   if ($first.ExpectLog) { $arguments.ExpectLog = $first.ExpectLog; $arguments.LogPattern = "Cycles Render self-test" }
   $watch = [Diagnostics.Stopwatch]::StartNew()
   & "tests\c4d\run_c4d_test.ps1" @arguments *> (Join-Path $out "$($start.Name).txt")
@@ -399,6 +508,6 @@ foreach ($start in $starts) {
 $left = @(Get-Process blender -ErrorAction SilentlyContinue | Where-Object { $blenderBefore -notcontains $_.Id }).Count
 Write-Output "blender processes left running by the tests: $left"
 $failed = @($results | Where-Object { $_.Result -ne "passed" })
-Write-Output ("{0} of {1} passed" -f ($results.Count - $failed.Count), $results.Count)
+Write-Output ("{0} of {1} passed ({2}, {3})" -f ($results.Count - $failed.Count), $results.Count, $blenderVersion, $c4dVersion)
 Write-Output ("whole run {0:N0} s (build {1:N0} s)" -f $runWatch.Elapsed.TotalSeconds, $buildSeconds)
 if ($failed.Count -gt 0 -or $left -gt 0) { exit 1 }

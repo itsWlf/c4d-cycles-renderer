@@ -24,6 +24,7 @@ struct CyclesSocket
 	/// For which settings of the node Blender shows the socket: "" always, "!" never, or
 	/// "prop.data_type=RGBA|ROTATION&prop.clamp=1" (each named setting has one of the listed values).
 	const maxon::Char* show;
+	maxon::Int32 since;             ///< the first Blender that has it, as a BlenderVersionCode() (503 for 5.3)
 };
 
 /// A setting on the node itself (not a socket): a dropdown, switch, number, colour, vector or text.
@@ -42,11 +43,14 @@ struct CyclesProperty
 	/// 'e' one of several options, 'b' switch, 'i' whole number, 'f' number, 'c' colour, 'v' vector, 't' text, 'u' file,
 	/// 'k' curve (a maxon::SplineMapper, shown with Cinema 4D's spline control)
 	maxon::Char kind;
-	const maxon::Char* items;       ///< options as "IDENTIFIER|Label;IDENTIFIER|Label"
+	/// options as "IDENTIFIER|Label;IDENTIFIER|Label"; an option that came after the setting has its
+	/// version as a third part ("LIGHT|Light|503", GetCyclesOptionSince())
+	const maxon::Char* items;
 	/// default option or text; of a colour or vector, its default as "0.5 0.5 0.5"; of a curve, the
 	/// area of Blender's curve it stands for as "min_x min_y max_x max_y" (GetCyclesCurveArea)
 	const maxon::Char* text;
 	maxon::Float64 number;          ///< default number or switch
+	maxon::Int32 since;             ///< the first Blender that has it, as a BlenderVersionCode()
 };
 
 struct CyclesNode
@@ -61,6 +65,7 @@ struct CyclesNode
 	maxon::Int outputCount;
 	const CyclesProperty* properties;
 	maxon::Int propertyCount;
+	maxon::Int32 since;             ///< the first Blender that has the node, as a BlenderVersionCode()
 };
 
 /// A folder of the nodes in the Asset Browser, after Blender's Add menu.

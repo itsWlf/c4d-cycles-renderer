@@ -46,6 +46,13 @@ public:
 	/// What the bridge reported about itself in its hello reply (version, mode, devices).
 	const maxon::DataDictionary& GetHello() const { return _hello; }
 
+	/// The version of the Blender at the other end, from its hello, as BlenderVersionCode()
+	/// (major * 100 + minor, blender_install.h); 0 before Open().
+	maxon::Int32 GetBlenderVersion() const { return _blenderVersion; }
+
+	/// The same as Blender writes it ("5.2.3 LTS"); empty before Open().
+	const maxon::String& GetBlenderVersionText() const { return _blenderVersionText; }
+
 	/// The secret of this launch; it also names the shared-memory frame block.
 	const maxon::String& GetToken() const { return _process.GetToken(); }
 
@@ -65,6 +72,8 @@ private:
 	platform::SocketHandle _socket = platform::NO_SOCKET;
 	maxon::Int64 _nextId = 1;
 	maxon::DataDictionary _hello;
+	maxon::Int32 _blenderVersion = 0;
+	maxon::String _blenderVersionText;
 };
 
 } // namespace cyclesrender

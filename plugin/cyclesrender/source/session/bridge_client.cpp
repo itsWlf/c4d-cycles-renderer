@@ -5,6 +5,7 @@
 #include "maxon/atomictypes.h"
 
 #include "../materials/baked_files.h"
+#include "../prefs/settings.h"
 #include "../version.h"
 #include "bridge_client.h"
 #include "capture.h"
@@ -57,6 +58,23 @@ maxon::Result<void> BridgeClient::Open(BRIDGEMODE mode)
 	BridgeMessage reply = Request(std::move(hello)) iferr_return;
 	_hello = reply.header;
 	NoteBridgeVersion(_hello);
+
+	// "5.2.3 LTS": the numbers before the first space.
+	_blenderVersionText = GetJsonString(_hello, "blender"_s);
+	maxon::Int32 numbers[3] = { 0, 0, 0 };
+	maxon::Int index = 0;
+	for (maxon::Int i = 0; i < _blenderVersionText.GetLength() && index < 3; ++i)
+	{
+		const maxon::Utf32Char c = _blenderVersionText[i];
+		if (c >= '0' && c <= '9')
+			numbers[index] = numbers[index] * 10 + maxon::Int32(c - '0');
+		else if (c == '.')
+			++index;
+		else
+			break;
+	}
+	_blenderVersion = BlenderVersionCode(numbers[0], numbers[1]);
+	NoteBlenderVersion(GetBlenderPathOrDetect(), numbers[0], numbers[1], numbers[2], _blenderVersionText);
 	return maxon::OK;
 }
 

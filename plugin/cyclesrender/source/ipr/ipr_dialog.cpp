@@ -11,14 +11,17 @@
 #include "c4d_resource.h"
 #include "c4d_symbols.h"
 #include "customgui_bitmapbutton.h"
+#include "maxon/atomictypes.h"
 
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
 #include "ipr_add.h"
+#include "../sdk_compat.h"
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
+#include "ipr_navigation.h"
 #include "ipr_trace.h"
 
 namespace cyclesrender
@@ -189,7 +192,7 @@ private:
 /// The window. It owns no render state: every control calls the IprController, and a timer
 /// shows what the controller reports.
 //----------------------------------------------------------------------------------------
-class IprDialog : public cinema::GeDialog
+class IprDialog : public cinema::GeDialog, public IprNavigationHandler
 {
 public:
 	virtual cinema::Bool CreateLayout() override;
@@ -198,6 +201,12 @@ public:
 	virtual cinema::Bool CoreMessage(cinema::Int32 id, const cinema::BaseContainer& msg) override;
 	virtual void Timer(const cinema::BaseContainer& msg) override;
 	virtual cinema::Bool AskClose() override;
+
+	// Navigating from the picture (0.2.0, F17; ipr_navigation.h).
+	virtual maxon::Bool BeginNavigation(IPRNAV mode, maxon::Float64 imageX, maxon::Float64 imageY, maxon::Float64 zoom, maxon::Int32 qualifier) override;
+	virtual void Navigate(maxon::Float64 dx, maxon::Float64 dy) override;
+	virtual void NavigationIdle() override;
+	virtual void EndNavigation(maxon::Bool cancelled) override;
 
 	IprImageArea& GetImage() { return _image; }
 	void SendSnapshot();
@@ -216,6 +225,8 @@ public:
 		Command(ID_COMBO_CAMERA, cinema::BaseContainer());
 	}
 	void ShowNewFrame();
+	/// The document was evaluated (FollowIprEvaluation).
+	void FollowEvaluation();
 
 private:
 	cinema::BitmapButtonCustomGui* AddIconButton(cinema::Int32 id, ICON icon, const maxon::String& tooltip, maxon::Bool toggle = false);
@@ -226,8 +237,13 @@ private:
 	void RefreshStatus();
 	void RefreshMenu();
 	void ShowZoom();
+	/// During a navigating drag: redraws the view that shows the camera, at most half of the time.
+	void RedrawNavigatedView();
 
 	IprImageArea _image;
+	IprNavigation _navigation;
+	maxon::Float64 _nextViewRedraw = 0.0;	///< GeGetMilliSeconds() before which the view is not drawn again
+	maxon::Bool _viewBehind = false;			///< the camera moved since the view was last drawn
 	IprProgressArea _progress;
 	cinema::BitmapButtonCustomGui* _startButton = nullptr;
 	cinema::BitmapButtonCustomGui* _pauseButton = nullptr;
@@ -250,6 +266,14 @@ private:
 };
 
 static IprDialog* g_dialog = nullptr;
+
+// For IsIprInModalLoop(), on any thread: the window is open and the IPR renders (set by the timer,
+// which stops only in a modal loop), and when the timer last ran (GeGetMilliSeconds, whole ms).
+static maxon::AtomicBool g_following;
+static maxon::AtomicInt64 g_lastTimerMs;
+
+// The window's timer has not run for this long: Cinema 4D is in a modal loop (CoreMessage()).
+static const maxon::Float64 STARVED_MILLISECONDS = 3.0 * TIMER_MILLISECONDS;
 
 cinema::BitmapButtonCustomGui* IprDialog::AddIconButton(cinema::Int32 id, ICON icon, const maxon::String& tooltip, maxon::Bool toggle)
 {
@@ -337,6 +361,7 @@ cinema::Bool IprDialog::CreateLayout()
 
 	AddUserArea(ID_AREA_IMAGE, cinema::BFH_SCALEFIT | cinema::BFV_SCALEFIT, 0, 0);
 	AttachUserArea(_image, ID_AREA_IMAGE);
+	_image.SetNavigationHandler(this);
 
 	GroupBegin(ID_GROUP_STATUS, cinema::BFH_SCALEFIT, 0, 1, maxon::String(), 0);
 	{
@@ -539,11 +564,13 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 {
 	TraceIpr("timer");
 	_lastTimer = cinema::GeGetMilliSeconds();
+	g_lastTimerMs.Set(maxon::Int64(_lastTimer));
 	IprController& ipr = IprController::Get();
 	// The render follows the size of the picture area ("Fit Window").
 	ipr.SetWindowSize(_image.GetWidth(), _image.GetHeight());
 	_image.SetFill(ipr.IsFitWindow());
 	ipr.Tick();
+	g_following.Set(ipr.GetState() == IPRSTATE::RUNNING);
 	ShowNewFrame();	// normally the frame thread's message got here first
 
 	RefreshControls(false);
@@ -555,6 +582,87 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 	// The camera list follows the document; a few times a second is often enough.
 	if (++_ticks % 20 == 0)
 		RefreshCameras(false);
+}
+
+void IprDialog::FollowEvaluation()
+{
+	// Only in a modal loop, as in CoreMessage(): otherwise the change event and the timer do it.
+	if (cinema::GeGetMilliSeconds() - _lastTimer <= STARVED_MILLISECONDS)
+		return;
+	TraceIpr("evaluated");
+	IprController::Get().FollowLights();
+	ShowNewFrame();
+}
+
+// --- navigating from the picture --------------------------------------------------------------
+// The picture's drag is a modal loop (ipr_image_area.cpp, NavigationDrag): the timer does not run
+// and messages wait, so each step here does what the timer would: the camera is moved, sent while
+// Blender is idle (IprController::FollowCamera), and the newest frame shown; Cinema 4D's view that
+// shows the camera is redrawn too, but never for more than half of the time, so that a slow view
+// (a heavy scene) does not hold the IPR back.
+
+maxon::Bool IprDialog::BeginNavigation(IPRNAV mode, maxon::Float64 imageX, maxon::Float64 imageY, maxon::Float64 zoom, maxon::Int32 qualifier)
+{
+	const Frame& shown = _image.GetFrame();
+	const maxon::String refused = BeginIprNavigation(_navigation, mode, imageX, imageY, shown.width, shown.height, zoom, (qualifier & cinema::QCTRL) != 0);
+	if (refused.IsPopulated())
+	{
+		TraceIpr("nav_refused");
+		cinema::StatusSetText("Cycles Render IPR: "_s + refused);
+		return false;
+	}
+	const maxon::Bool parallel = _navigation.GetCamera() && CameraValues::Read(_navigation.GetCamera()).kind == CAMERAKIND::ORTHOGRAPHIC;
+	cinema::StatusSetText(FormatString("Cycles Render IPR: @ \"@\"", NavigationVerb(mode, parallel), _navigation.GetCamera()->GetName()));
+	_nextViewRedraw = 0.0;
+	_viewBehind = false;
+	return true;
+}
+
+void IprDialog::RedrawNavigatedView()
+{
+	const maxon::Float64 started = cinema::GeGetMilliSeconds();
+	if (started < _nextViewRedraw)
+		return;
+	cinema::BaseDraw* const view = _navigation.GetView();
+	cinema::DRAWFLAGS flags = cinema::DRAWFLAGS::NO_THREAD | cinema::DRAWFLAGS::NO_ANIMATION | cinema::DRAWFLAGS::INDRAG;
+	flags |= view ? cinema::DRAWFLAGS::ONLY_BASEDRAW : cinema::DRAWFLAGS::ONLY_ACTIVE_VIEW;
+	cinema::DrawViews(flags, view);
+	const maxon::Float64 ended = cinema::GeGetMilliSeconds();
+	_nextViewRedraw = ended + (ended - started);
+	_viewBehind = false;
+	TraceIpr("nav_view_ms", ended - started);
+}
+
+void IprDialog::Navigate(maxon::Float64 dx, maxon::Float64 dy)
+{
+	TraceIpr("nav_step");
+	_navigation.Step(dx, dy);
+	IprController::Get().FollowCamera();
+	_viewBehind = true;
+	RedrawNavigatedView();
+	ShowNewFrame();
+	RefreshStatus();
+}
+
+void IprDialog::NavigationIdle()
+{
+	// The camera as it is after the evaluation (an expression may have turned it), and Blender idle again.
+	IprController::Get().FollowCamera();
+	if (_viewBehind)
+		RedrawNavigatedView();
+	ShowNewFrame();
+	// The status line (time, samples) is the timer's, which does not run during the drag.
+	RefreshStatus();
+}
+
+void IprDialog::EndNavigation(maxon::Bool cancelled)
+{
+	if (cancelled)
+		_navigation.Cancel();
+	else
+		_navigation.End();
+	IprController::Get().FollowCamera();
+	cinema::StatusClear();
 }
 
 cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContainer& msg)
@@ -584,7 +692,7 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 	// end), but a tool tells the managers about every step at once (EVMSG_ASYNCEDITORMOVE, sent with
 	// GeSyncMessage). Then the IPR does here what the timer would: it sends what changed while
 	// Blender is idle and shows the newest frame. Any other message in such a loop moves the camera.
-	if (cinema::GeGetMilliSeconds() - _lastTimer > 3.0 * TIMER_MILLISECONDS)
+	if (cinema::GeGetMilliSeconds() - _lastTimer > STARVED_MILLISECONDS)
 	{
 		IprController& ipr = IprController::Get();
 		if (id == EVMSG_ASYNCEDITORMOVE)
@@ -596,6 +704,7 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 		else
 		{
 			ipr.FollowCamera();
+			ipr.FollowLights();
 		}
 		ShowNewFrame();
 	}
@@ -617,7 +726,7 @@ void IprDialog::SendSnapshot()
 	cinema::BaseBitmap* bitmap = _image.CreateFloatBitmap(cinema::GetActiveDocument());
 	if (!bitmap)
 		return;
-	cinema::ShowBitmap(bitmap, "Cycles Render IPR"_s);
+	ShowInPictureViewer(bitmap, "Cycles Render IPR"_s);
 	cinema::BaseBitmap::Free(bitmap);
 }
 
@@ -766,6 +875,7 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 		}
 		case ID_MENU_CLOSE:
 		{
+			g_following.Set(false);
 			ipr.Stop();
 			Close();
 			break;
@@ -813,6 +923,7 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 cinema::Bool IprDialog::AskClose()
 {
 	// Closing the window ends the render; Blender stays for the next time the window opens.
+	g_following.Set(false);
 	IprController::Get().Stop();
 	return false;
 }
@@ -851,9 +962,21 @@ void OpenIprDialog()
 
 void FreeIprDialog()
 {
+	g_following.Set(false);
 	DeleteObj(g_dialog);
 	for (cinema::BaseBitmap*& icon : g_icons)
 		cinema::BaseBitmap::Free(icon);
+}
+
+maxon::Bool IsIprInModalLoop()
+{
+	return g_following.LoadRelaxed() && cinema::GeGetMilliSeconds() - maxon::Float64(g_lastTimerMs.LoadRelaxed()) > STARVED_MILLISECONDS;
+}
+
+void FollowIprEvaluation()
+{
+	if (g_dialog && g_dialog->IsOpen())
+		g_dialog->FollowEvaluation();
 }
 
 maxon::Int GetIprDialogCameraCount()
@@ -872,6 +995,23 @@ void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Fl
 	zoom = g_dialog ? g_dialog->GetImage().GetZoom() : 0.0;
 	zoomField = open ? g_dialog->GetZoomField() : 0.0;
 	convertMilliseconds = g_dialog ? g_dialog->GetImage().GetLastConvertMilliseconds() : 0.0;
+}
+
+maxon::Bool GetIprImageScreenRect(maxon::Int32& left, maxon::Int32& top, maxon::Int32& width, maxon::Int32& height, maxon::Float64& centerX, maxon::Float64& centerY)
+{
+	if (!g_dialog || !g_dialog->IsOpen())
+		return false;
+	IprImageArea& image = g_dialog->GetImage();
+	cinema::Int32 x = 0;
+	cinema::Int32 y = 0;
+	if (!image.Local2Screen(&x, &y))
+		return false;
+	left = x;
+	top = y;
+	width = image.GetWidth();
+	height = image.GetHeight();
+	image.GetCenter(centerX, centerY);
+	return true;
 }
 
 maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::String& argument, maxon::String& problem)

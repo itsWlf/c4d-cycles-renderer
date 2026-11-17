@@ -27,9 +27,10 @@ enum
 	PREF_CYCLES_DEVICE_FIRST = 1100,
 	PREF_CYCLES_DEVICE_LAST = 1163,
 
-	// The IPR: a switch for its riskier feature, to turn it off when hunting a fault.
+	// The IPR: switches for its riskier features, to turn them off when hunting a fault.
 	PREF_CYCLES_IPR_GROUP = 997,
-	PREF_CYCLES_IPR_SKIP_UNCHANGED = 1007
+	PREF_CYCLES_IPR_SKIP_UNCHANGED = 1007,
+	PREF_CYCLES_IPR_NAVIGATE = 1008
 };
 
 #endif // PREFSCYCLESRENDER_H__

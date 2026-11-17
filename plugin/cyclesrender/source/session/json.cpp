@@ -6,6 +6,7 @@
 #include "maxon/valuereceiver.h"
 
 #include "json.h"
+#include "../sdk_compat.h"
 
 namespace cyclesrender
 {
@@ -17,7 +18,7 @@ maxon::Result<maxon::DataDictionary> ParseJson(const maxon::String& text)
 	const maxon::ParserRef parser = maxon::ParserClasses::JsonParser().Create() iferr_return;
 	maxon::SingleValueReceiver<const maxon::DataDictionary&> receiver;
 	parser.ReadString(text, maxon::PARSERFLAGS::NONE, maxon::GetUtf8DefaultDecoder(), receiver) iferr_return;
-	return receiver.Get().ToResult();
+	return OptToResult(receiver.Get());
 }
 
 maxon::Result<maxon::String> WriteJson(const maxon::DataDictionary& dictionary)

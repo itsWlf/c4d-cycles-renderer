@@ -6,7 +6,7 @@ The bridge knows nothing about Cinema 4D. It receives scene items in Blender's o
 
 ## Installing it
 
-This folder is a Blender extension. Users install the packaged `cycles_render_bridge-<version>.zip` in Blender 5.2 with *Edit > Preferences > Get Extensions > Install from Disk…*, and that is all: the Cinema 4D plugin finds the bridge in Blender's extensions folder and starts Blender with it when it renders. Blender runs with factory settings then, so the extension does not need to be enabled, and nothing of the user's own Blender set-up takes part.
+This folder is a Blender extension. Users install the packaged `cycles_render_bridge-<version>.zip` in Blender 5.0, 5.1, 5.2 or 5.3 with *Edit > Preferences > Get Extensions > Install from Disk…*, and that is all: the Cinema 4D plugin finds the bridge in Blender's extensions folder and starts Blender with it when it renders. Blender runs with factory settings then, so the extension does not need to be enabled, and nothing of the user's own Blender set-up takes part.
 
 For development nothing is installed: the plugin is pointed at this folder with the setting `g_cyclesRenderBridge=<repo>\bridge\c4d_bridge\main.py` (see [`../docs/development.md`](../docs/development.md)).
 

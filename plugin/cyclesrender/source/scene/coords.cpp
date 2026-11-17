@@ -5,6 +5,7 @@
 #include "customgui_unitscale.h"
 #include "ddoc.h"
 
+#include "../sdk_compat.h"
 #include "coords.h"
 
 namespace cyclesrender

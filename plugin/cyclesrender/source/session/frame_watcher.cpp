@@ -102,6 +102,10 @@ void FrameWatcher::Main()
 		// One message per frame the main thread has not picked up yet is enough.
 		if (notify)
 			cinema::SpecialEventAdd(ID_CORE_MESSAGE);
+		// The core message waits while Cinema 4D is in a modal loop; the callback can reach the main
+		// thread there (ipr/ipr_scenehook.h). Called for every frame: it decides itself.
+		if (_onArrival)
+			_onArrival();
 	}
 }
 

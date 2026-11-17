@@ -13,6 +13,7 @@
 // of the dropdowns, the folder in the Asset Browser.
 
 #include "c4d.h"
+#include "lib_clipmap.h"
 #include "maxon/application.h"
 #include "maxon/assets.h"
 #include "maxon/category_asset.h"
@@ -33,6 +34,9 @@
 
 #include "../ids.h"
 #include "../materials/material_preview.h"
+#include "../prefs/settings.h"
+#include "../session/blender_install.h"
+#include "../sdk_compat.h"
 #include "cycles_nodes.h"
 
 namespace cyclesrender
@@ -108,7 +112,19 @@ public:
 		root.SetValue(maxon::NODE::BASE::COLOR, TagColor(_node->tag)) iferr_return;
 		// A preview is the whole material's ball, whatever the node: it belongs on the material's
 		// thumbnail, not on every node.
+		// (A node newer than the oldest supported Blender shows its version card instead: its
+		// description says so, VersionCard() below.)
 		root.SetValue(maxon::NODE::BASE::DISPLAYPREVIEW, false) iferr_return;
+		// ... and a comment under it that names the version it needs ("Needs Blender 5.3 or later"):
+		// true whichever Blender is chosen, so it may be set once. It is the node's own value, made
+		// here with the node and again when a scene is loaded, not a change of the document (no undo
+		// step, the document stays saved: tests/c4d/cycles_nodes.py section 9); a comment the user
+		// writes, or a comment the user empties, is stored with the scene and wins over it.
+		if (_node->since > OldestSupportedBlenderVersion())
+		{
+			root.SetValue(maxon::NODE::BASE::COMMENT, FormatString("Needs Blender @ or later", BlenderVersionName(_node->since))) iferr_return;
+			root.SetValue(maxon::NODE::BASE::DISPLAYCOMMENT, true) iferr_return;
+		}
 
 		maxon::BaseArray<maxon::nodes::MutablePort> outputs;
 		for (maxon::Int i = 0; i < _node->outputCount; ++i)
@@ -230,6 +246,133 @@ private:
 };
 
 //----------------------------------------------------------------------------------------
+// The version card: the preview of a node that not every supported Blender has (0.2.0, F8).
+//
+// Whether a node shows a preview is decided by its description, which is a file read once and
+// cannot depend on the Preferences (measured: the port description provider is not asked about a
+// node's own attributes, and a preview switched on or off in InstantiateImpl is overridden by the
+// description). So a node newer than the oldest supported Blender always shows a preview, and
+// its picture says, at the moment Cinema 4D asks for it, what the chosen Blender makes of it:
+// red, "Unsupported in Blender 5.2.3 / needs 5.3", when it lacks the node (the node is then left
+// out of what is sent, with a line in the console); grey, "Blender 5.3+", when it has it.
+//----------------------------------------------------------------------------------------
+static maxon::Float32 Linear(maxon::Int32 srgb)
+{
+	const maxon::Float32 v = maxon::Float32(srgb) / 255.0f;
+	return v <= 0.04045f ? v / 12.92f : maxon::Pow((v + 0.055f) / 1.055f, 2.4f);
+}
+
+static maxon::Result<maxon::nodes::SamplesFloat32Ref> VersionCard(const CyclesNode& node, const BlenderInstall& blender, const maxon::IntVector2d& size,
+	maxon::Bool flip)
+{
+	iferr_scope;
+	const maxon::Int32 inUse = blender.found ? blender.Code() : 0;
+	const maxon::Bool lacks = inUse != 0 && node.since > inUse;
+	// Lines from top to bottom; the middle one large.
+	maxon::String lines[3];
+	if (lacks)
+	{
+		lines[0] = "Unsupported in"_s;
+		lines[1] = FormatString("Blender @.@.@", blender.major, blender.minor, blender.patch);
+		lines[2] = FormatString("needs @", BlenderVersionName(node.since));
+	}
+	else
+	{
+		lines[0] = inUse == 0 ? "Needs"_s : ""_s;
+		lines[1] = FormatString("Blender @+", BlenderVersionName(node.since));
+		lines[2] = ""_s;
+	}
+	const maxon::Int32 w = maxon::Int32(size.x);
+	const maxon::Int32 h = maxon::Int32(size.y);
+
+	cinema::AutoAlloc<cinema::GeClipMap> map;
+	if (!map || map->Init(w, h, 32) != cinema::IMAGERESULT::OK)
+		return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
+	map->BeginDraw();
+	if (lacks)
+		map->SetColor(150, 30, 30);
+	else
+		map->SetColor(48, 48, 48);
+	map->FillRect(0, 0, w - 1, h - 1);
+	if (lacks)
+	{
+		// A frame of a lighter red, so the card reads as a warning also when it is small.
+		map->SetColor(235, 90, 70);
+		const maxon::Int32 frame = maxon::Max(maxon::Int32(2), w / 30);
+		map->FillRect(0, 0, w - 1, frame - 1);
+		map->FillRect(0, h - frame, w - 1, h - 1);
+		map->FillRect(0, 0, frame - 1, h - 1);
+		map->FillRect(w - frame, 0, w - 1, h - 1);
+	}
+	cinema::BaseContainer font;
+	cinema::GeClipMap::GetDefaultFont(cinema::GE_FONT_DEFAULT_SYSTEM, &font);
+	// Each line as large as fits 86 % of the width; the small lines at most 75 % of the large one.
+	maxon::Float sizes[3] = { 0.0, 0.0, 0.0 };
+	maxon::Int32 heights[3] = { 0, 0, 0 };
+	maxon::Float big = 0.0;
+	for (maxon::Int i : { 1, 0, 2 })
+	{
+		if (lines[i].IsEmpty())
+			continue;
+		maxon::Float fontSize = maxon::Float(h) * (i == 1 ? 0.30 : 0.22);
+		if (i != 1 && big > 0.0)
+			fontSize = maxon::Min(fontSize, big * 0.75);
+		while (fontSize > 4.0)
+		{
+			map->SetFont(&font, fontSize);
+			if (map->GetTextWidth(lines[i]) <= maxon::Int32(maxon::Float(w) * 0.86))
+				break;
+			fontSize *= 0.92;
+		}
+		sizes[i] = fontSize;
+		map->SetFont(&font, fontSize);
+		heights[i] = map->GetTextHeight();
+		if (i == 1)
+			big = fontSize;
+	}
+	const maxon::Int32 gap = h / 30;
+	maxon::Int32 total = 0;
+	for (maxon::Int i = 0; i < 3; ++i)
+		total += heights[i] + (heights[i] && i > 0 ? gap : 0);
+	maxon::Int32 y = (h - total) / 2;
+	for (maxon::Int i = 0; i < 3; ++i)
+	{
+		if (lines[i].IsEmpty())
+			continue;
+		if (lacks)
+		{
+			if (i == 2)
+				map->SetColor(255, 215, 130);
+			else
+				map->SetColor(255, 255, 255);
+		}
+		else
+		{
+			map->SetColor(165, 165, 165);
+		}
+		map->SetFont(&font, sizes[i]);
+		map->TextAt((w - map->GetTextWidth(lines[i])) / 2, y, lines[i]);
+		y += heights[i] + gap;
+	}
+
+	maxon::nodes::SamplesFloat32Ref samples = NewObj(maxon::nodes::SamplesFloat32) iferr_return;
+	samples->Resize(size.x * size.y) iferr_return;
+	for (maxon::Int32 row = 0; row < h; ++row)
+	{
+		// The top row first; the bottom row first for a request for a flipped picture (as below).
+		const maxon::Int32 source = flip ? h - 1 - row : row;
+		for (maxon::Int32 x = 0; x < w; ++x)
+		{
+			cinema::Int32 r = 0, g = 0, b = 0, a = 0;
+			map->GetPixelRGBA(x, source, &r, &g, &b, &a);
+			(*samples)[row * w + x] = maxon::nodes::SampleFloat32(Linear(r), Linear(g), Linear(b), 1.0f);
+		}
+	}
+	map->EndDraw();
+	return samples;
+}
+
+//----------------------------------------------------------------------------------------
 // The picture of a material: Cinema 4D asks for it (the thumbnail in the Material Manager and
 // in the Attribute Manager's header, 90 x 90; the big preview in the Attribute Manager, 120 x
 // 120; the preview on the Material Output node) and gets a ball rendered by Blender
@@ -255,6 +398,25 @@ public:
 		const maxon::GraphNode subject = request.Get(maxon::nodes::PREVIEWIMAGEREQUEST::SUBJECT, maxon::GraphNode());
 		if (!subject.IsValid() || _size.x <= 0 || _size.y <= 0)
 			return maxon::IllegalArgumentError(MAXON_SOURCE_LOCATION, "a preview was asked for without a node or a size"_s);
+		// The preview of a node other than the Material Output (only nodes newer than the oldest
+		// supported Blender have one, tools/make_nodes.py): its version card, which says whether
+		// the Blender chosen in the Preferences has the node. The subject is the node's output.
+		maxon::GraphNode node = subject;
+		if (subject.GetKind() != maxon::NODE_KIND::NODE)
+		{
+			node = subject.GetAncestor(maxon::NODE_KIND::NODE) iferr_return;
+		}
+		if (node.IsValid())
+		{
+			const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
+			const CyclesNode* const definition = FindCyclesNode(asset.Get<0>());
+			if (definition && maxon::CString(definition->asset) != maxon::CString(CYCLES_OUTPUT_NODE_ID))
+			{
+				_result = VersionCard(*definition, GetBlenderInUse(), _size, _flip) iferr_return;
+				_done = true;
+				return maxon::OK;
+			}
+		}
 		_preview = NewObj(MaterialPreview) iferr_return;
 		return _preview->Prepare(subject.GetGraph());
 	}
@@ -435,7 +597,7 @@ static maxon::Result<void> DescribePort(maxon::DataDictionary& description, cons
 	if (kind != maxon::NODE_KIND::INPORT && kind != maxon::NODE_KIND::OUTPORT)
 		return maxon::OK;
 	const maxon::GraphNode node = port.GetAncestor(maxon::NODE_KIND::NODE) iferr_return;
-	const maxon::IdAndVersion asset = node.GetValue<decltype(maxon::nodes::AssetId)>().GetOrDefault() iferr_return;
+	const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
 	const CyclesNode* const definition = FindCyclesNode(asset.Get<0>());
 	if (!definition)
 		return maxon::OK;

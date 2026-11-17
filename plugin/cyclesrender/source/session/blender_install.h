@@ -23,7 +23,24 @@ struct BlenderInstall
 	maxon::Int32 patch = 0;
 	maxon::Bool found = false;			///< The file exists.
 	maxon::Bool supported = false;	///< The version is one the bridge is validated against.
+
+	/// The version as BlenderVersionCode(); 0 when it is not known.
+	maxon::Int32 Code() const { return major * 100 + minor; }
 };
+
+/// A Blender version as one number, major * 100 + minor (5.3 is 503): how the node table
+/// (cycles_nodes_table.h, written by tools/make_nodes.py) and the render settings table say from
+/// which version on something exists.
+inline maxon::Int32 BlenderVersionCode(maxon::Int32 major, maxon::Int32 minor) { return major * 100 + minor; }
+
+/// "5.3" for 503.
+maxon::String BlenderVersionName(maxon::Int32 code);
+
+/// The oldest supported version, as BlenderVersionCode() (500).
+maxon::Int32 OldestSupportedBlenderVersion();
+
+/// The supported versions for a message to the user: "5.0 to 5.3".
+maxon::String SupportedBlenderVersionsText();
 
 /// True for the Blender versions the bridge is validated against (see docs/reference/blender.md).
 /// The bridge applies the same rule when it starts (SUPPORTED_BLENDER in bridge/c4d_bridge).
@@ -33,8 +50,11 @@ maxon::Bool IsSupportedBlender(maxon::Int32 major, maxon::Int32 minor);
 /// A missing or unrunnable executable is reported in the result, not as an error.
 maxon::Result<BlenderInstall> ProbeBlender(const maxon::Url& executable);
 
-/// Searches the standard install locations and returns the newest supported Blender.
-/// The result has found == false when there is none.
+/// Searches the standard install locations and returns a supported Blender: of several, the one
+/// the bridge is installed into (its own profile or portable folder), else the preferred version
+/// (5.2, the long-term support release: PREFERRED_MAJOR / PREFERRED_MINOR in the .cpp), else the
+/// newest. Only used while the user has chosen none in the Preferences. The result has
+/// found == false when there is none.
 maxon::Result<BlenderInstall> DetectBlender();
 
 /// One line for the user that says whether this install can be used, and why not if it cannot.

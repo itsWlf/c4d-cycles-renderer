@@ -128,10 +128,18 @@ maxon::Bool TranslateLight(const cinema::BaseObject* light, const Coords& coords
 /// them: lights/light_tag.h) or the plugin's Cycles Light object (its values as they are).
 ///
 /// @param[in] multiplier  The "Light Multiplier" render setting, applied to every light.
+/// @param[in] eeveeHidesLights  The frame is rendered by an Eevee that shows no light to the camera
+///                        (Blender 5.0 and 5.1, measured): a light whose Camera visibility is on
+///                        is named in a warning.
 /// @return  False when the light emits nothing and was skipped.
 //----------------------------------------------------------------------------------------
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
-	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking = nullptr);
+	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking = nullptr,
+	maxon::Bool eeveeHidesLights = false);
+
+/// The first Blender whose Eevee shows a light to the camera when the light's Camera visibility is
+/// on, as BlenderVersionCode() (measured: 5.0.0 and 5.1.2 never, 5.2.3 and 5.3.0 as Cycles does).
+static constexpr maxon::Int32 EEVEE_LIGHT_VISIBLE_VERSION = 502;
 
 } // namespace cyclesrender
 

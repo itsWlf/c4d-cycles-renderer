@@ -3,16 +3,22 @@
 Builds the two packages of a release into release\<version>\.
 
   .\tools\make_release.ps1 -Version 0.1.0
-  .\tools\make_release.ps1 -Version 0.1.0 -SkipBuild     # package the plugin build that is there
+  .\tools\make_release.ps1 -Version 0.1.0 -SkipBuild     # package the plugin builds that are there
+  .\tools\make_release.ps1 -Version 0.1.0 -OutDir build\release_try   # elsewhere than release\0.1.0
 
 A release is the Cinema 4D plugin and the Blender bridge, built from the same sources and
 carrying the same version number:
 
-  release\<version>\CyclesRender-<version>-C4D2027-win64.zip   unpack into Cinema 4D's plugins folder
-  release\<version>\cycles_render_bridge-<version>.zip         install in Blender (Install from Disk)
-  release\<version>\cinema4d\cyclesrender\                     the plugin, unpacked
-  release\<version>\blender\cycles_render_bridge\              the bridge, unpacked
-  release\<version>\INSTALL.md                                 the installation steps
+  release\<version>\CyclesRender-<version>-C4D2024-2027-win64.zip   unpack into Cinema 4D's plugins folder
+  release\<version>\cycles_render_bridge-<version>.zip              install in Blender (Install from Disk)
+  release\<version>\cinema4d\cyclesrender\                          the plugin, unpacked
+  release\<version>\blender\cycles_render_bridge\                   the bridge, unpacked
+  release\<version>\INSTALL.md                                      the installation steps
+
+The plugin folder holds one build per supported Cinema 4D version, cyclesrender_2024.xdl64 to
+cyclesrender_2027.xdl64, and one res folder. Every Cinema 4D loads the build of its own version
+and passes over the others without a message (measured in 2024 to 2027; docs\reference\c4d-sdk.md,
+"Cinema 4D versions"), so the one folder is installed unchanged into any of them.
 
 The version must already stand in the three places that carry it; the script checks them
 against each other and changes nothing in the sources. What a previous run left in
@@ -22,11 +28,14 @@ param(
   [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
   [switch]$SkipBuild,
   # Used to validate the bridge package when it exists; the release is built without it too.
-  [string]$Blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
+  [string]$Blender = "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe",
+  # Where to write instead of release\<version>, for trying the packaging without replacing the
+  # packages of a release made earlier with the same number.
+  [string]$OutDir = ""
 )
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$out = Join-Path $repo "release\$Version"
+$out = if (-not $OutDir) { Join-Path $repo "release\$Version" } elseif ([IO.Path]::IsPathRooted($OutDir)) { $OutDir } else { Join-Path $repo $OutDir }
 
 # --- 1. The version number stands in three places; all must agree with the one asked for. ---
 function Read-Version($file, $pattern) {
@@ -46,13 +55,17 @@ if ($wrong.Count -gt 0) {
   exit 1
 }
 
-# --- 2. The plugin binary. ---
+# --- 2. The plugin binaries, one per Cinema 4D version. ---
 if (-not $SkipBuild) {
-  & (Join-Path $PSScriptRoot "build_plugin.ps1") -Config Release
-  if ($LASTEXITCODE -ne 0) { Write-Output "The plugin did not build; no release was made."; exit 1 }
+  & (Join-Path $PSScriptRoot "build_plugin.ps1") -Version all -Config Release
+  if ($LASTEXITCODE -ne 0) { Write-Output "The plugin did not build for every Cinema 4D version; no release was made."; exit 1 }
 }
-$binary = Join-Path $repo "build\plugin\bin\Release\plugins\cyclesrender\cyclesrender.xdl64"
-if (-not (Test-Path $binary)) { Write-Output "There is no built plugin at $binary. Run without -SkipBuild."; exit 1 }
+$binaries = [ordered]@{}
+foreach ($year in "2024", "2025", "2026", "2027") {
+  $folder = if ($year -eq "2027") { "build\plugin" } else { "build\plugin-$year" }
+  $binaries[$year] = Join-Path $repo "$folder\bin\Release\plugins\cyclesrender\cyclesrender.xdl64"
+  if (-not (Test-Path $binaries[$year])) { Write-Output "There is no built plugin for Cinema 4D $year at $($binaries[$year]). Run without -SkipBuild."; exit 1 }
+}
 
 # --- 3. Lay out both parts as they are installed. ---
 # From here on a failed copy must stop the script: a package with a file missing is worse than none.
@@ -60,15 +73,16 @@ if (-not (Test-Path $binary)) { Write-Output "There is no built plugin at $binar
 $ErrorActionPreference = "Stop"
 $pluginStage = Join-Path $out "cinema4d\cyclesrender"
 $bridgeStage = Join-Path $out "blender\cycles_render_bridge"
-$pluginZip = Join-Path $out "CyclesRender-$Version-C4D2027-win64.zip"
+$pluginZip = Join-Path $out "CyclesRender-$Version-C4D2024-2027-win64.zip"
 $bridgeZip = Join-Path $out "cycles_render_bridge-$Version.zip"
-foreach ($old in (Join-Path $out "cinema4d"), (Join-Path $out "blender"), $pluginZip, $bridgeZip, (Join-Path $out "INSTALL.md")) {
+$oldZips = @(Get-ChildItem $out -Filter "CyclesRender-$Version-C4D*-win64.zip" -ErrorAction SilentlyContinue | ForEach-Object FullName)
+foreach ($old in @((Join-Path $out "cinema4d"), (Join-Path $out "blender"), $pluginZip, $bridgeZip, (Join-Path $out "INSTALL.md")) + $oldZips) {
   if (Test-Path $old) { Remove-Item $old -Recurse -Force }
 }
 New-Item -ItemType Directory -Force $pluginStage, $bridgeStage | Out-Null
 
-# The plugin: the binary and the resources Cinema 4D loads at run time.
-Copy-Item $binary $pluginStage
+# The plugin: one binary per Cinema 4D version, named after it, and the resources all of them load.
+foreach ($year in $binaries.Keys) { Copy-Item $binaries[$year] (Join-Path $pluginStage "cyclesrender_$year.xdl64") }
 Copy-Item (Join-Path $repo "plugin\cyclesrender\res") $pluginStage -Recurse
 $pluginLicence = @("plugin\LICENSE", "LICENSE") | ForEach-Object { Join-Path $repo $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($pluginLicence) { Copy-Item $pluginLicence (Join-Path $pluginStage "LICENSE.txt") }
@@ -105,29 +119,31 @@ New-Zip $bridgeStage $bridgeZip ""                 # Blender wants the manifest 
 @"
 # Cycles Render $Version
 
-For Cinema 4D 2027 and Blender 5.2 on Windows. Install both parts.
+For Cinema 4D 2024, 2025, 2026 or 2027 and Blender 5.0, 5.1, 5.2 or 5.3 on Windows. Install both parts.
 
 ## 1. The bridge, in Blender
 
-1. Start Blender 5.2 and open *Edit > Preferences > Get Extensions*.
+1. Start Blender (5.0 to 5.3) and open *Edit > Preferences > Get Extensions*.
 2. Open the menu at the top right of that page and choose *Install from Disk...*.
 3. Pick ``cycles_render_bridge-$Version.zip``.
 4. Close Blender. It does not need to be running; the Cinema 4D plugin starts it when it renders.
 
 ## 2. The plugin, in Cinema 4D
 
-1. Unpack ``CyclesRender-$Version-C4D2027-win64.zip`` into a plugins folder of Cinema 4D 2027, for example the ``plugins`` folder inside the folder that *Edit > Preferences > Open Preferences Folder...* opens. It must then contain ``plugins/cyclesrender/cyclesrender.xdl64``.
-2. Restart Cinema 4D.
+1. Unpack ``CyclesRender-$Version-C4D2024-2027-win64.zip`` into a plugins folder of Cinema 4D, for example the ``plugins`` folder inside the folder that *Edit > Preferences > Open Preferences Folder...* opens. It must then contain ``plugins/cyclesrender/res`` and the four files ``cyclesrender_2024.xdl64`` to ``cyclesrender_2027.xdl64``.
+2. Restart Cinema 4D. The console (*Extensions > Console*) says ``Cycles Render $Version for Cinema 4D <year>: module loaded``.
 3. In the Render Settings choose the renderer **Cycles Render**. The live render window is under *Extensions > Cycles Render IPR*.
 
-On its first start the plugin looks for Blender 5.2 in its usual place. If yours is somewhere else, choose ``blender.exe`` in *Edit > Preferences > Renderer > Cycles Render*.
+The folder holds one build for each Cinema 4D version, and every Cinema 4D loads the one for its own version and passes over the others: keep all four, and install the same folder into every Cinema 4D you use. The command-line renderer (``Commandline.exe``) names the builds it passes over in its output ("WARNING: Error loading ...cyclesrender_2024.xdl64 ... has wrong binary version", "Skipping module ..."); those lines are expected and the render goes on with the right build. Each version is built with the last update of its year (2024.5, 2025.3, 2026.3, 2027.0); an earlier update of a year may not load it, so keep Cinema 4D up to date.
+
+On its first start the plugin looks for a supported Blender in its usual place (of several, the one the bridge is installed into, else Blender 5.2 (the long-term support release), else the newest). If yours is somewhere else, choose ``blender.exe`` in *Edit > Preferences > Renderer > Cycles Render*.
 
 ## Updating
 
 Take both parts from the same release.
 
 1. In Blender, open *Edit > Preferences > Add-ons*, unfold **Cycles Render Bridge** and press **Uninstall**. Then install the new .zip as above.
-2. Replace the folder ``cyclesrender`` in Cinema 4D's plugins folder.
+2. Delete the folder ``cyclesrender`` in Cinema 4D's plugins folder, then unpack the new one. Do not unpack over the old folder: a ``cyclesrender.xdl64`` of 0.1.0 left in it would compete with the new build of the same Cinema 4D version.
 "@ | Set-Content -Path (Join-Path $out "INSTALL.md") -Encoding utf8
 
 # --- 6. Let Blender check the bridge package, when Blender is there. ---

@@ -40,12 +40,13 @@ def apply(header):
                 raise AttributeError(name)
             if isinstance(value, str):
                 # A choice among named options. Which ones exist can depend on the machine (the
-                # OptiX denoiser needs a suitable graphics card): keep Blender's own, and say so.
+                # OptiX denoiser needs a suitable graphics card) and on the version (Eevee's shadow
+                # pool of 1536 and 2048 MB came with 5.2): keep Blender's own, and say so.
                 try:
                     setattr(owner, name, value)
                 except TypeError:
-                    warnings.append(f"Blender does not offer \"{value}\" for {name.replace('_', ' ')} on this computer; "
-                                    f"\"{getattr(owner, name)}\" is used.")
+                    warnings.append(f"Blender {bpy.app.version_string} does not offer \"{value}\" for {name.replace('_', ' ')} "
+                                    f"(on this computer, or in this version); \"{getattr(owner, name)}\" is used.")
                 continue
             setattr(owner, name, value)
         except (AttributeError, ValueError, TypeError) as error:

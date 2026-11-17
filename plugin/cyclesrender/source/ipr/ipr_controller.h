@@ -80,6 +80,13 @@ public:
 	void SetCamera(IPRCAMERA mode, cinema::BaseObject* camera = nullptr);
 	IPRCAMERA GetCameraMode() const { return _cameraMode; }
 	cinema::BaseObject* GetCameraObject(cinema::BaseDocument* doc) const;
+	//----------------------------------------------------------------------------------------
+	/// The camera the IPR renders through: the chosen camera object, or the scene camera of the view
+	/// the camera list names (<Render View>, <Auto>), or that view's editor camera when it has none.
+	/// For navigating from the window (ipr_navigation.h).
+	/// @param[out] editorView  The view whose editor camera it is; nullptr for a camera object of the document.
+	//----------------------------------------------------------------------------------------
+	cinema::BaseObject* GetRenderCamera(cinema::BaseDocument* doc, cinema::BaseDraw*& editorView) const;
 	/// While locked the render keeps the camera it has, whatever happens to it in Cinema 4D.
 	void SetCameraLock(maxon::Bool locked);
 	maxon::Bool IsCameraLocked() const { return _cameraLocked; }
@@ -132,6 +139,15 @@ public:
 	/// Only the camera part of Tick(): sends the camera if it moved and Blender is idle. For
 	/// messages that arrive while Cinema 4D is in a modal loop, when the window's timer does not run.
 	void FollowCamera();
+	//----------------------------------------------------------------------------------------
+	/// Only the lights (0.2.0, F18): writes every light of the document the last export went through
+	/// again by itself (SceneExporter::WriteLightAlone) and sends those that differ from what Blender
+	/// holds, if Blender is idle. No walk of the document, no other item. For a light's value dragged
+	/// in the Attribute Manager: Cinema 4D is in a modal loop then, in which the window gets no timer
+	/// and no message, but the document is evaluated at every step (ipr_scenehook.h). A light that
+	/// is gone, or a new one, is left to the next full export (the document is marked changed).
+	//----------------------------------------------------------------------------------------
+	void FollowLights();
 
 	IPRSTATE GetState() const { return _state; }
 	const maxon::String& GetMessage() const { return _message; }
@@ -164,6 +180,10 @@ public:
 	/// What the last export did with the meshes, and how long it took (export and comparison).
 	const ExportStats& GetLastExportStats() const { return _lastStats; }
 	maxon::Float64 GetLastExportMilliseconds() const { return _lastExportMilliseconds; }
+	/// How long the last FollowLights() took to write the lights and compare them (not the sending).
+	maxon::Float64 GetLastLightsMilliseconds() const { return _lastLightsMilliseconds; }
+	/// The number of lights FollowLights() writes (those of the last full export that are objects of the document).
+	maxon::Int GetFollowedLightCount() const { return _lights.GetCount(); }
 	maxon::Bool IsIdle() const { return !_worker || _worker->GetPendingCount() == 0; }
 	void KillBlenderForTest();
 	/// Exports the active document whole, as from scratch (without reusing a mesh), with the settings
@@ -182,6 +202,10 @@ private:
 	void SyncRegion(cinema::BaseDocument* doc);
 	/// Sends the camera if it differs from the one Blender has.
 	maxon::Result<void> SyncCamera(cinema::BaseDocument* doc);
+	/// FollowLights() without its checks.
+	maxon::Result<void> SyncLights(cinema::BaseDocument* doc);
+	/// Remembers the lights of the export that was just written (FollowLights).
+	maxon::Result<void> NoteLights(SceneExporter& exporter);
 	cinema::BaseObject* ResolveCamera(cinema::BaseDocument* doc) const;
 	void PostSimple(const maxon::Char* op, const maxon::Char* key = nullptr, maxon::Bool value = false);
 	void PostPass();
@@ -209,12 +233,38 @@ private:
 
 	SyncState _sceneState;
 	SyncState _cameraState;
+	/// A light of the last export, found again through a link (FollowLights).
+	struct FollowedLight
+	{
+		FollowedLight() = default;
+		FollowedLight(FollowedLight&& other) : link(other.link), id(std::move(other.id)), linked(other.linked), linking(std::move(other.linking)) { other.link = nullptr; }
+		FollowedLight& operator =(FollowedLight&& other)
+		{
+			if (this != &other)
+			{
+				cinema::BaseLink::Free(link);
+				link = other.link;
+				other.link = nullptr;
+				id = std::move(other.id);
+				linked = other.linked;
+				linking = std::move(other.linking);
+			}
+			return *this;
+		}
+		~FollowedLight() { cinema::BaseLink::Free(link); }
+		cinema::BaseLink* link = nullptr;
+		maxon::String id;
+		maxon::Bool linked = false;
+		LightLinking linking;
+	};
+	maxon::BaseArray<FollowedLight> _lights;
 	maxon::String _sentView = "?"_s;			///< the last `view_camera` request; empty: Blender looks through its camera object; "?": not known
 	maxon::String _sentSettings;
 	ExportSettings _exportSettings;
 	maxon::Int32 _lastChangeCount = 0;
 	ExportStats _lastStats;
 	maxon::Float64 _lastExportMilliseconds = 0.0;
+	maxon::Float64 _lastLightsMilliseconds = 0.0;
 	cinema::BaseTime _exportedTime;							///< the document's time at the last export (playback sends no change event)
 	maxon::Bool _exportedTimeKnown = false;
 

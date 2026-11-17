@@ -78,6 +78,23 @@ maxon::Result<void> SceneWriter::HoldBakedFile(const maxon::String& id)
 	return maxon::OK;
 }
 
+maxon::String SceneWriter::GetItemsJson(const maxon::Char* kind) const
+{
+	const maxon::String wanted = FormatString("{\"kind\":\"@\"", maxon::String(kind));
+	maxon::String json = "["_s;
+	maxon::Bool first = true;
+	for (const Item& item : _items)
+	{
+		if (!item.json.GetText().StartsWith(wanted))
+			continue;
+		if (!first)
+			json += ","_s;
+		json += item.json.GetText();
+		first = false;
+	}
+	return json + "]"_s;
+}
+
 JsonWriter& SceneWriter::BeginItem(const maxon::Char* kind, const maxon::String& id)
 {
 	DebugAssert(!_itemOpen, "Finish one scene item before opening the next.");
@@ -148,6 +165,11 @@ maxon::Result<maxon::Int32*> SceneWriter::AllocInts(maxon::Int count, maxon::Int
 	iferr_scope;
 	maxon::Char* const bytes = AllocBytes(count * SIZEOF(maxon::Int32), blobIndex) iferr_return;
 	return reinterpret_cast<maxon::Int32*>(bytes);
+}
+
+void SceneWriter::RemoveItem(const maxon::String& id)
+{
+	_toRemove.Append(id) iferr_ignore("The item then stays until the next full request removes it.");
 }
 
 void SceneWriter::Warn(const maxon::String& message)
@@ -262,7 +284,18 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 	}
 
 	if (partial)
+	{
+		for (const maxon::String& id : _toRemove)
+		{
+			if (state._items.Erase(id).GetValue())
+			{
+				state._sources.Erase(id) iferr_return;
+				_removed.Append(id) iferr_return;
+				++changes;
+			}
+		}
 		return changes;
+	}
 
 	if (!_clear)
 	{

@@ -12,21 +12,46 @@
 namespace cyclesrender
 {
 
-// The Blender versions the bridge is validated against, newest first. `folder` is the name
+// The Blender versions the bridge is validated against, oldest first. `folder` is the name
 // Blender gives its per-version folders ("<major>.<minor>"), both inside an installation and
 // in the user's profile. Keep this list in step with SUPPORTED_BLENDER in
-// bridge/c4d_bridge/__init__.py, and with the message in DescribeBlender().
-struct BlenderVersion
+// bridge/c4d_bridge/__init__.py and VERSIONS in tools/make_nodes.py (which checks it).
+struct SupportedVersion
 {
 	maxon::Int32 major;
 	maxon::Int32 minor;
 	const maxon::Char* folder;
 };
 
-static const BlenderVersion SUPPORTED_VERSIONS[] =
+static const SupportedVersion SUPPORTED_VERSIONS[] =
 {
+	{ 5, 0, "5.0" },
+	{ 5, 1, "5.1" },
 	{ 5, 2, "5.2" },
+	{ 5, 3, "5.3" },
 };
+
+maxon::String BlenderVersionName(maxon::Int32 code)
+{
+	return FormatString("@.@", code / 100, code % 100);
+}
+
+// The version detection prefers when the bridge is installed in none of the Blenders found (or
+// in several): 5.2, the long-term support release, because 5.3 has open bugs (the maintainer's
+// decision of 2026-11-16; docs/roadmap.md, "Open bugs"). Change it here; DetectBlender() uses it.
+static const maxon::Int32 PREFERRED_MAJOR = 5;
+static const maxon::Int32 PREFERRED_MINOR = 2;
+
+maxon::Int32 OldestSupportedBlenderVersion()
+{
+	return BlenderVersionCode(SUPPORTED_VERSIONS[0].major, SUPPORTED_VERSIONS[0].minor);
+}
+
+maxon::String SupportedBlenderVersionsText()
+{
+	const maxon::Int count = SIZEOF(SUPPORTED_VERSIONS) / SIZEOF(SUPPORTED_VERSIONS[0]);
+	return FormatString("@ to @", maxon::String(SUPPORTED_VERSIONS[0].folder), maxon::String(SUPPORTED_VERSIONS[count - 1].folder));
+}
 
 // Blender prints "Blender <major>.<minor>.<patch>[ <suffix>]" as the first line of --version.
 static void ParseVersion(const maxon::BaseArray<maxon::Char>& output, BlenderInstall& install)
@@ -84,12 +109,37 @@ static maxon::Int32 ProbeCallback(maxon::SystemProcessObjectRef process, maxon::
 
 maxon::Bool IsSupportedBlender(maxon::Int32 major, maxon::Int32 minor)
 {
-	for (const BlenderVersion& version : SUPPORTED_VERSIONS)
+	for (const SupportedVersion& version : SUPPORTED_VERSIONS)
 	{
 		if (version.major == major && version.minor == minor)
 			return true;
 	}
 	return false;
+}
+
+// The version when Blender's own answer is missing. Measured in c4dpy (2026-11-16, Blender 5.0.0):
+// the file was found and ran, yet the captured output of --version held no version line, so the
+// IPR's first export did not know the version and sent a setting 5.0 lacks. Blender keeps its data
+// in a folder named "<major>.<minor>" next to the executable; a supported one tells the version that
+// matters here (the patch stays 0).
+static maxon::Result<void> VersionFromDataFolder(BlenderInstall& install)
+{
+	iferr_scope;
+	if (install.versionText.IsPopulated())
+		return maxon::OK;
+	const maxon::Url installFolder = install.executable.GetDirectory();
+	for (const SupportedVersion& version : SUPPORTED_VERSIONS)
+	{
+		const maxon::Url dataFolder = (installFolder + maxon::String(version.folder)) iferr_return;
+		if (dataFolder.IoDetect() != maxon::IODETECT::DIRECTORY)
+			continue;
+		install.major = version.major;
+		install.minor = version.minor;
+		install.patch = 0;
+		install.versionText = maxon::String(version.folder);
+		install.supported = true;
+	}
+	return maxon::OK;
 }
 
 maxon::Result<BlenderInstall> ProbeBlender(const maxon::Url& executable)
@@ -110,23 +160,35 @@ maxon::Result<BlenderInstall> ProbeBlender(const maxon::Url& executable)
 		maxon::EXECUTEPROGRAMFLAGS::DONT_DELETE_LOGFILE | maxon::EXECUTEPROGRAMFLAGS::HIDE_APPLICATION;
 
 	iferr (maxon::SystemProcessObjectRef process = maxon::SystemProcessInterface::StartProcessAndWait(executable, arguments, flags, ProbeCallback, &seconds))
-		return install; // Not something that can be run: reported as "found but no version".
+	{
+		VersionFromDataFolder(install) iferr_return;
+		return install; // Not something that can be run, or no version folder: "found but no version".
+	}
 
 	const maxon::Url logFile = process.GetLogFile();
 	maxon::BaseArray<maxon::Char> output;
-	iferr (maxon::FileUtilities::ReadFileToMemory(maxon::Url(logFile), output))
-		return install;
+	ifnoerr (maxon::FileUtilities::ReadFileToMemory(maxon::Url(logFile), output))
+	{
+		ParseVersion(output, install);
+	}
 	logFile.IoDelete(true) iferr_ignore("Only a temporary log file.");
-
-	ParseVersion(output, install);
+	VersionFromDataFolder(install) iferr_return;
 	return install;
 }
+
+// Where the bridge lies when it was installed into this Blender itself: the extensions folder
+// of this version's own profile (%APPDATA%\Blender Foundation\Blender\<major>.<minor>), or of a
+// portable installation. FindBridgeScript() also takes a bridge from another version's profile;
+// this does not, so that detection can prefer the Blender the user installed the bridge into.
+static maxon::Result<maxon::Bool> HasOwnBridge(const BlenderInstall& install);
 
 maxon::Result<BlenderInstall> DetectBlender()
 {
 	iferr_scope;
 
 	BlenderInstall best;
+	maxon::Bool bestHasBridge = false;
+	maxon::Bool bestPreferred = false;
 
 #ifdef MAXON_TARGET_WINDOWS
 	// The official installer puts each version in its own folder below this one.
@@ -147,7 +209,7 @@ maxon::Result<BlenderInstall> DetectBlender()
 		// Running every install would take seconds, so only run the ones that carry a data
 		// folder named after a supported version, e.g. "Blender 5.2/5.2".
 		maxon::Bool candidate = false;
-		for (const BlenderVersion& version : SUPPORTED_VERSIONS)
+		for (const SupportedVersion& version : SUPPORTED_VERSIONS)
 		{
 			const maxon::Url dataFolder = (entry.GetCurrentPath() + maxon::String(version.folder)) iferr_return;
 			candidate = candidate || dataFolder.IoDetect() == maxon::IODETECT::DIRECTORY;
@@ -158,10 +220,20 @@ maxon::Result<BlenderInstall> DetectBlender()
 		const BlenderInstall install = ProbeBlender(executable) iferr_return;
 		if (!install.supported)
 			continue;
+		// Of several supported versions: the one the bridge was installed into (a user installs it
+		// into one Blender; another version would not find it in its own profile); then the
+		// preferred version (PREFERRED_MAJOR, PREFERRED_MINOR); then the newest.
+		const maxon::Bool hasBridge = HasOwnBridge(install) iferr_return;
+		const maxon::Bool preferred = install.major == PREFERRED_MAJOR && install.minor == PREFERRED_MINOR;
 		const maxon::Bool newer = install.major != best.major ? install.major > best.major :
 			install.minor != best.minor ? install.minor > best.minor : install.patch > best.patch;
-		if (!best.found || newer)
+		const maxon::Bool better = hasBridge != bestHasBridge ? hasBridge : preferred != bestPreferred ? preferred : newer;
+		if (!best.found || better)
+		{
 			best = install;
+			bestHasBridge = hasBridge;
+			bestPreferred = preferred;
+		}
 	}
 #endif
 
@@ -232,7 +304,7 @@ maxon::Result<maxon::Url> FindBridgeScript(const maxon::Url& executable)
 	{
 		for (const maxon::Bool ofThisInstall : { true, false })
 		{
-			for (const BlenderVersion& version : SUPPORTED_VERSIONS)
+			for (const SupportedVersion& version : SUPPORTED_VERSIONS)
 			{
 				maxon::Bool hasDataFolder = false;
 				if (installFolder.IsPopulated())
@@ -272,6 +344,39 @@ maxon::Result<maxon::Url> FindBridgeScript(const maxon::Url& executable)
 	return maxon::Url();
 }
 
+static maxon::Result<maxon::Bool> HasOwnBridge(const BlenderInstall& install)
+{
+	iferr_scope;
+	const maxon::Url installFolder = install.executable.GetDirectory();
+	maxon::BaseArray<maxon::Url> extensionFolders;
+	if (installFolder.IsPopulated())
+	{
+		maxon::Url folder = installFolder;
+		folder.Append("portable"_s) iferr_return;
+		folder.Append("extensions"_s) iferr_return;
+		extensionFolders.Append(folder) iferr_return;
+	}
+#ifdef MAXON_TARGET_WINDOWS
+	const maxon::Url appData = EnvironmentFolder("APPDATA");
+	if (appData.IsPopulated())
+	{
+		maxon::Url folder = appData;
+		folder.Append("Blender Foundation"_s) iferr_return;
+		folder.Append("Blender"_s) iferr_return;
+		folder.Append(FormatString("@.@", install.major, install.minor)) iferr_return;
+		folder.Append("extensions"_s) iferr_return;
+		extensionFolders.Append(folder) iferr_return;
+	}
+#endif
+	for (const maxon::Url& folder : extensionFolders)
+	{
+		const maxon::Url script = BridgeScriptIn(folder) iferr_return;
+		if (script.IoDetect() == maxon::IODETECT::FILE)
+			return true;
+	}
+	return false;
+}
+
 maxon::String DescribeBlender(const BlenderInstall& install)
 {
 	if (install.executable.IsEmpty())
@@ -281,7 +386,7 @@ maxon::String DescribeBlender(const BlenderInstall& install)
 	if (install.versionText.IsEmpty())
 		return "This file did not answer as Blender."_s;
 	if (!install.supported)
-		return FormatString("Blender @ is not supported. Cycles Render needs Blender 5.2.", install.versionText);
+		return FormatString("Blender @ is not supported. Cycles Render needs Blender @.", install.versionText, SupportedBlenderVersionsText());
 	return FormatString("Blender @ - ready.", install.versionText);
 }
 

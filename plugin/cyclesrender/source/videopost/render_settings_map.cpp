@@ -12,6 +12,7 @@
 #include "../prefs/devices.h"
 #include "../scene/document_colors.h"
 #include "../session/capture.h"
+#include "../session/blender_install.h"
 #include "../session/json.h"
 #include "render_settings_map.h"
 
@@ -32,6 +33,8 @@ struct Setting
 	maxon::Float64 fallback;  // default of a new renderer; also used when a scene file predates the setting
 	const maxon::Char* path;  // Blender property, relative to the scene; nullptr when not sent as a property
 	const maxon::Char* path2; // a second property that takes the same value, or nullptr
+	maxon::Int32 since;       // the first Blender that has the property, as BlenderVersionCode()
+	const maxon::Char* label; // as the page shows it, for messages
 };
 
 // Settings that choose one of several named options. The value stored in the scene file is the
@@ -44,6 +47,8 @@ struct ChoiceSetting
 	const maxon::Char* path;
 	const maxon::Char* path2;
 	const maxon::Char* options[12];  // ends with nullptr; the table says how many it uses at most (CHOICE_OPTIONS)
+	maxon::Int32 since;              // the first Blender that has the property, as BlenderVersionCode()
+	const maxon::Char* label;        // as the page shows it, for messages
 };
 
 struct EngineOnly
@@ -254,8 +259,26 @@ cinema::BaseContainer GetDocumentRenderSettings(cinema::BaseDocument* doc)
 	return defaults;
 }
 
+// A setting the Blender in use does not have (since a later version) is not sent. That changes
+// nothing while the setting has its default, which is what the older Blender does; otherwise the
+// user is told.
+static maxon::Bool LeaveOut(maxon::Int32 since, maxon::Int32 blenderVersion, maxon::Bool atDefault, const maxon::Char* label,
+	const maxon::Char* path, maxon::BaseArray<maxon::String>& warnings)
+{
+	if (blenderVersion == 0 || since <= blenderVersion)
+		return false;
+	if (!atDefault)
+	{
+		iferr (warnings.Append(FormatString("Render Settings: \"@\" (Blender's @) needs Blender @ or newer; Blender @ renders without it.",
+			maxon::String(label), maxon::String(path), BlenderVersionName(since), BlenderVersionName(blenderVersion))))
+		{
+		}
+	}
+	return true;
+}
+
 maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContainer& data, const cinema::BaseDocument* doc,
-	maxon::Int32 engineOverride, maxon::BaseArray<maxon::String>& warnings)
+	maxon::Int32 engineOverride, maxon::Int32 blenderVersion, maxon::BaseArray<maxon::String>& warnings)
 {
 	const maxon::Int32 engine = engineOverride == CYCLES_ENGINE_CYCLES || engineOverride == CYCLES_ENGINE_EEVEE ?
 		engineOverride : data.GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
@@ -276,6 +299,8 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	for (const Setting& setting : SETTINGS)
 	{
 		const maxon::Float64 value = GetValue(data, setting);
+		if (setting.path && LeaveOut(setting.since, blenderVersion, value == setting.fallback, setting.label, setting.path, warnings))
+			continue;
 		const maxon::Char* const paths[2] = { setting.path, setting.path2 };
 		for (const maxon::Char* path : paths)
 		{
@@ -294,6 +319,9 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	}
 	for (const ChoiceSetting& choice : CHOICES)
 	{
+		if (choice.path && LeaveOut(choice.since, blenderVersion, maxon::CString(GetChoice(data, choice)) == maxon::CString(choice.options[choice.fallback]),
+			choice.label, choice.path, warnings))
+			continue;
 		const maxon::Char* const paths[2] = { choice.path, choice.path2 };
 		for (const maxon::Char* path : paths)
 		{
@@ -331,7 +359,7 @@ maxon::Result<void> SendRenderSettings(BridgeClient& client, const cinema::BaseC
 	iferr_scope;
 
 	JsonWriter request;
-	WriteRenderSettings(request, data, doc, NOTOK, warnings);
+	WriteRenderSettings(request, data, doc, NOTOK, client.GetBlenderVersion(), warnings);
 	const BridgeMessage reply = client.Request(request, BlobViews(), cancel) iferr_return;
 	for (const maxon::String& warning : GetJsonStrings(reply.header, "warnings"_s))
 	{
@@ -345,8 +373,12 @@ maxon::Result<void> SendRenderSettings(BridgeClient& client, const cinema::BaseC
 		query.BeginObject();
 		query.String("op", "get"_s);
 		query.BeginArray("paths");
+		// (Not what this Blender lacks: it was not sent, and Blender would refuse the question.)
+		const maxon::Int32 version = client.GetBlenderVersion();
 		for (const Setting& setting : SETTINGS)
 		{
+			if (version != 0 && setting.since > version)
+				continue;
 			if (setting.path)
 				query.String(nullptr, maxon::String(setting.path));
 			if (setting.path2)
@@ -354,6 +386,8 @@ maxon::Result<void> SendRenderSettings(BridgeClient& client, const cinema::BaseC
 		}
 		for (const ChoiceSetting& choice : CHOICES)
 		{
+			if (version != 0 && choice.since > version)
+				continue;
 			if (choice.path)   // a choice the plugin reads itself has none
 				query.String(nullptr, maxon::String(choice.path));
 			if (choice.path2)

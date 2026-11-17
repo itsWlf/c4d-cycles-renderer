@@ -7,6 +7,7 @@
 #include "../ids.h"
 #include "../session/bridge_client.h"
 #include "../session/json.h"
+#include "../sdk_compat.h"
 #include "devices.h"
 
 namespace cyclesrender
@@ -185,7 +186,7 @@ maxon::Result<maxon::String> FindDevices()
 	for (const maxon::Data& data : listed)
 	{
 		const maxon::Result<maxon::DataDictionary> entry = data.Get<maxon::DataDictionary>();
-		if (entry != maxon::OK)
+		if (entry == maxon::FAILED)
 			continue;
 		CyclesDevice device;
 		device.id = GetJsonString(entry.GetValue(), "id"_s);

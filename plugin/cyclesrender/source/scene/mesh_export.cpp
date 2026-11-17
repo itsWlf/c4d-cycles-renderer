@@ -4,6 +4,7 @@
 #include "c4d.h"
 #include "tphong.h"
 
+#include "../sdk_compat.h"
 #include "mesh_export.h"
 #include "parameters.h"
 
@@ -375,7 +376,7 @@ maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op)
 	// CreatePhongNormals() breaks the normals at these edges (indexed 4 * polygon + edge).
 	hash = HashSelection(op->GetPhongBreak(), polygonCount * 4, hash);
 	// N-gons: which polygons form one.
-	const maxon::Int32 ngons = op->GetNgonCount();
+	const maxon::Int32 ngons = NgonCount(op);
 	hash = hash * 31 + maxon::UInt64(ngons);
 	if (ngons > 0)
 	{

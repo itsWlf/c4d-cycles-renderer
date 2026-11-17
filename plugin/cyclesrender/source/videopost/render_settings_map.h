@@ -40,10 +40,13 @@ maxon::Result<void> SendRenderSettings(BridgeClient& client, const cinema::BaseC
 /// object is left open, as BridgeClient::Request() expects.
 /// @param[in] engineOverride  CYCLES_ENGINE_CYCLES or CYCLES_ENGINE_EEVEE to use that engine
 ///                            whatever the settings say; NOTOK to follow the settings.
+/// @param[in] blenderVersion  The Blender that receives it, as BlenderVersionCode(): a setting it
+///                            does not have is left out (named in @p warnings unless it is at its
+///                            default). 0: not known, everything is sent.
 /// @return                    The engine the request selects.
 //----------------------------------------------------------------------------------------
 maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContainer& data, const cinema::BaseDocument* doc,
-	maxon::Int32 engineOverride, maxon::BaseArray<maxon::String>& warnings);
+	maxon::Int32 engineOverride, maxon::Int32 blenderVersion, maxon::BaseArray<maxon::String>& warnings);
 
 /// Hides the groups and settings of the engine that is not chosen, and in the Simple layout
 /// those marked as advanced. For GetDDescription().

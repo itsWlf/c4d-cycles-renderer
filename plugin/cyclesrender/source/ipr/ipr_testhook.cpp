@@ -21,6 +21,7 @@
 #include "ipr_controller.h"
 #include "ipr_dialog.h"
 #include "ipr_image_area.h"
+#include "ipr_navigation.h"
 #include "ipr_testhook.h"
 #include "ipr_trace.h"
 #include "../materials/baked_files.h"
@@ -29,6 +30,8 @@
 #include "../materials/material_export.h"
 #include "../materials/native_material.h"
 #include "../prefs/devices.h"
+#include "../sdk_compat.h"
+#include "../session/blender_install.h"
 
 MAXON_CONFIGURATION_BOOL(g_cyclesRenderIprTest, false, maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
 	"Cycles Render: accept IPR commands from test scripts through the plugin's preferences container.");
@@ -197,7 +200,7 @@ static maxon::Result<maxon::String> CurveCommand(const maxon::String& argument)
 		const maxon::GraphNode port = inputs.FindChild(portId) iferr_return;
 		if (!port.IsValid())
 			continue;
-		const maxon::IdAndVersion asset = node.GetValue<decltype(maxon::nodes::AssetId)>().GetOrDefault() iferr_return;
+		const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
 		const CyclesNode* const definition = FindCyclesNode(asset.Get<0>());
 		const CyclesProperty* property = nullptr;
 		for (maxon::Int i = 0; definition && i < definition->propertyCount; ++i)
@@ -493,6 +496,72 @@ static maxon::String Execute(const maxon::String& commandLine)
 	{
 		ipr.MarkSceneChanged();
 	}
+	else if (command == "navigate"_s)
+	{
+		// "navigate orbit|pan|dolly <x> <y> <dx> <dy> [steps] [ctrl] [cancel]": a navigating drag in the
+		// picture as the window makes it (ipr_navigation.h), without the window and the mouse: it begins at
+		// the image point (x, y) of the size the IPR renders at, with the picture at 100 %, and the mouse
+		// goes (dx, dy) screen pixels in that many steps (1 if not given); after each the camera is sent
+		// as in the window. "ctrl": Ctrl held; "cancel": ends as Escape does.
+		maxon::BaseArray<maxon::String> parts;
+		iferr (argument.Split(" "_s, true, parts))
+			return "{\"problem\":\"no memory\"}"_s;
+		if (parts.GetCount() < 5)
+			return "{\"problem\":\"navigate orbit|pan|dolly <x> <y> <dx> <dy> [steps] [ctrl] [cancel]\"}"_s;
+		const IPRNAV mode = parts[0] == "orbit"_s ? IPRNAV::ORBIT : parts[0] == "pan"_s ? IPRNAV::PAN : parts[0] == "dolly"_s ? IPRNAV::DOLLY : IPRNAV::NONE;
+		maxon::Float64 numbers[4] = { 0.0, 0.0, 0.0, 0.0 };
+		for (maxon::Int i = 0; i < 4; ++i)
+			numbers[i] = ResultOr(parts[i + 1].ToFloat(), 0.0);
+		const maxon::Int steps = parts.GetCount() > 5 ? maxon::Max(maxon::Int(1), ResultOr(parts[5].ToInt(), maxon::Int64(1))) : 1;
+		maxon::Bool ctrl = false;
+		maxon::Bool cancel = false;
+		for (maxon::Int i = 6; i < parts.GetCount(); ++i)
+		{
+			ctrl = ctrl || parts[i] == "ctrl"_s;
+			cancel = cancel || parts[i] == "cancel"_s;
+		}
+		IprNavigation navigation;
+		const maxon::String refused = BeginIprNavigation(navigation, mode, numbers[0], numbers[1], 0, 0, 1.0, ctrl);
+		JsonWriter json;
+		json.BeginObject();
+		json.String("refused", refused);
+		if (refused.IsEmpty())
+		{
+			json.String("camera", navigation.GetCamera()->GetName());
+			json.Bool("editor_camera", navigation.GetView() && navigation.GetView()->GetEditorCamera() == navigation.GetCamera());
+			json.Bool("picked", navigation.IsPicked());
+			const maxon::Float64 pivot[3] = { navigation.GetPivot().x, navigation.GetPivot().y, navigation.GetPivot().z };
+			json.Floats("pivot", pivot, 3);
+			json.Float("pick_ms", navigation.GetPickMilliseconds());
+			const NavigationPrefs& prefs = navigation.GetPrefs();
+			json.BeginObject("prefs");
+			json.Int("camera_mode", prefs.cameraMode);
+			json.Int("point_of_interest", prefs.pointOfInterest);
+			json.Int("cursor_placement", prefs.cursorPlacement);
+			json.Int("dolly_to_cursor", prefs.dollyToCursor);
+			json.Bool("reverse_orbit", prefs.reverseOrbit);
+			json.Bool("trackball", prefs.trackball);
+			json.Int("ctrl_modifier", prefs.ctrlModifier);
+			json.Float("orbit_speed", prefs.orbitSpeed);
+			json.EndObject();
+			for (maxon::Int i = 0; i < steps; ++i)
+			{
+				navigation.Step(numbers[2] / maxon::Float64(steps), numbers[3] / maxon::Float64(steps));
+				ipr.FollowCamera();
+			}
+			if (cancel)
+				navigation.Cancel();
+			else
+				navigation.End();
+		}
+		json.EndObject();
+		return json.GetText();
+	}
+	else if (command == "lights"_s)
+	{
+		// What the scene hook has done in a modal loop (FollowIprEvaluation): the lights alone.
+		ipr.FollowLights();
+	}
 	else if (command == "kill"_s)
 	{
 		ipr.KillBlenderForTest();
@@ -599,6 +668,36 @@ static maxon::String Execute(const maxon::String& commandLine)
 			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
 		return answer;
 	}
+	else if (command == "versioned"_s)
+	{
+		// The materials of the active document as they would be sent to a Blender of the version
+		// given (BlenderVersionCode(), 502 for 5.2), whatever Blender is installed: what that version
+		// lacks is left out (materials/cycles_node_material.cpp). Answers the material items and the
+		// warnings.
+		cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+		if (!doc)
+			return "{\"problem\":\"no document\"}"_s;
+		iferr (const maxon::Int32 code = argument.ToInt32())
+			return "{\"problem\":\"versioned wants a version such as 502\"}"_s;
+		ExportSettings settings;
+		settings.blenderVersion = code;
+		settings.blenderVersionText = BlenderVersionName(settings.blenderVersion);
+		SceneExporter exporter(doc, settings);
+		SceneWriter writer(true);
+		iferr (exporter.Collect())
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		iferr (exporter.Write(writer))
+			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
+		JsonWriter answer;
+		answer.BeginObject();
+		answer.Raw("materials", writer.GetItemsJson("material"));
+		answer.BeginArray("warnings");
+		for (const maxon::String& warning : writer.GetWarnings())
+			answer.String(nullptr, warning);
+		answer.EndArray();
+		answer.EndObject();
+		return answer.GetText();
+	}
 	else if (command == "sources"_s)
 	{
 		// What the mesh leaves of the active document were made from (SceneExporter::GetSourceListing).
@@ -682,7 +781,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 				return "{\"problem\":\"no settings\"}"_s;
 			iferr (const maxon::BaseArray<CyclesDevice> boxes = DevicesOfType(settings, settings.type))
 				return "{\"problem\":\"no list\"}"_s;
-			const maxon::Int index = parts.GetCount() == 3 ? parts[1].ToInt().GetValueOr(-1) : -1;
+			const maxon::Int index = parts.GetCount() == 3 ? ResultOr(parts[1].ToInt(), maxon::Int64(-1)) : -1;
 			if (index < 0 || index >= boxes.GetCount())
 				return "{\"problem\":\"no such checkbox\"}"_s;
 			SetDeviceUse(boxes[index].id, parts[2] == "1"_s);
@@ -772,6 +871,8 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.Int("meshes_by_identity", ipr.GetLastExportStats().meshesByIdentity);
 	json.Float("export_ms", ipr.GetLastExportMilliseconds());
 	json.Float("mesh_ms", ipr.GetLastExportStats().meshMilliseconds);
+	json.Float("lights_ms", ipr.GetLastLightsMilliseconds());
+	json.Int("lights_followed", ipr.GetFollowedLightCount());
 	json.Int("engine", ipr.GetEngine());
 	json.Int("pass", ipr.GetPass());
 	json.Int("pass_count", ipr.GetPasses().GetCount());
@@ -793,6 +894,18 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.Float("zoom", zoom);
 	json.Float("zoom_field", zoomField);
 	json.Float("convert_ms", convertMilliseconds);
+	maxon::Int32 imageLeft = 0;
+	maxon::Int32 imageTop = 0;
+	maxon::Int32 imageWidth = 0;
+	maxon::Int32 imageHeight = 0;
+	maxon::Float64 imageCenter[2] = { 0.0, 0.0 };
+	if (GetIprImageScreenRect(imageLeft, imageTop, imageWidth, imageHeight, imageCenter[0], imageCenter[1]))
+	{
+		// Where the picture is on the screen, for tests that post mouse messages to it.
+		const maxon::Float64 rect[4] = { maxon::Float64(imageLeft), maxon::Float64(imageTop), maxon::Float64(imageWidth), maxon::Float64(imageHeight) };
+		json.Floats("image_rect", rect, 4);
+		json.Floats("image_center", imageCenter, 2);
+	}
 	json.EndObject();
 	return json.GetText();
 }

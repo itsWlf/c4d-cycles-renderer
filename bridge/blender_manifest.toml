@@ -18,8 +18,10 @@ type = "add-on"
 tags = ["Render"]
 
 # The bridge reaches into Blender in places that are not public API, so it runs on listed
-# versions only: SUPPORTED_BLENDER in c4d_bridge/__init__.py.
-blender_version_min = "5.2.0"
+# versions only: SUPPORTED_BLENDER in c4d_bridge/__init__.py (5.0 to 5.3). The maximum is the
+# first version that is not supported (Blender's rule: exclusive).
+blender_version_min = "5.0.0"
+blender_version_max = "5.4.0"
 
 license = ["SPDX:GPL-3.0-or-later"]
 

@@ -18,6 +18,7 @@
 #include "../videopost/output_settings.h"
 #include "../videopost/render_settings_map.h"
 #include "ipr_controller.h"
+#include "ipr_scenehook.h"
 #include "ipr_trace.h"
 
 namespace cyclesrender
@@ -108,6 +109,8 @@ maxon::Result<void> IprController::EnsureWorker()
 	if (!_watcher)
 	{
 		_watcher = NewObj(FrameWatcher) iferr_return;
+		// In a modal loop, where the core message waits, a frame reaches the window this way.
+		_watcher->SetArrivalCallback(&NoteIprFrameArrived);
 		if (!_watcher->Start())
 		{
 			DeleteObj(_watcher);
@@ -159,6 +162,7 @@ void IprController::Fail(const maxon::String& message)
 	_exportedTimeKnown = false;
 	_sceneState.Reset();
 	_cameraState.Reset();
+	_lights.Reset();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
 	_sentSettings = maxon::String();
@@ -263,6 +267,7 @@ void IprController::Stop()
 	_exportedTimeKnown = false;
 	_sceneState.Reset();
 	_cameraState.Reset();
+	_lights.Reset();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
 	_sentSettings = maxon::String();
@@ -336,20 +341,33 @@ void IprController::SetCameraLock(maxon::Bool locked)
 
 cinema::BaseObject* IprController::ResolveCamera(cinema::BaseDocument* doc) const
 {
+	cinema::BaseDraw* view = nullptr;
+	return GetRenderCamera(doc, view);
+}
+
+cinema::BaseObject* IprController::GetRenderCamera(cinema::BaseDocument* doc, cinema::BaseDraw*& editorView) const
+{
+	editorView = nullptr;
+	if (!doc)
+		return nullptr;
 	if (_cameraMode == IPRCAMERA::OBJECT)
 	{
 		if (cinema::BaseObject* const camera = GetCameraObject(doc))
 			return camera;
 	}
-	else if (_cameraMode == IPRCAMERA::AUTO)
-	{
-		if (cinema::BaseDraw* const view = doc->GetActiveBaseDraw())
-		{
-			cinema::BaseObject* const sceneCamera = view->GetSceneCamera(doc);
-			return sceneCamera ? sceneCamera : view->GetEditorCamera();
-		}
-	}
-	return FindRenderCamera(doc);
+	// <Auto>: the active view; the render view otherwise, and when there is no active view
+	// (FindRenderCamera).
+	cinema::BaseDraw* view = _cameraMode == IPRCAMERA::AUTO ? doc->GetActiveBaseDraw() : nullptr;
+	if (!view)
+		view = doc->GetRenderBaseDraw();
+	if (!view)
+		return nullptr;
+	cinema::BaseObject* const editorCamera = view->GetEditorCamera();
+	cinema::BaseObject* const sceneCamera = view->GetSceneCamera(doc);
+	if (sceneCamera && sceneCamera != editorCamera)
+		return sceneCamera;
+	editorView = view;
+	return editorCamera;
 }
 
 maxon::Block<const IprPass> IprController::GetPasses() const
@@ -483,12 +501,15 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 		_sentRegion = "?"_s;
 	}
 
+	// The Blender that renders: what its version lacks is left out of what is sent.
+	const BlenderInstall blender = GetBlenderInUse();
+
 	// Render settings, when they differ from what Blender has.
 	const cinema::BaseContainer data = GetDocumentRenderSettings(doc);
 	{
 		JsonWriter settings;
 		maxon::BaseArray<maxon::String> warnings;
-		const maxon::Int32 engine = WriteRenderSettings(settings, data, doc, _engineOverride, warnings);
+		const maxon::Int32 engine = WriteRenderSettings(settings, data, doc, _engineOverride, blender.Code(), warnings);
 		for (const maxon::String& warning : warnings)
 			ReportOnce(warning);
 		if (settings.GetText() != _sentSettings)
@@ -510,6 +531,8 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 
 	// The scene without its camera; SyncCamera() sends that.
 	_exportSettings = GetExportSettings(data, _width, _height);
+	_exportSettings.blenderVersion = blender.Code();
+	_exportSettings.blenderVersionText = blender.versionText;
 	_exportSettings.eevee = _engine == CYCLES_ENGINE_EEVEE;	// the IPR's engine menu may override the render settings
 	_exportSettings.camera = ResolveCamera(doc);
 	_exportSettings.writeCamera = false;
@@ -547,6 +570,7 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 		return SyncScene(true);
 	}
 	_lastChangeCount = maxon::Int32(changes);
+	NoteLights(exporter) iferr_return;
 	const maxon::Float64 compared = platform::UnixTime();
 	_lastStats = exporter.GetStats();
 	_lastExportMilliseconds = (compared - exportStart) * 1000.0;
@@ -719,7 +743,8 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 	};
 	task->kind = IprTask::KIND::SCENE;
 	task->scene = NewObj(SceneWriter, false) iferr_return;
-	ExportCamera(*task->scene, Coords::FromDocument(doc), camera, _exportSettings.depthOfField, _exportSettings.eevee, _framing) iferr_return;
+	ExportCamera(*task->scene, Coords::FromDocument(doc), camera, _exportSettings.depthOfField,
+		_exportSettings.eevee && _exportSettings.blenderVersion < EEVEE_PANORAMA_VERSION, _framing) iferr_return;
 	// Said once per session, also when the camera itself did not change (another engine chosen).
 	for (const maxon::String& warning : task->scene->GetWarnings())
 		ReportOnce(warning);
@@ -872,6 +897,86 @@ void IprController::FollowCamera()
 		return;
 	iferr (SyncCamera(doc))
 		Fail(err.GetMessage());
+}
+
+maxon::Result<void> IprController::NoteLights(SceneExporter& exporter)
+{
+	iferr_scope;
+	_lights.Reset();
+	maxon::BaseArray<WrittenLight> written = exporter.TakeWrittenLights();
+	for (WrittenLight& light : written)
+	{
+		FollowedLight followed;
+		followed.link = cinema::BaseLink::Alloc();
+		if (!followed.link)
+			return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
+		followed.link->SetLink(light.object);
+		followed.id = std::move(light.id);
+		followed.linked = light.linked;
+		followed.linking = std::move(light.linking);
+		_lights.Append(std::move(followed)) iferr_return;
+	}
+	return maxon::OK;
+}
+
+void IprController::FollowLights()
+{
+	if (!_worker || _state != IPRSTATE::RUNNING || _worker->GetPendingCount() != 0)
+		return;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	if (!doc || doc != _document)
+		return;
+	iferr (SyncLights(doc))
+		Fail(err.GetMessage());
+}
+
+maxon::Result<void> IprController::SyncLights(cinema::BaseDocument* doc)
+{
+	iferr_scope;
+	if (_lights.IsEmpty())
+		return maxon::OK;
+
+	// A clock finer than UnixTime(), whose steps of about a millisecond would read 0 here.
+	const maxon::TimeValue start = maxon::TimeValue::GetTime();
+	IprTask* task = NewObj(IprTask) iferr_return;
+	finally
+	{
+		DeleteObj(task);
+	};
+	task->kind = IprTask::KIND::SCENE;
+	task->scene = NewObj(SceneWriter, false) iferr_return;
+	maxon::Bool lost = false;
+	for (const FollowedLight& light : _lights)
+	{
+		const cinema::BaseObject* const object = static_cast<const cinema::BaseObject*>(light.link->GetLink(doc, Obase));
+		if (!object)
+		{
+			// Deleted (an undo, say): the full export removes it.
+			lost = true;
+			continue;
+		}
+		const maxon::Bool written = SceneExporter::WriteLightAlone(*task->scene, doc, _exportSettings, object, light.id, light.linked ? &light.linking : nullptr) iferr_return;
+		// A light that emits nothing now (its intensity dragged to 0) is taken out of Blender's scene,
+		// as the full export does.
+		if (!written)
+			task->scene->RemoveItem(light.id);
+	}
+	for (const maxon::String& warning : task->scene->GetWarnings())
+		ReportOnce(warning);
+	const maxon::Int changes = task->scene->KeepChanges(_sceneState, true) iferr_return;
+	_lastLightsMilliseconds = (maxon::TimeValue::GetTime() - start).GetMilliseconds();
+	TraceIpr("lights_ms", _lastLightsMilliseconds);
+	_lastChangeCount = maxon::Int32(changes);
+	if (changes > 0)
+	{
+		TraceIpr("posted_lights", maxon::Float64(changes));
+		_worker->Post(task);
+		task = nullptr;
+		ArmLatency(0.0);
+	}
+	if (lost)
+		MarkSceneChanged();
+	return maxon::OK;
 }
 
 // --- results --------------------------------------------------------------------------------

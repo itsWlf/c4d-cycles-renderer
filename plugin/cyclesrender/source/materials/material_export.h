@@ -35,6 +35,14 @@ struct TextureMapping
 	maxon::String GetKey() const;
 };
 
+/// The Blender object properties (protocol: `properties` of an `object`, `floats` of an
+/// `instancer`) that hold the keys Redshift's random nodes vary by: a number in 0..1 from the
+/// object's path of names, and its Redshift Object ID (SceneExporter::Leaf::nameKey). A material
+/// reads them with an Attribute node of type INSTANCER. They are sent only for objects whose
+/// material reads them (MaterialExporter::ReadsObjectKeys).
+static const maxon::Char* const OBJECT_NAME_KEY = "cr_name_key";
+static const maxon::Char* const OBJECT_ID_KEY = "cr_object_id";
+
 /// One material of a stack on an object, with the mapping of its texture tag.
 struct MaterialLayer
 {
@@ -138,6 +146,20 @@ public:
 
 	void Warn(const maxon::String& message);
 	SceneWriter& GetWriter() { return _writer; }
+
+	/// Said by a translation that reads the object keys (OBJECT_NAME_KEY, OBJECT_ID_KEY) while the
+	/// material it belongs to is written; ReadsObjectKeys then answers true for that material's id,
+	/// and the objects wearing it are sent with their keys.
+	void UseObjectKeys() { ++_objectKeyUses; }
+	maxon::Bool ReadsObjectKeys(const maxon::String& materialId) const { return _keyedMaterials.Find(materialId) != nullptr; }
+
+	/// The Blender that will render what is written, as BlenderVersionCode() (503 for 5.3) and as
+	/// Blender writes it ("5.2.3 LTS"). A node, socket, setting or option of the Cycles node space
+	/// that this Blender lacks is left out (cycles_node_material.cpp). 0, the default, leaves
+	/// nothing out.
+	void SetBlenderVersion(maxon::Int32 code, const maxon::String& text) { _blenderVersion = code; _blenderVersionText = text; }
+	maxon::Int32 GetBlenderVersion() const { return _blenderVersion; }
+	const maxon::String& GetBlenderVersionText() const { return _blenderVersionText; }
 	cinema::BaseDocument* GetDocument() const { return _doc; }
 	/// The document's colour settings: every colour parameter goes through Input() on its way out.
 	const DocumentColors& GetColors() const { return _colors; }
@@ -150,10 +172,14 @@ private:
 	cinema::BaseDocument* _doc;
 	DocumentColors _colors;
 	maxon::Int32 _bakeResolution;
+	maxon::Int32 _blenderVersion = 0;
+	maxon::String _blenderVersionText;
 	maxon::HashMap<maxon::String, maxon::String> _materials;   ///< what a material item was made from -> its id
 	maxon::HashMap<maxon::String, maxon::String> _images;
 	maxon::HashMap<maxon::String, maxon::Bool> _imageAlpha;      ///< image file -> has an alpha channel
 	maxon::String _defaultId;
+	maxon::Int _objectKeyUses = 0;
+	maxon::HashMap<maxon::String, maxon::Bool> _keyedMaterials;   ///< ids of materials that read the object keys
 };
 
 } // namespace cyclesrender

@@ -6,6 +6,7 @@
 
 #include "c4d.h"
 
+#include "../prefs/settings.h"
 #include "../session/bridge_client.h"
 #include "../session/json.h"
 #include "cycles_node_material.h"
@@ -34,6 +35,8 @@ maxon::Result<void> MaterialPreview::Prepare(const maxon::GraphModelRef& graph)
 	iferr_scope;
 	// No document: an image a node names is looked for by its full path and in the texture paths.
 	MaterialExporter exporter(_writer, nullptr);
+	const BlenderInstall blender = GetBlenderInUse();
+	exporter.SetBlenderVersion(blender.Code(), blender.versionText);
 	WriteCyclesGraphMaterial(exporter, graph, maxon::String(PREVIEW_MATERIAL_ID)) iferr_return;
 	_prepared = true;
 	return maxon::OK;

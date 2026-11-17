@@ -57,6 +57,24 @@ namespace cyclesrender
 /// {"items", "differences"}); sources lists what each mesh leaf is made from
 /// (SceneExporter::GetSourceListing). The status also has meshes_exported, meshes_kept, export_ms
 /// and mesh_ms of the last export.
+/// Blender versions (0.2.0, F8): versioned <code> exports the active document as for a Blender of
+/// that version (BlenderVersionCode(), 502 for 5.2), whatever Blender is installed, and answers
+/// {"materials": the material items as they would be sent, "warnings"}: what that version lacks
+/// is left out (materials/cycles_node_material.cpp).
+/// Light values in a modal loop (0.2.0, F18): lights runs IprController::FollowLights(), what the
+/// scene hook has the window do while Cinema 4D is in a modal loop (only the lights, without a walk
+/// of the document); the status's changes then counts the light items sent or removed, lights_ms
+/// says how long writing and comparing them took, and lights_followed how many lights it writes.
+/// Navigating from the picture (0.2.0, F17): navigate orbit|pan|dolly <x> <y> <dx> <dy> [steps] [ctrl]
+/// [cancel] runs a navigating drag as the window's picture does (ipr_navigation.h: the same checks,
+/// Begin, a Step per step and End or, with "cancel", Cancel as on Escape), without the window: it
+/// begins at the image point (x, y) of the size the IPR renders at, with the picture at 100 %, and
+/// the mouse goes (dx, dy) screen pixels, right and down positive; the camera is sent after each
+/// step. It answers {"refused" (empty when it navigated, else the status bar's text), "camera",
+/// "editor_camera", "picked", "pivot", "pick_ms", "prefs" (the navigation preferences it followed)}.
+/// With the window open the status also has image_rect (where the picture is on the screen: left,
+/// top, width, height) and image_center (the image point in its middle), for tests that post mouse
+/// messages to it.
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprTestCommand();
 

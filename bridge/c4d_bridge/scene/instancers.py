@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Instancer builder: many copies of one mesh, each with its own matrix and colour.
+"""Instancer builder: many copies of one mesh, each with its own matrix, colour and numbers.
 
 One instancer is three datablocks: the prototype object (the mesh with its materials, in no
-collection, so it does not render by itself), a mesh of loose points carrying one matrix and
-one colour per instance, and the object that shows them through a Geometry Nodes modifier.
+collection, so it does not render by itself), a mesh of loose points carrying one matrix, one
+colour and the named numbers (`floats`) per instance, and the object that shows them through a
+Geometry Nodes modifier. The points' attributes become the instances' own.
 """
 
 import bpy
@@ -30,6 +31,12 @@ def build_instancer(scene, item, blobs):
     colors = array_from(blobs, item["colors"], np.float32) if "colors" in item else None
     if colors is not None and len(colors) != count * 4:
         raise RequestError("bad_request", f"instancer {item['id']!r}: one RGBA colour per instance is needed")
+    floats = {}
+    for entry in item.get("floats", ()):
+        values = array_from(blobs, entry["data"], np.float32)
+        if len(values) != count or not entry.get("name") or entry["name"] in (TRANSFORM, COLOR):
+            raise RequestError("bad_request", f"instancer {item['id']!r}: float {entry.get('name')!r} needs one value per instance and a name of its own")
+        floats[entry["name"]] = values
 
     parts = scene.instancers.get(item["id"])
     if parts is None:
@@ -51,6 +58,13 @@ def build_instancer(scene, item, blobs):
         _attribute(points, COLOR, 'FLOAT_COLOR').data.foreach_set("color", colors)
     elif COLOR in points.attributes:
         points.attributes.remove(points.attributes[COLOR])
+    # Point attributes become the instances' own, which an Attribute node of type INSTANCER reads.
+    for name, values in floats.items():
+        _attribute(points, name, 'FLOAT').data.foreach_set("value", values)
+    stale = [a.name for a in points.attributes
+             if a.name not in floats and a.name not in (TRANSFORM, COLOR) and not a.is_required and not a.is_internal]
+    for name in stale:
+        points.attributes.remove(points.attributes[name])
     points.update()
     holder.update_tag()
 

@@ -1,6 +1,6 @@
 # Cycles Render
 
-A render engine plugin for Cinema 4D 2027 that renders the Cinema 4D scene with Blender 5.2's Cycles and Eevee. It is two programs: a **plugin** (C++, `plugin/cyclesrender`) loaded by Cinema 4D, which reads the scene and translates it into Blender's terms, and a **bridge** (Python, `bridge/c4d_bridge`) that runs inside a Blender the plugin starts, rebuilds the scene there and renders it. They talk over a local socket; live frames come back through shared memory.
+A render engine plugin for Cinema 4D 2024 to 2027 that renders the Cinema 4D scene with the Cycles and Eevee of Blender 5.0 to 5.3. It is two programs: a **plugin** (C++, `plugin/cyclesrender`) loaded by Cinema 4D, which reads the scene and translates it into Blender's terms, and a **bridge** (Python, `bridge/c4d_bridge`) that runs inside a Blender the plugin starts, rebuilds the scene there and renders it. They talk over a local socket; live frames come back through shared memory. The plugin is built once per Cinema 4D version from one source tree; what differs between the SDKs is answered in `plugin/cyclesrender/source/sdk_compat.h`, never by version tests spread through the code.
 
 Final frames and the live render (IPR) window work end to end on Windows. What is done, approximate and open is in `docs/roadmap.md`.
 
@@ -22,9 +22,12 @@ Each source file starts with a comment that says what it is for; headers documen
 Run from the repository root in PowerShell. Details and options are in `docs/development.md`.
 
 ```powershell
-.\tools\build_plugin.ps1                  # build the plugin -> build\plugin\bin\Release\plugins\cyclesrender
+.\tools\build_plugin.ps1                  # build the plugin for Cinema 4D 2027 -> build\plugin\bin\Release\plugins\cyclesrender
+.\tools\build_plugin.ps1 -Version all     # for 2024, 2025, 2026 and 2027 (the others go to build\plugin-<year>)
 .\tools\run_tests.ps1 -Changed            # the tests for what differs from the last commit (needs the local tests folder)
-.\tools\run_tests.ps1                     # the whole test baseline, once per sprint, about 16 minutes
+.\tools\run_tests.ps1                     # the whole test baseline (Cinema 4D 2027, Blender 5.2), once per sprint, about 19 minutes
+.\tools\run_tests.ps1 -C4D 2026           # the same in another Cinema 4D version, before a major release (with Blender 5.2)
+.\tools\run_tests.ps1 -SkipBuild -Blender 5.0   # the same on another Blender, before a major release (with Cinema 4D 2027)
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 .\tools\make_release.ps1 -Version 0.1.0   # both release packages -> release\0.1.0
 ```
@@ -35,7 +38,7 @@ To try a build by hand, start Cinema 4D with the plugin and the repository's bri
 & "C:\Program Files\Maxon Cinema 4D 2027\Cinema 4D.exe" "g_additionalModulePath=<repo>\build\plugin\bin\Release\plugins" "g_cyclesRenderBridge=<repo>\bridge\c4d_bridge\main.py"
 ```
 
-The build fails while a Cinema 4D that has loaded the plugin is open (the binary is locked): ask for it to be closed.
+The build fails while a Cinema 4D that has loaded the plugin is open (the binary is locked): ask for it to be closed. A Cinema 4D you start while one of the same version is open hands its command line to the open one and ends: add `g_allowParallelInstance=true` (the test runner does), and give every Cinema 4D you start a preferences folder of its own (`g_prefsPath`).
 
 ## What is in the repository, and what is not
 
@@ -65,8 +68,8 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 
 ## When is a change done
 
-- The plugin builds without warnings.
-- The tests for what changed pass (`.\tools\run_tests.ps1 -Changed` picks them from the map in that script and says why), with no Blender left running. The whole baseline runs once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release; when it finds a fault that a selected run missed, connect the file to the test in the map in the same piece of work. Without the local tests: say so, and say what you checked by hand.
+- The plugin builds without warnings for every supported Cinema 4D version (`.\tools\build_plugin.ps1 -Version all`).
+- The tests for what changed pass (`.\tools\run_tests.ps1 -Changed` picks them from the map in that script and says why), with no Blender left running, in Cinema 4D 2027 with Blender 5.2 (the default) and also in any version the change concerns (`-C4D <year>`, `-Blender <version>`). The whole baseline on Cinema 4D 2027 with Blender 5.2 runs once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release; before a major release it also runs on each other Cinema 4D version (2024, 2025, 2026, with Blender 5.2) and on each other Blender version (5.0, 5.1, 5.3, with Cinema 4D 2027), the commands in `docs/development.md`, "Which versions, when"; when it finds a fault that a selected run missed, connect the file to the test in the map in the same piece of work. Without the local tests: say so, and say what you checked by hand.
 - A feature that reads the Cinema 4D scene is shown next to Cinema 4D's Standard renderer by a test. Things the Standard renderer cannot do (bounced light, depth of field) are tested on their own.
 - What you measured is written down where the rule lives (`docs/reference/`), and anything you did not run is labelled untested.
 - `docs/roadmap.md` says what is now done and what you found on the way. When a document and reality disagree, the document is corrected in the same change.

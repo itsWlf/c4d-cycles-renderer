@@ -14,6 +14,7 @@
 #include "maxon/uuid.h"
 
 #include "../prefs/settings.h"
+#include "../sdk_compat.h"
 #include "blender_install.h"
 #include "blender_process.h"
 #include "json.h"
@@ -161,7 +162,8 @@ maxon::Result<void> BlenderProcess::Start(BRIDGEMODE mode)
 	maxon::EXECUTEPROGRAMFLAGS flags = maxon::EXECUTEPROGRAMFLAGS::HIDE_APPLICATION |
 		maxon::EXECUTEPROGRAMFLAGS::CAPTURELOGFILE | maxon::EXECUTEPROGRAMFLAGS::DONT_DELETE_LOGFILE;
 #ifdef MAXON_TARGET_WINDOWS
-	flags |= maxon::EXECUTEPROGRAMFLAGS::KILL_IF_STARTING_PROCESS_ENDS;
+	// Not with the 2024 SDK, which lacks the flag (sdk_compat.h).
+	flags |= KILL_WITH_CINEMA;
 #endif
 	_process = maxon::SystemProcessInterface::CreateProcess(executable, arguments, flags, nullptr) iferr_return;
 	_process.StartProcess() iferr_return;

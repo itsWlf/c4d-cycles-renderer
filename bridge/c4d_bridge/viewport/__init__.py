@@ -171,7 +171,13 @@ class Viewport:
     def pause(self, paused):
         paused = bool(paused)
         with self._override():   # the property's update callback needs an area
-            bpy.context.scene.cycles.preview_pause = paused
+            region_3d = self.space.region_3d
+            if "pause_render" in region_3d.bl_rna.properties:
+                # Blender 5.3 pauses the view itself; there `cycles.preview_pause` has no effect
+                # any more (its Cycles add-on warns so), and the samples went on (measured).
+                region_3d.pause_render = paused
+            else:
+                bpy.context.scene.cycles.preview_pause = paused
         now = time.time()
         if paused and not self.paused:
             self._end_time = self._end_time or now

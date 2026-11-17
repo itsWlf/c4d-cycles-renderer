@@ -13,6 +13,7 @@
 #include "tcyclesobject.h"
 
 #include "../ids.h"
+#include "../sdk_compat.h"
 #include "../materials/node_graph.h"
 #include "../tags/object_tag.h"
 #include "document_colors.h"
@@ -139,7 +140,7 @@ static maxon::Result<maxon::UInt64> HashFile(const cinema::Filename& file)
 
 // Saves the grids to a .vdb file named after its content and returns the file.
 static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const maxon::BaseArray<const cinema::VolumeObject*>& grids,
-	maxon::UInt64 sourceKey)
+	const maxon::BaseArray<maxon::String>& names, maxon::UInt64 sourceKey)
 {
 	iferr_scope;
 
@@ -155,9 +156,17 @@ static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const 
 		return maxon::IoError(MAXON_SOURCE_LOCATION, maxon::Url(), "The folder for volume files could not be created."_s);
 
 	maxon::BaseArray<maxon::Volume> volumes;
-	for (const cinema::VolumeObject* grid : grids)
+	for (maxon::Int index = 0; index < grids.GetCount(); ++index)
 	{
-		volumes.Append(maxon::Volume(grid->GetVolume())) iferr_return;
+		maxon::Volume volume(grids[index]->GetVolume());
+		// A grid written under another name than its own (one without a name, ExportVolume): renamed
+		// on a copy of its own, so that the grid of Cinema 4D's cache keeps its name.
+		if (volume.GetGridName() != names[index])
+		{
+			volume.MakeWritable() iferr_return;
+			volume.SetGridName(names[index]);
+		}
+		volumes.Append(std::move(volume)) iferr_return;
 	}
 	const cinema::Filename temporary = folder + cinema::Filename(id + ".writing.vdb"_s);
 	const maxon::Url url = cinema::MaxonConvert(temporary, cinema::MAXONCONVERTMODE::WRITE);
@@ -190,6 +199,7 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 	maxon::BaseArray<const cinema::VolumeObject*> grids;
 	maxon::BaseArray<maxon::String> names;
 	maxon::String firstFog;
+	maxon::Bool renamed = false;
 	maxon::UInt64 sourceKey = maxon::UInt64(reinterpret_cast<maxon::UInt>(doc));
 	for (const cinema::VolumeObject* grid : source.grids)
 	{
@@ -199,7 +209,12 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 		const maxon::GRIDCLASS gridClass = volume->GetGridClass();
 		if (gridClass == maxon::GRIDCLASS::SDF)
 			continue;
-		const maxon::String name = volume->GetGridName();
+		maxon::String name = volume->GetGridName();
+		// The grid of a Volume Builder has no name in Cinema 4D 2024.5 (2027: the object's name,
+		// measured 2026-11-16), and Blender reads grids by name: one without gets one here.
+		renamed = renamed || name.IsEmpty();
+		if (name.IsEmpty())
+			name = names.IsEmpty() && gridClass == maxon::GRIDCLASS::FOG ? "density"_s : FormatString("grid_@", names.GetCount());
 		if (gridClass == maxon::GRIDCLASS::FOG && firstFog.IsEmpty())
 			firstFog = name;
 		grids.Append(grid) iferr_return;
@@ -215,7 +230,8 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 
 	// The file.
 	maxon::Float64 unitScale = 1.0;
-	cinema::Filename file = FindLoadedFile(source);
+	// A file with a grid that had to be named (above) is written anew, with the names Blender is told.
+	cinema::Filename file = renamed ? cinema::Filename() : FindLoadedFile(source);
 	const maxon::Bool loaded = file.IsPopulated();
 	if (loaded)
 	{
@@ -225,7 +241,7 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 	{
 		if (source.owner)
 			sourceKey = sourceKey * 31 + maxon::UInt64(source.owner->GetDirty(cinema::DIRTYFLAGS::CACHE | cinema::DIRTYFLAGS::DATA));
-		iferr (file = SaveGrids(id, grids, sourceKey))
+		iferr (file = SaveGrids(id, grids, names, sourceKey))
 		{
 			writer.Warn(FormatString("Volume \"@\" could not be written for Blender and is left out. @", source.owner ? source.owner->GetName() : maxon::String(), err));
 			return false;

@@ -86,6 +86,10 @@ public:
 	/// is not deleted while the writer exists, and Send() tells which Blender gets it.
 	maxon::Result<void> HoldBakedFile(const maxon::String& id);
 
+	/// For a partial request (KeepChanges with partial set): the item @p id is to go, if Blender holds
+	/// it. A full request removes what it does not contain by itself.
+	void RemoveItem(const maxon::String& id);
+
 	/// Something the user should know about, shown in Cinema 4D's console after the export.
 	void Warn(const maxon::String& message);
 	const maxon::BaseArray<maxon::String>& GetWarnings() const { return _warnings; }
@@ -95,7 +99,8 @@ public:
 	/// for removal every item of @p state that this request no longer contains. @p state then
 	/// describes Blender as it will be after Send(). With clear set, everything is kept.
 	/// @param[in] partial  The request holds only some items (for example just the camera):
-	///                     nothing is removed, and the other entries of @p state stay.
+	///                     nothing is removed but what RemoveItem() named, and the other entries
+	///                     of @p state stay.
 	/// @return             The number of items left to send plus the number to remove.
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::Int> KeepChanges(SyncState& state, maxon::Bool partial = false);
@@ -115,6 +120,9 @@ public:
 	maxon::Bool IsMissingKeptItems() const { return _missingKept; }
 	/// After KeepChanges(): the ids of the items it left to send and of those it lists for removal.
 	maxon::Result<maxon::BaseArray<maxon::String>> GetChangedIds() const;
+
+	/// The items of one kind as a JSON array of their headers, as they would be sent. For tests.
+	maxon::String GetItemsJson(const maxon::Char* kind) const;
 
 	/// Sends the request and waits for the reply. The writer cannot be used afterwards.
 	maxon::Result<void> Send(BridgeClient& client, cinema::BaseThread* cancel);
@@ -140,6 +148,7 @@ private:
 	maxon::BaseArray<Item> _items;
 	maxon::BaseArray<Blob> _blobs;
 	maxon::BaseArray<maxon::String> _removed;
+	maxon::BaseArray<maxon::String> _toRemove;     ///< RemoveItem(): checked against the state by KeepChanges()
 	maxon::BaseArray<maxon::String> _warnings;
 	maxon::BaseArray<maxon::String> _bakedFiles;   ///< image item ids of baked files the request names
 	maxon::Int _itemFirstBlob = 0;   ///< index of the first blob of the item being written

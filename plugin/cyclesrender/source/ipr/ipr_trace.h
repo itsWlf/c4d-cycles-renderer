@@ -17,7 +17,11 @@ namespace cyclesrender
 /// "trace on" switches it on (ipr_testhook.h). The names are fixed texts (no copies are made):
 ///   timer, tick, change, recalc, editormove (value: MOVE_START 0, CONTINUE 1, END 2), framemsg,
 ///   drawn, shown (value: frame id), camera_seen, posted_view, posted_scene (value: items), export_ms,
-///   answered, frame (value: frame id), and what a test adds.
+///   answered, frame (value: frame id), and what a test adds. Navigating from the picture (F17):
+///   input (value: BFM_INPUT_CHANNEL of a press in the picture), input_qualifier, input_hotkeys (the
+///   camera keys Cinema 4D reports held: rotate + 4 x move + 16 x scale, each 1 mouse, 2 keyboard),
+///   drag_dx, drag_dy, drag_qualifier (the picture's own pan), nav_begin (value: IPRNAV), nav_pick_ms,
+///   nav_step, nav_moved, nav_view_ms (a redraw of Cinema 4D's view), nav_refused, nav_end, nav_cancel.
 //----------------------------------------------------------------------------------------
 void TraceIpr(const maxon::Char* what, maxon::Float64 value = 0.0);
 

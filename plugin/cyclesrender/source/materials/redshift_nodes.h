@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-// Redshift's shading nodes wired into a Redshift material, as Blender nodes: the Texture node and
-// the nodes with a near one-to-one counterpart in Blender (math, vector math, colour mix, invert,
-// constants, colour and vector makers and splitters, colour correction). The list, with what each
-// becomes, is in docs/reference/c4d-sdk.md, "Redshift nodes".
+// Redshift's shading nodes wired into a Redshift material, as Blender nodes: the Texture node, the
+// math, colour, utility and texture nodes with a counterpart in Blender (from 0.2.0 also the
+// inverse trigonometry, bias and gain, the vector and colour math, Color Composite and Color Layer,
+// Fresnel, State, Ramp and Scalar Ramp, TriPlanar, UV Projection, MatCap, Camera Map and others),
+// each measured against Redshift's own render. The list, with what each becomes, is in
+// docs/reference/c4d-sdk.md, "Redshift nodes".
 
 #ifndef CYCLESRENDER_REDSHIFT_NODES_H__
 #define CYCLESRENDER_REDSHIFT_NODES_H__
@@ -38,11 +40,33 @@ public:
 	static maxon::Result<maxon::String> ShortName(const maxon::GraphNode& node);
 	static maxon::Result<maxon::GraphNode> SourceNode(const maxon::GraphNode& port);
 
+	/// The file named by the "tex0" bundle of a node of @p asset (its short id), as the id of an
+	/// `image` item; empty, with a warning naming @p label, when it names none.
+	maxon::Result<maxon::String> FileImage(const maxon::GraphNode& node, const maxon::String& asset, maxon::Bool colorData, const maxon::Char* what, const maxon::Char* label);
+
 	/// Names a node that is not translated, for input @p what.
 	void NotTranslated(const maxon::GraphNode& node, const maxon::Char* what) const;
 
+	/// The shading normal (Blender's world space) a Flakes node gives on a material's bump input:
+	/// the surface's normal tilted per flake (redshift_lookalikes.cpp). Invalid when it cannot be made.
+	maxon::Result<NodeOutput> FlakesNormal(const maxon::GraphNode& node, const maxon::Char* what);
+
 	/// A warning about this material.
 	void Warn(const maxon::String& text) const;
+
+	/// A value inside a translation: the output of a Blender node, or a constant (a number is its
+	/// x). @p alpha is the alpha of a constant colour; a wired colour counts as opaque.
+	struct Term
+	{
+		NodeOutput out;
+		cinema::Vector value;
+		maxon::Float64 alpha = 1.0;
+
+		maxon::Bool IsConstant() const { return !out.IsValid(); }
+		static Term Number(maxon::Float64 number) { Term term; term.value = cinema::Vector(number); return term; }
+		static Term Of(const cinema::Vector& vector) { Term term; term.value = vector; return term; }
+		static Term Of(const NodeOutput& output) { Term term; term.out = output; return term; }
+	};
 
 private:
 	struct Source
@@ -53,8 +77,82 @@ private:
 
 	static maxon::Result<Source> Find(const maxon::GraphNode& port);
 	maxon::Result<NodeOutput> Translate(const Source& source, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
-	maxon::Result<NodeOutput> TextureSampler(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what);
+	/// A Texture node as an Image Texture, on its UV map or on @p vector (Blender UV coordinates a
+	/// projection node computes), with the node's own tiling and offset.
+	maxon::Result<NodeOutput> TextureSampler(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, const Term* vector = nullptr);
+	/// What is wired into @p port of a projection node, sampled at @p vector when it is a Texture
+	/// node; anything else is translated as it is and named as not projected.
+	maxon::Result<Term> Projected(const maxon::GraphNode& rsNode, const maxon::Char* port, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth,
+		const Term& vector, const maxon::Char* label);
+	/// The position along a Ramp or Scalar Ramp (0 to 1): its source, mapping and adjustments.
+	maxon::Result<Term> RampPosition(const maxon::GraphNode& rsNode, const maxon::String& asset, const maxon::Char* what, maxon::Int depth);
 	maxon::Result<NodeOutput> ColorCorrection(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
+
+	// The groups of nodes added in 0.2.0 (F19); each answers false in @p handled for a node it does not know.
+	maxon::Result<NodeOutput> MoreMath(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	maxon::Result<NodeOutput> ColorNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	maxon::Result<NodeOutput> UtilityNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	maxon::Result<NodeOutput> TextureNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	/// The look-alikes (redshift_lookalikes.cpp): Jitter, Random Color Switch, Brick, Flakes. Each
+	/// renders the same kind of picture as Redshift without Redshift's own random numbers, and says so.
+	maxon::Result<NodeOutput> LookAlikes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	/// A random number in 0..1 per object for @p seed, as the random nodes' "Input ID Mode" says:
+	/// the object's name key, its Object ID, or the node's User Data number (the same number and
+	/// seed give the same value, as in Redshift).
+	maxon::Result<Term> RandomPerObject(const maxon::GraphNode& rsNode, maxon::Float64 seed, const maxon::Char* what, const maxon::Char* label);
+	/// Redshift's colour jitter (measured): hue, saturation and value of the colour in linear
+	/// Rec.709 moved by the node's ranges at the random numbers of their seeds.
+	maxon::Result<Term> JitterColor(const maxon::GraphNode& rsNode, const Term& color, const maxon::Char* what, const maxon::Char* label);
+	maxon::Result<NodeOutput> Brick(const Source& source, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
+	maxon::Result<NodeOutput> Flakes(const Source& source, const maxon::Char* what);
+	/// The flakes: per Voronoi cell of the node's pattern, whether it is a flake (x), a random
+	/// number (y) and the cell's random vector (the colour of Blender's Voronoi), and the fade with distance.
+	struct FlakeCells { Term alpha; Term id; Term random; Term blend; };
+	maxon::Result<FlakeCells> FlakeCellsOf(const maxon::GraphNode& rsNode, const maxon::Char* what);
+	/// A gradient bundle port (the Ramp's, the Brick's colours) as a Color Ramp at @p t.
+	maxon::Result<NodeOutput> Gradient(const maxon::GraphNode& port, const Term& t, const maxon::Char* what, const maxon::Char* label);
+	/// The children of a variadic bundle port, in their order.
+	static maxon::Result<maxon::BaseArray<maxon::GraphNode>> Entries(const maxon::GraphNode& port);
+	/// What a port holds (as Input), the number set on it, the input port @p name of @p rsNode, and whether something is wired into a port.
+	maxon::Result<Term> PortTerm(const maxon::GraphNode& port, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
+	static maxon::Float64 PortNumber(const maxon::GraphNode& port, maxon::Float64 fallback);
+	static maxon::Result<maxon::GraphNode> Port(const maxon::GraphNode& rsNode, const maxon::Char* name);
+	static maxon::Result<maxon::Bool> IsWired(const maxon::GraphNode& port);
+
+	// --- Terms: building expressions of Blender nodes (constant parts are folded where it is plain)
+	/// What the input @p name of @p rsNode holds: the translation of what is wired into it (alpha 1),
+	/// else its value with its alpha.
+	maxon::Result<Term> Input(const maxon::GraphNode& rsNode, const maxon::Char* name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
+	/// The value set on an input, ignoring what is wired; names a wire as "only its value is translated".
+	maxon::Result<maxon::Float64> Setting(const maxon::GraphNode& rsNode, const maxon::Char* name, maxon::Float64 fallback, const maxon::Char* what, const maxon::Char* label);
+	/// The value of an input that is never wired in practice (a switch, a mode), without a warning.
+	maxon::Result<maxon::Float64> Value(const maxon::GraphNode& rsNode, const maxon::Char* name, maxon::Float64 fallback);
+	maxon::Result<cinema::Vector> VectorValue(const maxon::GraphNode& rsNode, const maxon::Char* name, const cinema::Vector& fallback);
+	maxon::Result<void> Set(maxon::Int node, const maxon::Char* socket, const Term& term, maxon::Bool scalar);
+	/// Blender's Math node; @p b and @p c as far as the operation uses them.
+	maxon::Result<Term> Math(const maxon::Char* operation, const Term& a, const Term& b = Term(), const Term& c = Term());
+	/// Blender's Vector Math node; SCALE takes its factor in @p b (a number).
+	maxon::Result<Term> VMath(const maxon::Char* operation, const Term& a, const Term& b = Term(), const Term& c = Term());
+	/// Blender's Mix node on colours, factor not clamped.
+	maxon::Result<Term> MixColor(const maxon::Char* blend, const Term& factor, const Term& a, const Term& b);
+	/// One component (0, 1, 2) of a vector or colour, and three numbers as a vector.
+	maxon::Result<Term> Component(const Term& vector, maxon::Int index);
+	maxon::Result<Term> Combine(const Term& x, const Term& y, const Term& z);
+	/// The same function of one number applied to each component.
+	maxon::Result<Term> PerComponent(const Term& a, const Term& b, maxon::Result<Term> (RedshiftNodes::*function)(const Term&, const Term&));
+	/// Perlin's bias x^(log b / log 0.5) and gain, as Redshift computes them (measured).
+	maxon::Result<Term> Bias(const Term& x, const Term& b);
+	maxon::Result<Term> Gain(const Term& x, const Term& g);
+	maxon::Result<Term> Logarithm(const Term& x, const Term& base);
+	/// A Blender output for a term: a constant becomes a Value or Combine XYZ node.
+	maxon::Result<NodeOutput> Output(const Term& term, maxon::Bool scalar);
+	/// A blend mode of Redshift's Color Composite (0 Base Color ... 16 Divide) on two colours.
+	maxon::Result<Term> Blend(maxon::Int mode, const Term& base, const Term& blend);
+	/// A vector of Blender's world space in Cinema 4D's axes, in document units for a @p point,
+	/// in world (0), object (1) or camera (2) space.
+	maxon::Result<Term> ToCinema(const Term& vector, maxon::Bool point, maxon::Int space);
+	/// The surface's tangent along its UV map (Blender's world space).
+	maxon::Result<Term> UvTangent();
 
 	/// Gives the Blender socket @p socket of @p node what the Redshift input @p name of @p rsNode
 	/// has: the translation of what is wired into it, else its value.

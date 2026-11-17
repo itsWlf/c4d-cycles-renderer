@@ -359,8 +359,18 @@ static void WriteLight(SceneWriter& writer, const Coords& coords, const cinema::
 	writer.EndItem();
 }
 
+// Eevee of Blender 5.0 and 5.1 shows no light to the camera, whatever the light's visibility.
+static void NoteCameraVisibility(SceneWriter& writer, const cinema::BaseObject* light, const BlenderLight& values, maxon::Bool eeveeHidesLights)
+{
+	if (eeveeHidesLights && values.rayVisibility && values.visibleCamera)
+	{
+		writer.Warn(FormatString("Light \"@\": its Camera visibility needs Blender 5.2 or newer with Eevee; this Eevee does not show the light itself.",
+			light->GetName()));
+	}
+}
+
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
-	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking)
+	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights)
 {
 	BlenderLight values;
 	if (light->GetType() == ID_LIGHT_OBJECT)
@@ -371,6 +381,7 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 		ReadRayVisibility(light, values);
 		ReadEeveeSettings(light, coords, values);
 		values.energy *= multiplier;
+		NoteCameraVisibility(writer, light, values, eeveeHidesLights);
 		WriteLight(writer, coords, mg, id, values, linking);
 		return true;
 	}
@@ -402,6 +413,7 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 		if (GetBoolParameter(tag, CYCLESLIGHTTAG_EEVEE_ENABLE, false))
 			ReadEeveeSettings(tag, coords, values);
 	}
+	NoteCameraVisibility(writer, light, values, eeveeHidesLights);
 	WriteLight(writer, coords, mg, id, values, linking);
 	return true;
 }

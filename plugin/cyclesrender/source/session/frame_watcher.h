@@ -34,7 +34,12 @@ public:
 	/// @param[out] arrivalTime  When the frame was fetched from shared memory (Unix seconds).
 	maxon::Bool Take(Frame& frame, maxon::Float64& arrivalTime);
 
+	/// A function the watcher thread calls after each frame it fetched, besides the core message.
+	/// Set it before Start(); it must be safe on any thread and return at once.
+	void SetArrivalCallback(void (*callback)()) { _onArrival = callback; }
+
 private:
+	void (*_onArrival)() = nullptr;
 	maxon::Spinlock _lock;					///< guards the members up to _arrival
 	maxon::String _token;
 	maxon::Bool _tokenChanged = false;

@@ -8,6 +8,7 @@
 #include "maxon/datadescription_nodes.h"
 #include "maxon/nodesgraph.h"
 
+#include "../sdk_compat.h"
 #include "path_commands.h"
 
 // For finding out what a press of the button hands over (docs/reference/c4d-sdk.md).
@@ -103,14 +104,15 @@ static maxon::Result<maxon::COMMANDRESULT> ExecutePathCommand(maxon::CommandData
 	const maxon::Char* const name = relative ? "Make Relative" : "Make Absolute";
 	const maxon::GraphModelRef graph = data.Get(maxon::ARGUMENTS::NODECORE::GRAPHMODEL, maxon::GraphModelRef());
 	maxon::BaseArray<maxon::NodePath> paths;
-	const maxon::NodePath path = data.Get(maxon::ARGUMENTS::NODECORE::NODEPATH, maxon::NodePath());
-	if (!path.IsEmpty())
+	// Each is a NodePath, or in the 2024 SDK a path with a port id (sdk_compat.h).
+	const cyclesrender::CommandNodePath path = data.Get(maxon::ARGUMENTS::NODECORE::NODEPATH, cyclesrender::CommandNodePath());
+	if (!cyclesrender::NodePathOf(path).IsEmpty())
 	{
-		paths.Append(path) iferr_return;
+		paths.Append(cyclesrender::NodePathOf(path)) iferr_return;
 	}
-	for (const maxon::NodePath& listed : data.Get(maxon::ARGUMENTS::NODECORE::NODEPATHLIST, maxon::BaseArray<maxon::NodePath>()))
+	for (const cyclesrender::CommandNodePath& listed : data.Get(maxon::ARGUMENTS::NODECORE::NODEPATHLIST, maxon::BaseArray<cyclesrender::CommandNodePath>()))
 	{
-		paths.Append(listed) iferr_return;
+		paths.Append(cyclesrender::NodePathOf(listed)) iferr_return;
 	}
 	// The SDK calls this one "mandatory for all button messages" (datadescription_nodes.h): the
 	// port a button belongs to; its node is the one to change.
@@ -167,7 +169,7 @@ static maxon::Result<maxon::COMMANDRESULT> ExecutePathCommand(maxon::CommandData
 		port.SetPortValue(changed) iferr_return;
 		transaction.Commit() iferr_return;
 		const maxon::String done = FormatString("Cycles Render: @: @", maxon::String(name),
-			changed.GetScheme() == maxon::URLSCHEME_RELATIVE ? changed.GetPath() : changed.GetSystemPath().GetValueOr(changed.GetPath()));
+			changed.GetScheme() == maxon::URLSCHEME_RELATIVE ? changed.GetPath() : cyclesrender::ResultOr(changed.GetSystemPath(), changed.GetPath()));
 		ApplicationOutput("@", done);
 		cinema::StatusSetText(done);
 		result = maxon::COMMANDRESULT::OK;
@@ -211,7 +213,7 @@ maxon::Result<maxon::String> InvokePathCommand(maxon::Bool relative, const maxon
 	iferr_scope;
 	maxon::CommandDataRef data = maxon::CommandDataClasses::BASE().Create() iferr_return;
 	data.Set(maxon::ARGUMENTS::NODECORE::GRAPHMODEL, graph) iferr_return;
-	data.Set(maxon::ARGUMENTS::NODECORE::NODEPATH, node.GetPath()) iferr_return;
+	data.Set(maxon::ARGUMENTS::NODECORE::NODEPATH, ToCommandNodePath(node.GetPath())) iferr_return;
 	const maxon::COMMANDRESULT result = data.Invoke(maxon::Id(relative ? CYCLES_COMMAND_PATH_RELATIVE : CYCLES_COMMAND_PATH_ABSOLUTE), false) iferr_return;
 	return result == maxon::COMMANDRESULT::OK ? "ok"_s : result == maxon::COMMANDRESULT::SKIP ? "skip"_s : "break"_s;
 }

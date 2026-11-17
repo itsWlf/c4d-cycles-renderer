@@ -7,8 +7,10 @@
 #include "maxon/gfx_image_colorprofile.h"
 #include "maxon/parallelfor.h"
 
+#include "../prefs/settings.h"
 #include "../scene/camera_export.h"
 #include "../scene/document_colors.h"
+#include "../sdk_compat.h"
 #include "ipr_image_area.h"
 #include "ipr_trace.h"
 
@@ -174,7 +176,7 @@ maxon::Result<void> DisplayTransform::Update(cinema::BaseDocument* doc)
 
 	if (ocio)
 	{
-		iferr (_converter = cinema::OcioConverter::Init(doc, _converter))
+		iferr (_converter = InitOcioConverter(doc, _converter))
 			_converter = nullptr;
 	}
 	if (ocio && _converter)
@@ -458,6 +460,14 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 	cinema::Int32 mouseX = msg.GetInt32(cinema::BFM_INPUT_X);
 	cinema::Int32 mouseY = msg.GetInt32(cinema::BFM_INPUT_Y);
 	Global2Local(&mouseX, &mouseY);
+	if (IsIprTracing())
+	{
+		TraceIpr("input", maxon::Float64(channel));
+		TraceIpr("input_qualifier", maxon::Float64(msg.GetInt32(cinema::BFM_INPUT_QUALIFIER)));
+		const maxon::Int32 hotkeys = maxon::Int32(IsHotkeyDown(HOTKEY_CAMERA_ROTATE)) | (maxon::Int32(IsHotkeyDown(HOTKEY_CAMERA_MOVE)) << 2) |
+			(maxon::Int32(IsHotkeyDown(HOTKEY_CAMERA_SCALE)) << 4);
+		TraceIpr("input_hotkeys", maxon::Float64(hotkeys));
+	}
 
 	if (channel == cinema::BFM_INPUT_MOUSEWHEEL)
 	{
@@ -473,8 +483,22 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 		return true;
 	}
 
-	if (channel == cinema::BFM_INPUT_MOUSELEFT || channel == cinema::BFM_INPUT_MOUSEMIDDLE)
+	if (channel == cinema::BFM_INPUT_MOUSELEFT || channel == cinema::BFM_INPUT_MOUSEMIDDLE || channel == cinema::BFM_INPUT_MOUSERIGHT)
 	{
+		// Cinema 4D's navigation keys with a drag move the camera (0.2.0, F17; the scheme is
+		// NavigationForDrag in ipr_navigation.cpp, the switch in the Preferences).
+		const cinema::Int32 qualifier = msg.GetInt32(cinema::BFM_INPUT_QUALIFIER);
+		const IPRNAV mode = _navigation && GetIprNavigate()
+			? NavigationForDrag(channel, qualifier, IsHotkeyDown(HOTKEY_CAMERA_ROTATE), IsHotkeyDown(HOTKEY_CAMERA_MOVE), IsHotkeyDown(HOTKEY_CAMERA_SCALE))
+			: IPRNAV::NONE;
+		if (mode != IPRNAV::NONE)
+		{
+			NavigationDrag(mode, channel, mouseX, mouseY, qualifier);
+			return true;
+		}
+		if (channel == cinema::BFM_INPUT_MOUSERIGHT)
+			return false;
+
 		// Drag to pan.
 		maxon::Float dragX = 0.0;
 		maxon::Float dragY = 0.0;
@@ -483,6 +507,12 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 		MouseDragStart(channel, maxon::Float(mouseX), maxon::Float(mouseY), cinema::MOUSEDRAGFLAGS::DONTHIDEMOUSE);
 		while (MouseDrag(&dragX, &dragY, &channels) == cinema::MOUSEDRAGRESULT::CONTINUE)
 		{
+			if (IsIprTracing())
+			{
+				TraceIpr("drag_dx", dragX);
+				TraceIpr("drag_dy", dragY);
+				TraceIpr("drag_qualifier", maxon::Float64(channels.GetInt32(cinema::BFM_INPUT_QUALIFIER)));
+			}
 			if (dragX == 0.0 && dragY == 0.0)
 				continue;
 			moved += maxon::Abs(dragX) + maxon::Abs(dragY);
@@ -499,6 +529,38 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 		return true;
 	}
 	return false;
+}
+
+void IprImageArea::NavigationDrag(IPRNAV mode, cinema::Int32 channel, cinema::Int32 mouseX, cinema::Int32 mouseY, cinema::Int32 qualifier)
+{
+	// The image point under the mouse, in render pixels of the frame on screen.
+	const maxon::Float64 imageX = _centerX + (maxon::Float64(mouseX) - GetWidth() * 0.5) / _zoom;
+	const maxon::Float64 imageY = _centerY + (maxon::Float64(mouseY) - GetHeight() * 0.5) / _zoom;
+	if (!_navigation->BeginNavigation(mode, imageX, imageY, _zoom, qualifier))
+		return;
+
+	// NOMOVE: MouseDrag() comes back also while the mouse stands still, so that the frames Blender
+	// still sends are shown during the drag (without it, it comes back only when the mouse moves).
+	maxon::Float dragX = 0.0;
+	maxon::Float dragY = 0.0;
+	cinema::BaseContainer channels;
+	cinema::MOUSEDRAGRESULT result = cinema::MOUSEDRAGRESULT::CONTINUE;
+	MouseDragStart(channel, maxon::Float(mouseX), maxon::Float(mouseY), cinema::MOUSEDRAGFLAGS::DONTHIDEMOUSE | cinema::MOUSEDRAGFLAGS::NOMOVE);
+	while ((result = MouseDrag(&dragX, &dragY, &channels)) == cinema::MOUSEDRAGRESULT::CONTINUE)
+	{
+		if (dragX == 0.0 && dragY == 0.0)
+		{
+			_navigation->NavigationIdle();
+			// Without a pause the loop would keep one core busy while the mouse stands still.
+			cinema::GeSleep(1);
+			continue;
+		}
+		// MouseDrag() gives the distance with the sign opposite to the mouse's way (measured, see the
+		// picture's pan above): turned round, right and down are positive.
+		_navigation->Navigate(-dragX, -dragY);
+	}
+	const maxon::Bool escaped = MouseDragEnd() == cinema::MOUSEDRAGRESULT::ESCAPE || result == cinema::MOUSEDRAGRESULT::ESCAPE;
+	_navigation->EndNavigation(escaped);
 }
 
 } // namespace cyclesrender

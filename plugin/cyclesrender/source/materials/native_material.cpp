@@ -17,6 +17,7 @@
 
 #include "../ids.h"
 #include "../ipr/ipr_worker.h"
+#include "../prefs/settings.h"
 #include "../session/json_writer.h"
 #include "../videopost/render_settings_map.h"
 #include "native_material.h"
@@ -616,7 +617,7 @@ maxon::Result<void> OpenNativeMaterialEditor(cinema::BaseMaterial* material)
 		cinema::BaseDocument* const doc = material->GetDocument();
 		JsonWriter settings;
 		maxon::BaseArray<maxon::String> warnings;
-		WriteRenderSettings(settings, GetDocumentRenderSettings(doc), doc, NOTOK, warnings);
+		WriteRenderSettings(settings, GetDocumentRenderSettings(doc), doc, NOTOK, GetBlenderInUse().Code(), warnings);
 		PostToEditor(settings) iferr_return;
 	}
 

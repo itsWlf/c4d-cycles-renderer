@@ -16,4 +16,4 @@ BRIDGE_VERSION = "0.1.0"
 # refused at start (main.py). Before adding one, go through "Version coupling" in
 # docs/reference/blender.md. The plugin keeps the same list: SUPPORTED_VERSIONS in
 # plugin/cyclesrender/source/session/blender_install.cpp.
-SUPPORTED_BLENDER = ((5, 2),)
+SUPPORTED_BLENDER = ((5, 0), (5, 1), (5, 2), (5, 3))

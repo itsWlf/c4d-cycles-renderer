@@ -127,18 +127,40 @@ struct CameraFraming
 	static CameraFraming Fit(maxon::Int32 width, maxon::Int32 height, maxon::Float64 frameAspect);
 };
 
+/// The first Blender whose Eevee renders panoramic cameras, as BlenderVersionCode(). Measured: Eevee
+/// of 5.3.0 renders all seven panorama types as Cycles does (a world coloured by direction, mean
+/// difference at most 0.006), Eevee of 5.2.3 renders every one as a perspective camera.
+static constexpr maxon::Int32 EEVEE_PANORAMA_VERSION = 503;
+
 //----------------------------------------------------------------------------------------
 /// Exports @p camera as the active camera.
 /// @param[in] depthOfField  The render setting "Depth of Field": send the camera's own focus
 ///                          distance and f-stop (a Cycles Camera tag may decide otherwise).
-/// @param[in] eevee         The frame is rendered by Eevee, which has no panoramic camera: a
-///                          panoramic camera is named in a warning.
+/// @param[in] eevee         The frame is rendered by an Eevee that has no panoramic camera (before
+///                          EEVEE_PANORAMA_VERSION): a panoramic camera is named in a warning.
 /// @param[in] framing       Image size and where the camera's picture lies in it.
 /// @param[in] motion        For motion blur: two matrices, the camera's view matrix (CameraValues::mg)
 ///                          when the shutter opens and when it closes; nullptr for a camera at rest.
 //----------------------------------------------------------------------------------------
 maxon::Result<void> ExportCamera(SceneWriter& writer, const Coords& coords, const CameraValues& camera,
 	maxon::Bool depthOfField, maxon::Bool eevee, const CameraFraming& framing, const cinema::Matrix* motion = nullptr);
+
+//----------------------------------------------------------------------------------------
+/// The way back from the picture to the scene, for navigating from the IPR's picture (0.2.0, F17):
+/// the ray that renders the point (@p x, @p y) of the image (pixels from its top left corner, the
+/// image framed by @p framing), as ExportCamera and WriteFreeView frame it: the camera's sensor (or
+/// parallel width) spans the camera's picture, which is centred in the image, and the film offset
+/// shifts it. In document coordinates; @p direction is normalised. A parallel view that sees
+/// behind its plane gets a ray that starts far behind it (@p behind on). False for a panoramic
+/// camera, whose rays are not worked out here.
+//----------------------------------------------------------------------------------------
+maxon::Bool CameraRay(const CameraValues& camera, const CameraFraming& framing, maxon::Float64 x, maxon::Float64 y, cinema::Vector& origin,
+	cinema::Vector& direction);
+
+/// Document units one image pixel spans across the picture, at @p depth (document units along the
+/// view axis) for a perspective camera, at any depth for a parallel one. A panorama is taken as a
+/// perspective view of its horizontal angle (an approximation, for panning it).
+maxon::Float64 UnitsPerPixel(const CameraValues& camera, const CameraFraming& framing, maxon::Float64 depth);
 
 //----------------------------------------------------------------------------------------
 /// For the live viewport: writes a `view_camera` request that places Blender's own view

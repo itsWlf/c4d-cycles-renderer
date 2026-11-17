@@ -12,6 +12,14 @@ Generated (do not edit by hand; edit PAGE below and run this again):
 The page mimics Blender's Render properties: Blender's panels as foldable groups, Blender's
 names and Blender's defaults (read from a new scene in Blender 5.2.3). Parameter ids are
 stored in scene files: never renumber one and never reuse a retired number.
+
+Blender versions (measured 2026-11-16 in a new scene of 5.0.0, 5.1.2, 5.2.3 and 5.3.0): a setting
+an older supported version lacks carries since="<version>" and is not sent to that Blender (the
+plugin names it in the console when it is not at its default). Four defaults of 5.0 and 5.1
+differ from 5.2's (sampling pattern Tabulated Sobol, volume indirect clamp 1e-8, screen trace
+thickness 0.2, fast GI thickness near 0.25): the page has 5.2's, and since every value is sent, a
+scene renders with them in every version. 5.3's are 5.2's. The shadow pool's 1536 and 2048 MB
+came with 5.2; an older Blender keeps its own choice and the bridge's warning says so.
 Retired: 1900 (a test colour), 2003 (the old Eevee tab), 2190 to 2192 (the Color Settings tab).
 
 Each entry:
@@ -21,6 +29,7 @@ Each entry:
     row(a, b)                                       two entries side by side
 Options:
     path2    a second Blender property that takes the same value
+    since    the first supported Blender that has the property ("5.0" when left out)
     engine   "CYCLES" or "EEVEE": shown for that engine only
     enable   (SYMBOL, value): greyed out unless that parameter has that value
     path=None: not sent as a property; the plugin reads it (GetExportSettings)
@@ -34,7 +43,8 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugin", 
 
 def _entry(kind, id, symbol, label, default, path=None, **options):
     entry = {"kind": kind, "id": id, "symbol": symbol, "label": label, "default": default, "path": path,
-             "path2": None, "engine": None, "enable": None, "min": None, "max": None, "step": None, "unit": None, "advanced": False}
+             "path2": None, "engine": None, "enable": None, "min": None, "max": None, "step": None, "unit": None, "advanced": False,
+             "since": "5.0"}
     unknown = set(options) - set(entry) - {"options"}
     assert not unknown, unknown
     entry.update(options)
@@ -246,8 +256,8 @@ PAGE = [
         ], engine="EEVEE"),
         group(2146, "EEVEE_GROUP_LIGHT_PATHS", "Light Paths", [
             group(2147, "EEVEE_GROUP_INTENSITY", "Intensity", [
-                row(F(1430, "EEVEE_DIRECT_INTENSITY", "Direct Light", 1.0, "eevee.direct_light_intensity", min=0.0, max=3.0, step=0.05),
-                    F(1431, "EEVEE_INDIRECT_INTENSITY", "Indirect Light", 1.0, "eevee.indirect_light_intensity", min=0.0, max=3.0, step=0.05)),
+                row(F(1430, "EEVEE_DIRECT_INTENSITY", "Direct Light", 1.0, "eevee.direct_light_intensity", min=0.0, max=3.0, step=0.05, since="5.1"),
+                    F(1431, "EEVEE_INDIRECT_INTENSITY", "Indirect Light", 1.0, "eevee.indirect_light_intensity", min=0.0, max=3.0, step=0.05, since="5.1")),
             ]),
             group(2142, "EEVEE_GROUP_CLAMPING", "Clamping - Surface", [
                 row(F(1409, "EEVEE_CLAMP_SURFACE_DIRECT", "Direct Light", 0.0, "eevee.clamp_surface_direct", min=0.0, step=0.1),
@@ -281,8 +291,8 @@ PAGE = [
                       enable=("EEVEE_RAYTRACING", 1)),
                     F(1436, "EEVEE_SCREEN_THICKNESS", "Thickness (m)", 0.1, "eevee.ray_tracing_options.screen_trace_thickness", min=0.001, step=0.05,
                       enable=("EEVEE_RAYTRACING", 1))),
-                row(B(1437, "EEVEE_BACKFACE_HIT", "Backface", True, "eevee.ray_tracing_options.use_backface_hit", enable=("EEVEE_RAYTRACING", 1)),
-                    F(1438, "EEVEE_BACKFACE_SCALE", "Backface", 0.25, "eevee.ray_tracing_options.backface_radiance_scale", min=0.0, max=1.0, step=0.01,
+                row(B(1437, "EEVEE_BACKFACE_HIT", "Backface", True, "eevee.ray_tracing_options.use_backface_hit", enable=("EEVEE_RAYTRACING", 1), since="5.2"),
+                    F(1438, "EEVEE_BACKFACE_SCALE", "Backface", 0.25, "eevee.ray_tracing_options.backface_radiance_scale", min=0.0, max=1.0, step=0.01, since="5.2",
                       enable=("EEVEE_BACKFACE_HIT", 1))),
             ], advanced=ADV),
             group(2151, "EEVEE_GROUP_RAY_DENOISING", "Denoising", [
@@ -580,21 +590,26 @@ def main():
     def text_or_null(value):
         return f'"{value}"' if value else "nullptr"
 
+    def since(entry):
+        major, minor = entry["since"].split(".")
+        return int(major) * 100 + int(minor)
+
     lines = ["// SPDX-License-Identifier: Apache-2.0", generated.rstrip(), "// Included by render_settings_map.cpp only, after the types used here.", "",
              "#ifndef RENDER_SETTINGS_TABLE_H__", "#define RENDER_SETTINGS_TABLE_H__", "",
-             "// Every setting with a number or a checkbox: id, type, default, Blender property (or nullptr), second property.",
+             "// Every setting with a number or a checkbox: id, type, default, Blender property (or nullptr), second property,",
+             "// the first Blender that has the property (major * 100 + minor), the label.",
              "static const Setting SETTINGS[] =", "{"]
     for entry in entries:
         if entry["kind"] in ("BOOL", "INT", "FLOAT"):
             default = number(entry["default"])
-            lines.append(f"\t{{ {entry['symbol']}, SETTINGTYPE::{entry['kind']}, {default}, {text_or_null(entry['path'])}, {text_or_null(entry['path2'])} }},")
+            lines.append(f"\t{{ {entry['symbol']}, SETTINGTYPE::{entry['kind']}, {default}, {text_or_null(entry['path'])}, {text_or_null(entry['path2'])}, {since(entry)}, {text_or_null(entry['label'])} }},")
     lines += ["};", "", "// Settings that choose one of several named options; Blender receives the option's name.",
               "static const ChoiceSetting CHOICES[] =", "{"]
     most = max(len(entry["options"]) for entry in entries if entry["kind"] == "CHOICE")
     for entry in entries:
         if entry["kind"] == "CHOICE":
             names = [f'"{name}"' for _suffix, _label, name in entry["options"]] + ["nullptr"] * (most + 1 - len(entry["options"]))
-            lines.append(f"\t{{ {entry['symbol']}, {entry['default']}, {text_or_null(entry['path'])}, {text_or_null(entry['path2'])}, {{ {', '.join(names)} }} }},")
+            lines.append(f"\t{{ {entry['symbol']}, {entry['default']}, {text_or_null(entry['path'])}, {text_or_null(entry['path2'])}, {{ {', '.join(names)} }}, {since(entry)}, {text_or_null(entry['label'])} }},")
     lines += ["};", f"static const maxon::Int32 CHOICE_OPTIONS = {most + 1};", "",
               "// Groups and settings that belong to one engine and are hidden for the other.",
               "static const EngineOnly ENGINE_ONLY[] =", "{"]

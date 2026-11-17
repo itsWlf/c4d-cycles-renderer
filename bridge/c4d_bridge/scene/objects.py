@@ -13,6 +13,29 @@ def build_object(scene, item, blobs):
     place(obj, item)
     assign_materials(scene, obj, item)
     set_visibility(obj, item)
+    set_properties(obj, item)
+
+
+def set_properties(obj, item):
+    """Custom properties of the object ({name: number}), which a material reads with an
+    Attribute node of type OBJECT or INSTANCER. Those set by an earlier request and not sent
+    again are removed."""
+    wanted = item.get("properties") or {}
+    for name in obj.get(_SENT, "").split("\n"):
+        if name and name not in wanted and name in obj:
+            del obj[name]
+    for name, value in wanted.items():
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not name or "\n" in name:
+            raise RequestError("bad_request", f"{item['kind']} {item['id']!r}: property {name!r} must be a number")
+        obj[name] = value
+    if wanted:
+        obj[_SENT] = "\n".join(wanted)
+    elif _SENT in obj:
+        del obj[_SENT]
+
+
+# The names of the properties the plugin set on an object, one per line, kept on the object.
+_SENT = "_c4d_bridge_properties"
 
 
 def set_visibility(obj, item):

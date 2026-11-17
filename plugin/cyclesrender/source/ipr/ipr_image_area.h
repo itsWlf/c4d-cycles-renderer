@@ -9,6 +9,7 @@
 #include "c4d_gui.h"
 
 #include "../session/frame_reader.h"
+#include "ipr_navigation.h"
 
 namespace cyclesrender
 {
@@ -18,6 +19,27 @@ enum
 {
 	IPR_IMAGE_ZOOM_CHANGED = 1,	///< the user zoomed with the mouse wheel
 	IPR_IMAGE_CLICKED = 2				///< a plain click, without dragging
+};
+
+//----------------------------------------------------------------------------------------
+/// What a navigating drag in the picture asks of its window (0.2.0, F17; ipr_navigation.h). The
+/// drag is a modal loop of the picture's own (MouseDrag), in which the window's timer does not run,
+/// so the window moves the camera, sends it and shows the frames that come back from inside it.
+//----------------------------------------------------------------------------------------
+class IprNavigationHandler
+{
+public:
+	virtual ~IprNavigationHandler() = default;
+	/// A drag that navigates begins at (@p imageX, @p imageY), in render pixels of the frame on
+	/// screen, with the picture shown at @p zoom. False: it does not navigate (the window has said
+	/// why), and the drag does nothing.
+	virtual maxon::Bool BeginNavigation(IPRNAV mode, maxon::Float64 imageX, maxon::Float64 imageY, maxon::Float64 zoom, maxon::Int32 qualifier) = 0;
+	/// The mouse went (@p dx, @p dy) screen pixels further, right and down positive.
+	virtual void Navigate(maxon::Float64 dx, maxon::Float64 dy) = 0;
+	/// The mouse stands still with the button held: the picture still takes new frames.
+	virtual void NavigationIdle() = 0;
+	/// The button was released, or Escape pressed (@p cancelled).
+	virtual void EndNavigation(maxon::Bool cancelled) = 0;
 };
 
 //----------------------------------------------------------------------------------------
@@ -100,10 +122,15 @@ public:
 	/// A line of text over the picture, for "starting" and error states. Empty: none.
 	void SetMessage(const maxon::String& message);
 
+	/// Who moves the camera when a drag navigates (NavigationForDrag); nullptr: no drag navigates.
+	void SetNavigationHandler(IprNavigationHandler* handler) { _navigation = handler; }
+
 	/// 1 = one render pixel per screen pixel. Rounded to 0.1 % and kept between 2 % and 6400 %;
 	/// GetZoom() returns what was made of it.
 	void SetZoom(maxon::Float64 zoom);
 	maxon::Float64 GetZoom() const { return _zoom; }
+	/// The image point (render pixels) shown in the middle of the area.
+	void GetCenter(maxon::Float64& x, maxon::Float64& y) const { x = _centerX; y = _centerY; }
 	/// Centres the picture, at full size if that fits into the area and scaled down to fit otherwise.
 	void FrameImage();
 
@@ -118,6 +145,10 @@ private:
 	void Convert(cinema::BaseDocument* doc);
 	void ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::Float64 areaY);
 	void NotifyParent(cinema::Int32 what);
+	/// The modal loop of a navigating drag that began at (@p mouseX, @p mouseY), area pixels.
+	void NavigationDrag(IPRNAV mode, cinema::Int32 channel, cinema::Int32 mouseX, cinema::Int32 mouseY, cinema::Int32 qualifier);
+
+	IprNavigationHandler* _navigation = nullptr;
 
 	Frame _frame;
 	cinema::BaseBitmap* _display = nullptr;	///< 8-bit, view transform applied

@@ -6,6 +6,8 @@
 
 #include "c4d.h"
 
+#include "../session/blender_install.h"
+
 namespace cyclesrender
 {
 
@@ -18,6 +20,21 @@ cinema::Filename GetBlenderPathOrDetect();
 
 /// The line describing whether that executable can be used (see DescribeBlender()).
 cinema::String GetBlenderStatus();
+
+//----------------------------------------------------------------------------------------
+/// The Blender that renders (GetBlenderPathOrDetect()) and its version, for what depends on the
+/// version: nodes, sockets and settings a version lacks are left out of what is sent, and the
+/// Node Editor marks nodes it lacks. Learned by running the executable once per path and session
+/// (about a second; SetBlenderPath() and detection fill it at once), then kept in memory. May be
+/// called from any thread. found is false when there is no Blender; Code() is 0 when its version
+/// could not be learned.
+//----------------------------------------------------------------------------------------
+BlenderInstall GetBlenderInUse();
+
+/// What a Blender started from @p executable reported itself (the bridge's hello): corrects the
+/// version kept for that path, should the executable have been replaced by another version.
+void NoteBlenderVersion(const cinema::Filename& executable, maxon::Int32 major, maxon::Int32 minor, maxon::Int32 patch,
+	const maxon::String& versionText);
 
 /// Stores a new executable path, runs it to learn its version, and stores the resulting status.
 /// Blocks for about a second when the file exists.
@@ -39,6 +56,12 @@ void DetectBlenderOnFirstStart();
 /// IPR worked before, for hunting a fault.
 cinema::Bool GetIprSkipUnchangedMeshes();
 void SetIprSkipUnchangedMeshes(cinema::Bool skip);
+
+/// Preferences > Renderer > Cycles Render > IPR, "Navigate in the IPR Window" (0.2.0, F17): a drag
+/// with Cinema 4D's navigation keys in the IPR's picture moves the camera the IPR renders through
+/// (ipr/ipr_navigation.h). On by default; off, such a drag pans the picture as every drag did before.
+cinema::Bool GetIprNavigate();
+void SetIprNavigate(cinema::Bool navigate);
 
 } // namespace cyclesrender
 

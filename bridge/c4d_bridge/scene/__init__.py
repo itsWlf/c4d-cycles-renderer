@@ -82,10 +82,14 @@ class Scene:
             native.forget(item_id)
             for collection, store in ((bpy.data.meshes, self.meshes), (bpy.data.materials, self.materials),
                                       (bpy.data.images, self.images), (bpy.data.volumes, self.volumes),
-                                      (bpy.data.hair_curves, self.curves), (bpy.data.pointclouds, self.pointclouds)):
+                                      (bpy.data.hair_curves, self.curves)):
                 data = store.pop(item_id, None)
                 if data is not None and data not in native.protected():
                     collection.remove(data)
+            # A point cloud is a mesh in Blender 5.0 (pointclouds.py).
+            data = self.pointclouds.pop(item_id, None)
+            if data is not None:
+                pointclouds.remove_data(data)
 
     def _remove_object(self, item_id):
         old = self.objects.pop(item_id, None)

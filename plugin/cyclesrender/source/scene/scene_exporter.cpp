@@ -26,6 +26,7 @@
 #include "../ids.h"
 #include "../lights/light_tag.h"
 #include "../materials/material_export.h"
+#include "../sdk_compat.h"
 #include "camera_export.h"
 #include "curves_export.h"
 #include "lib_hair.h"
@@ -58,6 +59,46 @@ static maxon::UInt64 MixKeys(maxon::UInt64 a, maxon::UInt64 b)
 static maxon::String KeyId(const maxon::Char* prefix, maxon::UInt64 key)
 {
 	return maxon::String(prefix) + maxon::String::HexToString(key, false);
+}
+
+// Redshift's Object tag (Redshift's own plugin id, Trsobject in its res/description; not in the
+// SDK): its Object ID and the switch that makes it count (trsobject.h, the same in 2024 to 2027).
+static const cinema::Int32 REDSHIFT_OBJECT_TAG = 1036222;
+static const cinema::Int32 REDSHIFT_OBJECT_OBJECTID_ID = 1000;
+static const cinema::Int32 REDSHIFT_OBJECT_OBJECTID_OVERRIDE = 1999;
+
+// A path of names joined by "/" ("Cloner/Null/Cube 0").
+static maxon::String JoinPath(const maxon::String& parent, const maxon::String& name)
+{
+	if (name.IsEmpty())
+		return parent;
+	return parent.IsEmpty() ? name : parent + "/"_s + name;
+}
+
+// The names from the top of @p op's tree down to @p op.
+static maxon::String TreePath(const cinema::BaseObject* op)
+{
+	maxon::String path;
+	for (; op; op = op->GetUp())
+		path = path.IsEmpty() ? maxon::String(op->GetName()) : maxon::String(op->GetName()) + "/"_s + path;
+	return path;
+}
+
+// The name key of Redshift's random nodes: a number in 0..1 (24 bits, exact in a float) from a
+// path, by FNV-1a over its UTF-8 bytes, the same in every session and Cinema 4D version. Equal
+// paths give equal keys, as Redshift's own (other) hash does.
+static maxon::Float64 NameKey(const maxon::String& path)
+{
+	maxon::UInt32 hash = 2166136261u;
+	iferr (const maxon::BaseArray<maxon::Char> bytes = path.GetCString())
+		return 0.0;
+	for (const maxon::Char c : bytes)
+	{
+		if (c == 0)
+			break;
+		hash = (hash ^ maxon::UInt32(maxon::UChar(c))) * 16777619u;
+	}
+	return maxon::Float64(hash >> 8) / 16777216.0;
 }
 
 static maxon::String VectorText(const cinema::Vector& v)
@@ -95,6 +136,34 @@ static maxon::Result<maxon::Bool> ReadCloneColors(cinema::BaseObject* op, maxon:
 		offsets.Append(matrixArray[i].off) iferr_return;
 	}
 	return !colors.IsEmpty();
+}
+
+// The frame is rendered by an Eevee that shows no light to the camera (ExportLight).
+static maxon::Bool EeveeHidesLights(const ExportSettings& settings)
+{
+	return settings.eevee && settings.blenderVersion != 0 && settings.blenderVersion < EEVEE_LIGHT_VISIBLE_VERSION;
+}
+
+maxon::Result<maxon::Bool> SceneExporter::WriteLightAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
+	const cinema::BaseObject* light, const maxon::String& id, const LightLinking* linking)
+{
+	iferr_scope;
+	if (!doc || !light)
+		return maxon::NullptrError(MAXON_SOURCE_LOCATION);
+
+	// The global matrix as Walk() forms it: the root's local matrix times each child's, from the top
+	// down, in that order, so that the numbers agree to the last bit (GetMg() may round differently).
+	maxon::BaseArray<const cinema::BaseObject*> chain;
+	for (const cinema::BaseObject* op = light; op; op = op->GetUp())
+	{
+		chain.Append(op) iferr_return;
+	}
+	cinema::Matrix mg = chain[chain.GetCount() - 1]->GetMl();
+	for (maxon::Int i = chain.GetCount() - 2; i >= 0; --i)
+		mg = mg * chain[i]->GetMl();
+
+	const DocumentColors colors(doc);
+	return ExportLight(writer, Coords::FromDocument(doc), colors, light, mg, id, settings.lightMultiplier, linking, EeveeHidesLights(settings));
 }
 
 SceneExporter::SceneExporter(cinema::BaseDocument* doc, const ExportSettings& settings)
@@ -219,6 +288,8 @@ maxon::Result<void> SceneExporter::AddMeshLeaf(cinema::BaseObject* object, const
 	leaf.ownerObject = inherited.ownerObject;
 	leaf.linkTag = inherited.linkTag;
 	leaf.visibility = inherited.visibility;
+	leaf.nameKey = NameKey(inherited.keyPath);
+	leaf.objectId = inherited.objectId;
 	_leaves.Append(std::move(leaf)) iferr_return;
 	return maxon::OK;
 }
@@ -352,6 +423,14 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 
 	const maxon::String path = parentPath.IsEmpty() ? maxon::String(op->GetName()) : FormatString("@/@", parentPath, op->GetName());
 
+	// The keys of Redshift's random nodes (Leaf::nameKey): on entry keyPath is the parent's.
+	inherited.keyPath = JoinPath(inherited.keyPath, op->GetName());
+	if (const cinema::BaseTag* const rsObject = op->GetTag(REDSHIFT_OBJECT_TAG))
+	{
+		if (GetBoolParameter(rsObject, REDSHIFT_OBJECT_OBJECTID_OVERRIDE, false))
+			inherited.objectId = GetIntParameter(rsObject, REDSHIFT_OBJECT_OBJECTID_ID, 0);
+	}
+
 	// Only the object this was set for hands the clone colours to its children.
 	const CloneColors* const clones = inherited.clones;
 	inherited.clones = nullptr;
@@ -444,7 +523,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	// The object a render instance refers to is drawn where the instance is, whatever hides the
 	// original's parents and even when the original is itself the input of a generator. Its own
 	// render dot still counts: Cinema 4D renders no instance of an object switched off that way.
-	const maxon::Bool consumed = !instanceRoot && op->GetBit(BIT_CONTROLOBJECT);
+	const maxon::Bool consumed = !instanceRoot && !inherited.sphereCache && op->GetBit(BIT_CONTROLOBJECT);
 	const maxon::Bool renders = inherited.visible && layerVisible && !consumed;
 	const maxon::Int32 type = op->GetType();
 
@@ -548,6 +627,25 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			Inherited forReference = inherited;
 			forReference.layerVisible = layerVisible;
 			++forReference.instanceDepth;
+			// Redshift varies its random nodes by the object a render instance shows, not by the
+			// instance (measured: every render instance of one object, and every clone of a Cloner
+			// in render-instance or multi-instance mode, gets one value): the key path is the
+			// reference's own. A reference in the same tree as the instance (a Cloner's cache) is
+			// found under the same path above that tree as the instance.
+			{
+				const cinema::BaseObject* rootOfReference = reference;
+				while (rootOfReference->GetUp())
+					rootOfReference = rootOfReference->GetUp();
+				const cinema::BaseObject* rootOfInstance = op;
+				while (rootOfInstance->GetUp())
+					rootOfInstance = rootOfInstance->GetUp();
+				maxon::String parentKey = TreePath(reference->GetUp());
+				const maxon::String instanceTree = TreePath(op);
+				const maxon::Int above = inherited.keyPath.GetLength() - instanceTree.GetLength();
+				if (rootOfReference == rootOfInstance && above > 0 && inherited.keyPath.EndsWith(instanceTree))
+					parentKey = JoinPath(inherited.keyPath.GetPart(0, above - 1), parentKey);
+				forReference.keyPath = parentKey;
+			}
 			if (!instance->IsMultiInstance())
 			{
 				Walk(reference, mg, forReference, path, true, MixKeys(key, reference->GetGUID()), true) iferr_return;
@@ -586,6 +684,9 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			Inherited forCache = inherited;
 			forCache.layerVisible = layerVisible;
 			forCache.deformed = inherited.deformed || cacheIsDeformed;
+			// A "Render Perfect" sphere in a render document prepared by Cinema 4D before 2026.2
+			// (see Inherited::sphereCache; measured with 2024.5).
+			forCache.sphereCache = type == Osphere && !consumed;
 			// MoGraph's colour per clone travels with the clones.
 			CloneColors cloneColors;
 			if (type == Omgcloner && !cacheIsDeformed)
@@ -608,6 +709,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	// objects assigned to it.
 	Inherited forChildren = inherited;
 	forChildren.layerVisible = inherited.layerVisible;
+	forChildren.sphereCache = false;
 	maxon::Int childCount = 0;
 	if (clones)
 	{
@@ -854,6 +956,7 @@ maxon::Result<void> SceneExporter::Resolve(const Leaf& leaf, WriteState& state, 
 		}
 		const maxon::String materialId = state.materials.GetMaterialId(layers) iferr_return;
 		resolved.materialIds.Append(materialId) iferr_return;
+		resolved.objectKeys = resolved.objectKeys || state.materials.ReadsObjectKeys(materialId);
 	}
 	return maxon::OK;
 }
@@ -1048,12 +1151,20 @@ maxon::Result<void> SceneExporter::WriteObject(SceneWriter& writer, const Leaf& 
 	}
 	WriteMaterialIds(json, resolved.materialIds);
 	WriteVisibility(json, leaf.visibility);
+	if (resolved.objectKeys)
+	{
+		json.BeginObject("properties");
+		json.Float(OBJECT_NAME_KEY, leaf.nameKey);
+		json.Int(OBJECT_ID_KEY, leaf.objectId);
+		json.EndObject();
+	}
 	writer.EndItem();
 	return maxon::OK;
 }
 
 maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
-	const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const Visibility& visibility)
+	const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
+	const Visibility& visibility)
 {
 	iferr_scope;
 
@@ -1085,7 +1196,7 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 			_ocioTried = true;
 			if (_colors.IsOcio())
 			{
-				iferr (_ocio = cinema::OcioConverter::Init(_doc, nullptr))
+				iferr (_ocio = InitOcioConverter(_doc, nullptr))
 					_ocio = nullptr;
 			}
 		}
@@ -1118,12 +1229,39 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 		}
 	}
 
+	// The object keys of Redshift's random nodes, per copy (Leaf::nameKey).
+	maxon::Int nameKeysBlob = NOTOK;
+	maxon::Int objectIdsBlob = NOTOK;
+	if (keys && keys->GetCount() == count)
+	{
+		maxon::Float32* const names = writer.AllocFloats(count, nameKeysBlob) iferr_return;
+		maxon::Float32* const ids = writer.AllocFloats(count, objectIdsBlob) iferr_return;
+		for (maxon::Int i = 0; i < count; ++i)
+		{
+			names[i] = maxon::Float32((*keys)[i].x);
+			ids[i] = maxon::Float32((*keys)[i].y);
+		}
+	}
+
 	JsonWriter& json = writer.BeginItem("instancer", id);
 	json.String("mesh", resolved.meshId);
 	WriteMaterialIds(json, resolved.materialIds);
 	json.Int("matrices", matricesBlob);
 	if (colorsBlob != NOTOK)
 		json.Int("colors", colorsBlob);
+	if (nameKeysBlob != NOTOK)
+	{
+		json.BeginArray("floats");
+		json.BeginObject();
+		json.String("name", maxon::String(OBJECT_NAME_KEY));
+		json.Int("data", nameKeysBlob);
+		json.EndObject();
+		json.BeginObject();
+		json.String("name", maxon::String(OBJECT_ID_KEY));
+		json.Int("data", objectIdsBlob);
+		json.EndObject();
+		json.EndArray();
+	}
 	WriteVisibility(json, visibility);
 	writer.EndItem();
 	return maxon::OK;
@@ -1137,6 +1275,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		writer.Warn(note);
 
 	WriteState state(writer, _doc, _settings.bakeResolution);
+	state.materials.SetBlenderVersion(_settings.blenderVersion, _settings.blenderVersionText);
 	for (const Leaf& leaf : _leaves)
 	{
 		if (leaf.kind != LEAF::MESH || !leaf.generated)
@@ -1261,15 +1400,23 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		}
 		maxon::BaseArray<cinema::Matrix> matrices;
 		maxon::BaseArray<cinema::Vector> colors;
+		maxon::BaseArray<maxon::Vector2d> keys;
 		matrices.EnsureCapacity(group.count) iferr_return;
 		colors.EnsureCapacity(group.count) iferr_return;
 		for (maxon::Int index : group.leaves)
 		{
 			const Leaf& leaf = _leaves[index];
+			// The copies of a multi-instance share the keys of the one leaf they come from (Redshift
+			// gives them one value, measured).
+			const maxon::Vector2d key(leaf.nameKey, maxon::Float64(leaf.objectId));
 			if (leaf.instanceSet == NOTOK)
 			{
 				matrices.Append(leaf.mg) iferr_return;
 				colors.Append(leaf.hasColor ? leaf.color : cinema::Vector(0.5)) iferr_return;
+				if (group.resolved.objectKeys)
+				{
+					keys.Append(key) iferr_return;
+				}
 				continue;
 			}
 			// A multi-instance: the mesh once per copy. The leaf's matrix is relative to a copy.
@@ -1278,21 +1425,40 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			{
 				matrices.Append((*set.matrices)[i] * leaf.mg) iferr_return;
 				colors.Append(set.colors ? cinema::Vector((*set.colors)[i].r, (*set.colors)[i].g, (*set.colors)[i].b) : cinema::Vector(0.5)) iferr_return;
+				if (group.resolved.objectKeys)
+				{
+					keys.Append(key) iferr_return;
+				}
 			}
 		}
 		const maxon::String instancerId = KeyId("instancer_", _leaves[group.leaves[0]].key);
-		WriteInstancer(writer, instancerId, group.resolved, matrices, group.hasColor ? &colors : nullptr, _leaves[group.leaves[0]].visibility) iferr_return;
+		WriteInstancer(writer, instancerId, group.resolved, matrices, group.hasColor ? &colors : nullptr, group.resolved.objectKeys ? &keys : nullptr,
+			_leaves[group.leaves[0]].visibility) iferr_return;
 		for (maxon::Int index : group.leaves)
 			itemIds[index] = instancerId;
 	}
 
+	_writtenLights.Reset();
 	for (const Leaf& leaf : _leaves)
 	{
 		if (leaf.kind != LEAF::LIGHT)
 			continue;
 		LightLinking linking;
 		const maxon::Bool linked = GetLightLinking(leaf, itemIds, linking) iferr_return;
-		ExportLight(writer, _coords, _colors, leaf.object, leaf.mg, KeyId("light_", leaf.key), _settings.lightMultiplier, linked ? &linking : nullptr) iferr_return;
+		const maxon::String id = KeyId("light_", leaf.key);
+		ExportLight(writer, _coords, _colors, leaf.object, leaf.mg, id, _settings.lightMultiplier, linked ? &linking : nullptr,
+			EeveeHidesLights(_settings)) iferr_return;
+		// An object of the document is walked under its own GUID (Collect, Walk), with its matrix
+		// formed from the local ones of its parents: such a light can be written again by itself.
+		if (leaf.key == leaf.object->GetGUID())
+		{
+			WrittenLight written;
+			written.object = leaf.object;
+			written.id = id;
+			written.linked = linked;
+			written.linking = std::move(linking);
+			_writtenLights.Append(std::move(written)) iferr_return;
+		}
 	}
 
 	for (maxon::Int i = 0; i < volumes.GetCount(); ++i)
@@ -1311,7 +1477,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			cameraMotion[0] = _motionOpen->camera;
 			cameraMotion[1] = _motionClose->camera;
 		}
-		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee, CameraFraming::Full(_settings.width, _settings.height, _settings.pixelAspect),
+		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee && _settings.blenderVersion < EEVEE_PANORAMA_VERSION, CameraFraming::Full(_settings.width, _settings.height, _settings.pixelAspect),
 			moves ? cameraMotion : nullptr) iferr_return;
 	}
 	// A Sky object comes first; then a Redshift dome light; then the plain world of the render settings.
@@ -1401,6 +1567,112 @@ maxon::Result<maxon::String> SceneExporter::GetSourceListing() const
 	json.EndArray();
 	json.EndObject();
 	return json.GetText();
+}
+
+// --- the point under the mouse (the IPR's navigation) ----------------------------------------
+
+// The nearest hit closer than `best` of the ray o + d t (t in document units along the world ray; o
+// and d already in the mesh's own axes) with the mesh: its bounding box first, then every triangle
+// (a quad as two, as Cinema 4D splits it), both sides (Moeller and Trumbore). Updates `best`.
+static maxon::Bool HitMesh(const cinema::PolygonObject* mesh, const cinema::Vector& o, const cinema::Vector& d, maxon::Float64& best)
+{
+	const cinema::Vector centre = mesh->GetMp();
+	const cinema::Vector half = mesh->GetRad();
+	maxon::Float64 enter = 0.0;
+	maxon::Float64 leave = best;
+	for (maxon::Int axis = 0; axis < 3; ++axis)
+	{
+		const maxon::Float64 low = centre[axis] - half[axis] - 1e-6;
+		const maxon::Float64 high = centre[axis] + half[axis] + 1e-6;
+		if (maxon::Abs(d[axis]) < 1e-300)
+		{
+			if (o[axis] < low || o[axis] > high)
+				return false;
+			continue;
+		}
+		maxon::Float64 t0 = (low - o[axis]) / d[axis];
+		maxon::Float64 t1 = (high - o[axis]) / d[axis];
+		if (t0 > t1)
+			std::swap(t0, t1);
+		enter = maxon::Max(enter, t0);
+		leave = maxon::Min(leave, t1);
+		if (enter > leave)
+			return false;
+	}
+
+	const cinema::Vector* const points = mesh->GetPointR();
+	const cinema::CPolygon* const polygons = mesh->GetPolygonR();
+	const maxon::Int32 pointCount = mesh->GetPointCount();
+	if (!points || !polygons)
+		return false;
+	maxon::Bool hit = false;
+	const auto triangle = [&](maxon::Int32 a, maxon::Int32 b, maxon::Int32 c)
+	{
+		if (a < 0 || b < 0 || c < 0 || a >= pointCount || b >= pointCount || c >= pointCount)
+			return;
+		const cinema::Vector e1 = points[b] - points[a];
+		const cinema::Vector e2 = points[c] - points[a];
+		const cinema::Vector p = Cross(d, e2);
+		const maxon::Float64 det = Dot(e1, p);
+		if (maxon::Abs(det) < 1e-300)
+			return;
+		const maxon::Float64 inverse = 1.0 / det;
+		const cinema::Vector s = o - points[a];
+		const maxon::Float64 u = Dot(s, p) * inverse;
+		if (u < 0.0 || u > 1.0)
+			return;
+		const cinema::Vector q = Cross(s, e1);
+		const maxon::Float64 v = Dot(d, q) * inverse;
+		if (v < 0.0 || u + v > 1.0)
+			return;
+		const maxon::Float64 t = Dot(e2, q) * inverse;
+		if (t > 1e-9 && t < best)
+		{
+			best = t;
+			hit = true;
+		}
+	};
+	const maxon::Int32 polygonCount = mesh->GetPolygonCount();
+	for (maxon::Int32 i = 0; i < polygonCount; ++i)
+	{
+		const cinema::CPolygon& polygon = polygons[i];
+		triangle(polygon.a, polygon.b, polygon.c);
+		if (polygon.c != polygon.d)
+			triangle(polygon.a, polygon.c, polygon.d);
+	}
+	return hit;
+}
+
+maxon::Bool SceneExporter::FindNearestHit(const cinema::Vector& origin, const cinema::Vector& direction, maxon::Float64 length,
+	const maxon::Delegate<maxon::Bool(const cinema::BaseObject*)>& accept, maxon::Float64& distance) const
+{
+	maxon::Float64 best = length;
+	maxon::Bool found = false;
+	const auto test = [&](const cinema::PolygonObject* mesh, const cinema::Matrix& mg)
+	{
+		// The ray in the mesh's own axes; its parameter stays the distance along the world ray.
+		const cinema::Matrix inverse = ~mg;
+		if (HitMesh(mesh, inverse * origin, inverse.sqmat * direction, best))
+			found = true;
+	};
+	for (const Leaf& leaf : _leaves)
+	{
+		if (leaf.kind != LEAF::MESH || !leaf.visibility.camera)
+			continue;
+		if (accept && !accept(leaf.ownerObject))
+			continue;
+		const cinema::PolygonObject* const mesh = static_cast<const cinema::PolygonObject*>(leaf.object);
+		if (leaf.instanceSet == NOTOK)
+		{
+			test(mesh, leaf.mg);
+			continue;
+		}
+		// A multi-instance: the mesh once per copy (the leaf's matrix is relative to a copy).
+		for (const cinema::Matrix& copy : *_instanceSets[leaf.instanceSet].matrices)
+			test(mesh, copy * leaf.mg);
+	}
+	distance = best;
+	return found;
 }
 
 } // namespace cyclesrender

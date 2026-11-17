@@ -469,6 +469,63 @@ maxon::Result<void> ExportCamera(SceneWriter& writer, const Coords& coords, cons
 	return maxon::OK;
 }
 
+// How far behind its plane the ray of a parallel view starts when the view sees behind it
+// (CameraRay), in document units: further than any scene the views draw.
+static const maxon::Float64 RAY_START_BEHIND = 1.0e6;
+
+maxon::Bool CameraRay(const CameraValues& camera, const CameraFraming& framing, maxon::Float64 x, maxon::Float64 y, cinema::Vector& origin,
+	cinema::Vector& direction)
+{
+	if (camera.kind == CAMERAKIND::PANORAMIC || framing.frameWidth <= 0.0 || framing.frameHeight <= 0.0)
+		return false;
+	const cinema::Vector right = camera.mg.sqmat.v1.GetNormalized();
+	const cinema::Vector up = camera.mg.sqmat.v2.GetNormalized();
+	const cinema::Vector forward = camera.mg.sqmat.v3.GetNormalized();
+	// Image pixels from the picture's centre, right and up, with the film offset (ExportCamera: Blender's
+	// shift moves the view right by offset X and down by offset Y, in picture widths and heights).
+	const maxon::Float64 across = x - framing.width * 0.5 + camera.filmOffsetX * framing.frameWidth;
+	const maxon::Float64 upward = framing.height * 0.5 - y - camera.filmOffsetY * framing.frameHeight;
+	if (camera.kind == CAMERAKIND::ORTHOGRAPHIC)
+	{
+		const maxon::Float64 units = camera.parallelWidth / framing.frameWidth;
+		origin = camera.mg.off + right * (across * units) + up * (upward * units);
+		// An oblique view's rays run slanted (ViewMatrix).
+		direction = (forward - camera.obliqueX * right + camera.obliqueY * up).GetNormalized();
+		if (!camera.clipsBehind)
+			origin -= direction * RAY_START_BEHIND;
+		return true;
+	}
+	if (camera.focalLength <= 0.0)
+		return false;
+	// The sensor spans the camera's picture across (Blender's sensor fit is horizontal).
+	const maxon::Float64 slope = camera.sensorWidth / (camera.focalLength * framing.frameWidth);
+	origin = camera.mg.off;
+	direction = (forward + right * (across * slope) + up * (upward * slope)).GetNormalized();
+	return true;
+}
+
+maxon::Float64 UnitsPerPixel(const CameraValues& camera, const CameraFraming& framing, maxon::Float64 depth)
+{
+	if (framing.frameWidth <= 0.0)
+		return 0.0;
+	if (camera.kind == CAMERAKIND::ORTHOGRAPHIC)
+		return camera.parallelWidth / framing.frameWidth;
+	if (camera.kind == CAMERAKIND::PANORAMIC)
+	{
+		const PanoramaValues& panorama = camera.panorama;
+		maxon::Float64 angle = maxon::PI05;
+		if (panorama.type == CYCLESCAMERA_PANORAMA_EQUIRECTANGULAR)
+			angle = panorama.longitudeMax - panorama.longitudeMin;
+		else if (panorama.type == CYCLESCAMERA_PANORAMA_FISHEYE_EQUIDISTANT || panorama.type == CYCLESCAMERA_PANORAMA_FISHEYE_EQUISOLID ||
+			panorama.type == CYCLESCAMERA_PANORAMA_FISHEYE_LENS_POLYNOMIAL)
+			angle = panorama.fisheyeFov;
+		else if (panorama.type == CYCLESCAMERA_PANORAMA_CENTRAL_CYLINDRICAL)
+			angle = panorama.cylinderUMax - panorama.cylinderUMin;
+		return depth * maxon::Abs(angle) / framing.frameWidth;
+	}
+	return camera.focalLength > 0.0 ? depth * camera.sensorWidth / (camera.focalLength * framing.frameWidth) : 0.0;
+}
+
 maxon::Bool WriteFreeView(JsonWriter& request, const Coords& coords, const CameraValues& camera,
 	maxon::Bool depthOfField, const CameraFraming& framing)
 {

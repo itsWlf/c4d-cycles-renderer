@@ -31,6 +31,17 @@ void OpenIprDialog();
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::String& argument, maxon::String& problem);
 
+/// Any thread: the window is open, the IPR renders, and its timer has not run for three periods,
+/// so Cinema 4D is in a modal loop (a drag in a view or in the Attribute Manager). For ipr_scenehook.h.
+maxon::Bool IsIprInModalLoop();
+
+//----------------------------------------------------------------------------------------
+/// Main thread: the active document has been evaluated, or a frame arrived (ipr_scenehook.h). If
+/// Cinema 4D is in a modal loop, the lights are followed (IprController::FollowLights) and the
+/// newest frame is shown. Otherwise nothing: the change event and the timer do that.
+//----------------------------------------------------------------------------------------
+void FollowIprEvaluation();
+
 /// Number of scene cameras the window's dropdown lists; NOTOK when the window is closed. For tests.
 maxon::Int GetIprDialogCameraCount();
 
@@ -40,6 +51,10 @@ const Frame* GetIprDialogFrame();
 /// Zoom of the window's picture and the value its zoom field holds (1 = 100 %; the field 0 when
 /// the window is closed), and the time the last display conversion took, for tests.
 void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open);
+
+/// Where the window's picture is on the screen, in screen pixels, and the image point shown in its
+/// middle (render pixels). False while the window is closed. For tests that post mouse messages to it.
+maxon::Bool GetIprImageScreenRect(maxon::Int32& left, maxon::Int32& top, maxon::Int32& width, maxon::Int32& height, maxon::Float64& centerX, maxon::Float64& centerY);
 
 } // namespace cyclesrender
 

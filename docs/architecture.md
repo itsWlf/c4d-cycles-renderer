@@ -20,7 +20,7 @@ How Cycles Render is built, and the reason behind each decision. Read this befor
 
 ## The product
 
-A render engine plugin for Cinema 4D 2027 that renders the Cinema 4D scene with Blender's Cycles and Eevee engines by driving a Blender 5.2 process. It provides:
+A render engine plugin for Cinema 4D 2024, 2025, 2026 and 2027 that renders the Cinema 4D scene with Blender's Cycles and Eevee engines by driving a Blender process (5.0 to 5.3). It provides:
 
 - a renderer that can be chosen in the Render Settings, with its own settings page;
 - rendering to the Picture Viewer, including animations and render passes;
@@ -69,11 +69,13 @@ Files marked *generated* are written by a tool in `tools/` and never edited by h
 
 ```
 plugin/cyclesrender/            the Cinema 4D module
-  project/CMakeLists.txt        module settings: the SDK frameworks used, the module id
+  project/CMakeLists.txt        module settings: the SDK frameworks used, the module id (the 2024 to 2026
+                                SDKs get a projectdefinition.txt written from it by tools/build_plugin.ps1)
   source/
     main.cpp                    module entry points; registers every hook
     ids.h                       plugin ids
     version.h                   the plugin's version number
+    sdk_compat.h                what differs between the SDKs of Cinema 4D 2024 to 2027, in one place
     videopost/
       cycles_videopost          the renderer: one Blender per render job; per frame, exports the scene and
                                 writes the pixels and passes
@@ -94,7 +96,8 @@ plugin/cyclesrender/            the Cinema 4D module
                                 one kind of item each
       camera_export             the camera: Cinema 4D's projections (the fixed views with their own
                                 axes, oblique ones slanted), its spherical camera, the Cycles Camera tag,
-                                clipping; or the free view of the IPR
+                                clipping; or the free view of the IPR; and the way back, the ray through
+                                a point of the picture
       volume_export             Volume Loader, Volume Builder and Pyro grids as `volume` items
       curves_export             a Hair object as `curves`, a particle group as `pointcloud`
       scene_dump                development aid: a listing of what would be exported
@@ -109,6 +112,8 @@ plugin/cyclesrender/            the Cinema 4D module
       redshift_material         the Redshift Standard Material, option by option
       redshift_nodes            the Redshift nodes wired into its inputs: the Texture node, math, vector
                                 math, colour mix, invert, colour correction, makers and splitters
+      redshift_lookalikes       look-alikes of Jitter, Random Color Switch, Brick and Flakes: the same kind
+                                of picture as Redshift's without its own random numbers and noises
       exchange_material         other node materials through Cinema 4D's material exchange (approximation)
       cycles_node_material      a material of Cycles nodes, written node for node
       cycles_curves             the curves of RGB Curves, Vector Curves and Float Curve: a Cinema 4D spline
@@ -119,8 +124,10 @@ plugin/cyclesrender/            the Cinema 4D module
                                 the Blender it is edited in, the timer that takes in the edits
     nodespace/
       cycles_nodespace          the "Cycles" node space: registers the nodes, their description database
-                                and their folders in the Asset Browser
-      cycles_nodes              Blender's shader nodes as a table; which sockets show for which settings
+                                and their folders in the Asset Browser; the previews, among them the
+                                version card of a node the chosen Blender does not have
+      cycles_nodes              Blender's shader nodes as a table, with the Blender version each node,
+                                socket, setting and option exists from; which sockets show for which settings
       cycles_nodes_table.h      generated: that table
       path_commands             the image nodes' buttons "Make Relative" and "Make Absolute": commands of
                                 the maxon command system
@@ -133,25 +140,32 @@ plugin/cyclesrender/            the Cinema 4D module
                                 settings in place of the light's own, and Blender's settings they lack
       light_settings            what the two share: defaults, which settings show, reading them
     prefs/                      the Preferences page, and the settings stored in Cinema 4D's preferences:
-                                which Blender (settings), Blender's Cycles render devices (devices)
+                                which Blender and its version (settings), Blender's Cycles render devices
+                                (devices)
     session/
-      blender_install           finds Blender and the bridge installed in it; reads Blender's version
+      blender_install           finds Blender and the bridge installed in it; reads Blender's version;
+                                the supported versions
       blender_process           starts Blender with the bridge, waits for the handshake, ends it
       bridge_client             connect, hello, synchronous request and reply with cancel, shutdown
       protocol                  frame encoding and decoding
       json, json_writer         parsing replies; writing request headers
       frame_reader              reads frames and render progress from the frame block
-      frame_watcher             a thread woken by Blender per frame; hands the frame to the window
+      frame_watcher             a thread woken by Blender per frame; hands the frame to the window (a core
+                                message, and a callback for modal loops)
       capture, selftest         development aids: a record of every message; a self-test of this layer
     ipr/
-      ipr_controller            the IPR: state machine, what to send after a change, camera, passes,
-                                engine, latency measurement
+      ipr_controller            the IPR: state machine, what to send after a change, camera, lights alone,
+                                passes, engine, latency measurement
       ipr_worker                a thread that owns one windowed Blender and sends every request
       ipr_dialog                the IPR window and the command that opens it
+      ipr_scenehook             the IPR in Cinema 4D's modal loops: a scene hook called in every evaluation,
+                                and the frame thread's way to the window, both through the main thread's queue
       ipr_add                   what the window's "Add" menu adds to the document; the render view's
                                 camera through undo and redo of its camera entry
-      ipr_image_area            the picture: view transform (DisplayTransform), zoom, pan; the float bitmap
-                                for snapshots and saving
+      ipr_navigation            navigating the scene from the picture: the key scheme, Cinema 4D's navigation
+                                preferences, one drag's orbit, pan or dolly of the IPR's camera with its undo
+      ipr_image_area            the picture: view transform (DisplayTransform), zoom, pan, the drag loop that
+                                navigates; the float bitmap for snapshots and saving
       ipr_testhook              lets test scripts drive the IPR (and set curves of Cycles nodes, which
                                 Python cannot make)
       ipr_trace                 a timeline of what the IPR does, from every thread, for measurements
@@ -182,6 +196,7 @@ bridge/                         the Blender extension
     viewport/                   the viewport driver: the Viewport class, the frame block, window control
 
 protocol/protocol.md            the wire protocol
+docs/reference/cycles-nodes.md  generated: Blender's shader nodes with the version each exists from
 tools/                          build_plugin.ps1, make_release.ps1, run_tests.ps1 and the generators
 ```
 
@@ -211,7 +226,7 @@ Each decision is stated with its reason, so that it can be revisited when the re
 
 11. **Windows first.** Everything specific to the operating system is isolated under `platform/`, behind headers that use plain C++ types only, so that macOS can follow.
 
-12. **The bridge supports specific Blender versions only.** It wraps Cycles' Python class and reads an internal struct, so it checks the Blender version at start and refuses unknown ones. The list is `SUPPORTED_BLENDER` in `bridge/c4d_bridge/__init__.py`; the plugin applies the same rule (`SUPPORTED_VERSIONS` in `session/blender_install.cpp`) before it ever starts Blender.
+12. **The bridge supports specific Blender versions only.** It wraps Cycles' Python class and reads an internal struct, so it checks the Blender version at start and refuses unknown ones. The list is `SUPPORTED_BLENDER` in `bridge/c4d_bridge/__init__.py`; the plugin applies the same rule (`SUPPORTED_VERSIONS` in `session/blender_install.cpp`) before it ever starts Blender. Since 0.2.0 that is 5.0 to 5.3, side by side: one bridge and one plugin for all of them. Differences of Blender's Python API are handled in the bridge by testing for the feature; what the user should know (a node, setting or light behaviour an older Blender lacks) is decided in the plugin, which knows the version from the bridge's `hello` and, before Blender runs, from the executable chosen in the Preferences. *Rejected:* one package per Blender version (the user would have to match them), and a node space per version (a scene would change its nodes with the Blender chosen). While the user has chosen none in the Preferences, detection picks of several installed versions the one the bridge is installed into, else the preferred version (5.2, the long-term support release, while 5.3 has open bugs: `PREFERRED_MAJOR`/`PREFERRED_MINOR` in `session/blender_install.cpp`), else the newest.
 
 13. **Plain blocking sockets, not the SDK's network API.** The SDK's TCP interface is asynchronous and callback-driven; a request and reply connection on a thread of our own needs none of that. The few socket calls live in `platform/socket_win.cpp`, which includes no Cinema 4D headers because the Windows headers clash with them.
 
@@ -229,11 +244,17 @@ Each decision is stated with its reason, so that it can be revisited when the re
 
 20. **By default the IPR image has the size of the window's picture area ("Fit Window").** Resizing the window resizes the render, and the part of the image outside the camera's picture is darkened like the border of Cinema 4D's views. The camera's picture has the aspect of the Render Settings resolution and is the largest centred rectangle of that aspect in the image. Blender renders the larger image through a wider sensor: sensor width, parallel width and film offsets are scaled by image width over picture width while the focal length stays, so depth of field is unchanged. A window being resized is followed once its size has stood still for 0.12 s, because every new size costs Blender a new frame buffer and a restarted render.
 
-21. **The plugin ends only the Blender processes it started.** It holds their handles and never searches for processes by name, so a Blender the user runs for other work is left alone. Blender is also tied to Cinema 4D by the operating system, so it ends even when Cinema 4D is killed.
+21. **The plugin ends only the Blender processes it started.** It holds their handles and never searches for processes by name, so a Blender the user runs for other work is left alone. Blender is also tied to Cinema 4D by the operating system, so it ends even when Cinema 4D is killed (from Cinema 4D 2025 on; the 2024 SDK lacks the flag, and there Blender ends when its connection to the plugin closes).
 
-22. **The Cycles nodes are built in code and described by a generated database.** One table, asked from Blender itself by `tools/make_nodes.py`, feeds both: the plugin builds each node's ports from it and writes a graph back to Blender with it, and a description database generated from it says how a node looks. A new Blender version is one run of the tool, plus a look at the tables the tool holds by hand because Blender does not give them to Python: the panels of a node (`PANELS`), the material's own settings shown on the Material Output (`MATERIAL_SETTINGS`), and the nodes left out (`SKIP_NODES`).
+22. **The Cycles nodes are built in code and described by a generated database.** One table, asked from Blender itself by `tools/make_nodes.py`, feeds both: the plugin builds each node's ports from it and writes a graph back to Blender with it, and a description database generated from it says how a node looks. A new Blender version is one run of the tool, plus a look at the tables the tool holds by hand because Blender does not give them to Python: the panels of a node (`PANELS`), the material's own settings shown on the Material Output (`MATERIAL_SETTINGS`), the nodes each version brought (`NODES_BY_VERSION`, which the tool insists on) and the nodes left out (`SKIP_NODES`). The tool asks every supported Blender and takes the union; every node, socket, setting and option carries the first version that has it, so one node space serves all versions: the exporter leaves out what the Blender in use lacks and says so, and a node a version lacks shows a card on itself (`docs/reference/c4d-sdk.md`, "A node the chosen Blender does not have").
 
 23. **A Cycles Native Material is a Blender material kept as bytes, edited in a Blender of its own.** The material holds a .blend file with that one material. Nothing is translated, so everything Blender's Shader Editor can do is kept (colour ramps, curves, node groups). The editor runs in a second windowed Blender that the plugin keeps for editing, apart from the IPR's, because with both in one Blender the IPR's picture went dark when the editor opened. Edits come back through files in the preferences folder that a timer reads four times a second, because the protocol has no messages that Blender starts. The IPR and final renders receive the material as bytes like any changed item.
+
+24. **One source tree, one build per Cinema 4D version, all builds in one folder.** Since 0.2.0 the plugin supports Cinema 4D 2024 to 2027. A module carries the ABI version of the SDK it was built with, and 2024, 2025 and 2026/2027 have three different ones, so no one binary loads in all of them; the code is built once per version against that version's SDK (`tools/build_plugin.ps1 -Version`), and every difference between the SDKs is answered in `source/sdk_compat.h` rather than by version tests spread through the code. The release puts the four builds side by side in one folder (`cyclesrender_2024.xdl64` to `cyclesrender_2027.xdl64`, one `res`): Cinema 4D's own module loader refuses a build of another ABI and of several builds with the same module id loads the one that matches it best, without a dialog or a console line (measured in all four versions). *Rejected:* a small loader module that picks the right binary (it would itself need the ABI of every version, and Cinema 4D offers no way for a module to hand it another binary); one package per version (the user would have to match them, and delete files when changing versions). Differences of Cinema 4D's behaviour that the user would see are followed in the plugin where it can (`docs/reference/c4d-sdk.md`, "Cinema 4D versions").
+
+25. **In a modal loop the IPR follows the scene's evaluation, and sends the lights alone.** A drag in the Attribute Manager gives a window neither its timer nor a message until the mouse is released, but the document is evaluated at every step and jobs handed to the main thread's queue run (measured, SDK reference, "Modal loops and the IPR window"). A scene hook is the one hook of the plugin that every evaluation calls, whatever kind of object changed, so it notices the step; it hands the window one call through the main thread's queue, and the window, only while its timer starves, writes every light of the last export again and sends the ones that changed. Only the lights, because writing them needs no walk and no cache (their own values and matrices) and costs hundredths of a millisecond, and because a full export called from inside an evaluation might read caches not built yet (as with F15's rule that only a tool's message says the document is consistent; not tried); their items are written by the same code as in the full export, so the export after the drag finds them unchanged. *Rejected:* the plugin's own light object and tag noticing their changes in `SetDParameter` (it would leave Cinema 4D's and Redshift's lights out), polling the lights on the window's timer (it does not run in the loop), and a full export per step from the hook (caches, and the cost of a large scene at every step). The hook's id is temporary (`ids.h`): a scene hook is stored in every scene saved with it.
+
+26. **Navigating from the IPR's picture moves the camera the IPR renders through, with Cinema 4D's keys, inside the picture's own drag loop.** The picture already had its own pan (drag) and zoom (wheel), like the Picture Viewer; navigating takes what navigates in Cinema 4D's views (Alt with the mouse buttons, the navigation keys held), so nothing that existed is taken away, and the scheme sits in one function. The camera moved is the IPR's: the camera object it renders through (one undo step per drag, as a drag through a camera in Cinema 4D's view; refused for a Protection tag or a locked layer), or the editor camera of the view it renders through (that view's own undo). Cinema 4D's navigation preferences are read at the start of each drag (point of interest, cursor placement, dolly to cursor, reverse orbit, trackball and its Ctrl modifier, the three speeds). The point under the mouse is found by the plugin itself, a ray against the meshes the exporter's walk finds (`SceneExporter::FindNearestHit`): the same meshes Blender renders, no round trip to Blender, under a millisecond for 115,200 polygons. A drag is a modal loop of the picture (`MouseDrag`) in which the window's timer does not run, so each step there does what the timer would: the camera is sent while Blender is idle (`IprController::FollowCamera`, the free view of perspective cameras), the newest frame shown, and Cinema 4D's view that looks through the camera redrawn, for at most half of the time so that a slow view does not hold the IPR back. *Rejected:* asking Blender for the depth under the mouse (a synchronous round trip at every drag start, and Blender's `ray_cast` builds trees of the evaluated meshes), Cinema 4D's viewport picking (it needs a view that shows the same camera at the same framing), taking the wheel for dollying (it zooms the picture), and moving a locked camera's kept values instead of the camera (the lock means the picture stands still).
 
 ## Final frames
 
@@ -274,7 +295,9 @@ Rules that keep it responsive:
 - A 2 ms window timer keeps Blender's loop from idling while the IPR runs (measured: 12 ms median round trip instead of 18 ms). It is removed while the IPR is stopped or paused.
 - The frame thread always hands over the newest frame; frames the window did not get to are skipped.
 - Camera moves take a fast path that skips the scene walk in Cinema 4D: the camera is compared on every timer tick (15 ms). In Blender they move the viewport's own view where possible instead of a camera object: with 100,000 instances a move of the camera object costs 0.16 s, a move of the view 0.018 s. A camera object is used when the camera needs depth of field, a film offset or a parallel projection.
-- **During a drag the window's timer does not run** (measured: not once in an emulated tool drag of 1.2 s), so before 0.2.0 the IPR followed a drag only when it ended. Cinema 4D's tools tell the managers about every step synchronously (`EVMSG_ASYNCEDITORMOVE`, sent with `GeSyncMessage`, as the SDK asks tools to); when such a message arrives while the timer has not run for three of its periods, the window does what the timer would: the change is exported and sent while Blender is idle, and the newest frame is taken. Any other message in such a loop sends the camera only. Measured in the application with an emulated drag: 39 of 40 steps sent, answered in 1.6 ms, the new frame back 3 ms after the step. Whether the window draws it before the drag ends depends on Cinema 4D's drag loop (in the emulated one nothing is drawn until it ends; with events processed between steps the picture is on screen 8 ms after each step). Navigating a view sends no known message: it is followed when it ends.
+- **During a drag the window's timer does not run** (measured: not once in an emulated tool drag of 1.2 s), so before 0.2.0 the IPR followed a drag only when it ended. Cinema 4D's tools tell the managers about every step synchronously (`EVMSG_ASYNCEDITORMOVE`, sent with `GeSyncMessage`, as the SDK asks tools to); when such a message arrives while the timer has not run for three of its periods, the window does what the timer would: the change is exported and sent while Blender is idle, and the newest frame is taken. Any other message in such a loop sends the camera and the lights only. Measured in the application with an emulated drag: 39 of 40 steps sent, answered in 1.6 ms, the new frame back 3 ms after the step. Whether the window draws it before the drag ends depends on Cinema 4D's drag loop (in the emulated one nothing is drawn until it ends; with events processed between steps the picture is on screen 8 ms after each step; since F18 a frame also reaches the window through the main thread's queue, which the Attribute Manager's loop runs, a tool's loop untested). Navigating a view sends no known message: it is followed when it ends.
+- **A value dragged in the Attribute Manager reaches no window either** (measured 2026-11-16 with mouse messages posted to the Attribute Manager's sliders: a light's intensity, its colour's sliders, a Cycles Light's colour): the drag is a modal loop of 1.3 s in which the window's timer did not run and no core message arrived, while Cinema 4D set the value and evaluated and drew the document at every step. So before 0.2.0 a light followed only when the mouse was released. What runs in that loop is the scene's evaluation and the main thread's job queue: a scene hook (`ipr/ipr_scenehook.cpp`, called at the end of each evaluation, on the main thread or a drawing thread) hands the window one call through that queue, and the window, if its timer starves, sends **the lights alone** (`IprController::FollowLights`: every light of the last export that is an object of the document is written again by `SceneExporter::WriteLightAlone`, byte for byte as the full export writes it, and only those that differ are sent; no walk of the document, no other item). The frame thread reaches the window the same way, so the new picture is drawn during the drag. Lights made by generators, and a light that is gone or new, are left to the full export after the drag. Outside a modal loop the hook does nothing: the change event exports as before (measured: with events processed between the steps, nothing was sent twice).
+- **Navigating from the picture** (design decision 26) runs in the picture's own drag loop, a modal loop like the others above (measured: the window's timer not called once in a drag of 1.2 s). Each step moves the camera, sends it while Blender is idle, shows the newest frame and redraws Cinema 4D's view; while the mouse stands still with the button held the loop goes on taking frames. Measured with mouse messages posted to the picture (which, unlike a view, takes them; table below).
 - **Playback sends no change event** (measured: none in 3 s of playing; one when it stopped), so before 0.2.0 the IPR stood still while the timeline played. The document's time is compared on every tick (the timer runs during playback): measured, 91 of 91 frames sent in 3 s, a picture on screen 4 ms after each was sent.
 - Blender runs at below-normal priority, so that a render on the CPU does not starve Cinema 4D's interface.
 - Expect the latency of an edit to grow with the number of instances, not of polygons (measurements in the Blender reference).
@@ -290,6 +313,30 @@ Measured end to end, from Cinema 4D's change event to the changed picture in the
 
 Where the time goes (640 × 360, GPU, typical): export and compare 3–6 ms; Blender applies the change 1–3 ms; Cycles restarts and renders its first sample 11–60 ms; picture on screen 1–3 ms.
 
+A light's value dragged in the Attribute Manager (2026-11-16; Cinema 4D 2027, Blender 5.2.3, 320 × 180, GPU, a cube on a floor; the drag made of 40 mouse messages posted 25 ms apart to the slider; scratch probes, numbers in `internal/roadmap-0.2.0.md`, F18):
+
+| | Before 0.2.0 (F18) | Now |
+|---|---|---|
+| Sent during a drag of 1.3 s | nothing; one export when the mouse was released | 39 to 40 of about 40 steps, each the changed light alone |
+| Writing and comparing the lights | (a full export: 6–11 ms with 400 generated meshes, `tests/c4d/ipr_lights.py`) | 0.02–0.09 ms for one to five lights |
+| Light sent to a new frame from Blender | — | 3 ms (median) |
+| Light sent to the picture on screen | after the release only (one picture, about 15 ms after it) | 12–21 ms (median) during the drag; 43–60 pictures drawn in it |
+
+A drag in the IPR's picture with a navigation key held (2026-11-16; Cinema 4D 2027, Blender 5.2.3, 320 × 180 at 100 %, GPU, a cube on a floor; 40 mouse messages posted 25 ms apart with the key 3, 1 or 2 held; `tests/c4d/ipr_navigate_window.py`):
+
+| | Orbit | Pan | Dolly |
+|---|---|---|---|
+| Steps of the drag that moved and sent the camera | 41 of 41 | 40 of 40 | 40 of 40 |
+| The window's timer during the drag | 0 calls | 0 | 0 |
+| Camera sent to Blender's answer (median) | 1.5 ms | 1.0 ms | 1.0 ms |
+| Step to a new frame from Blender (median) | 2.6 ms | 2.2 ms | 3.0 ms |
+| Step to the picture on screen (median) | 6.0 ms | 3.6 ms | 3.9 ms |
+| Frames arrived / pictures drawn during the drag (1.2 s) | 137 / 71 | 209 / 72 | 215 / 71 |
+| Redraws of Cinema 4D's view during the drag (median time) | 40 (3.9 ms) | 39 (3.1 ms) | 39 (3.0 ms) |
+| Finding the point under the mouse | 0.02 ms | 0.02 ms | 0.04 ms |
+
+The point under the mouse in a scene of 400 spheres (115,200 polygons): 0.3–1.0 ms (`tests/c4d/ipr_navigate.py`).
+
 A large scene (900 meshes of 800 polygons, 720,000 polygons; 200 × 112, GPU, `tests/c4d/ipr_reuse.py`, 2026-11-13), one object moved: the export and comparison took 74–87 ms with every mesh exported (55–66 ms of it the meshes) and 8–15 ms with unchanged meshes kept (3–4.5 ms the meshes: 600 judged by identity, 300 generated ones hashed); the change reached the picture in 120–131 ms and in 50–63 ms (two runs). What is left is Blender's: of the 50–63 ms, Blender applied the change in 1–2 ms and the first frame came back 39–46 ms later (Cycles restarts with 900 objects), on screen 1–8 ms after that.
 
 ## The IPR window
@@ -301,6 +348,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
 - **Menu:** File (send a snapshot to the Picture Viewer, save the image, close); Add (a Cycles Material; a camera with a Cycles Camera tag where the render view looks from, which becomes the render view's camera; a Cycles Camera tag on the selected cameras; a Cycles Object tag on the selected objects; a Cycles Light where the render view looks from; a Cycles Light tag on the selected lights; each one undo step; Cinema 4D's undo cannot hold a view, so the camera entry keeps the view out of its step and the renderer's message plugin puts the view back on its earlier camera when the step is undone, and on the new one when it is redone); Options (IPR resolution: Fit Window, or 25, 50, 100 or 200 % of the Render Settings; show Blender's window; restart Blender).
 - **Toolbar, left to right:** start or stop, pause, reload; the camera list with the lock; snapshot; the zoom percentage (it can be dragged and typed into) with the frame button; then, at the right, the pass list, the engine list and the settings button.
 - **Picture:** the frame with Cinema 4D's view transform (with "Basic" colour management: as the Picture Viewer shows a final frame, through the sRGB curve with Linear Workflow on and as it is with it off), zoom around the cursor with the mouse wheel, drag to pan. With "Fit Window" the area outside the camera's picture is shown at 45 % brightness. Snapshots and saved images carry the render-space values with the document's profiles (OCIO), or linear values with the linear profile ("Basic"), as Cinema 4D's own renders do.
+- **Navigating from the picture** (0.2.0): a drag with Cinema 4D's navigation keys moves the camera the IPR renders through, as in Cinema 4D's views: Alt with the left button orbits, with the middle button pans, with the right button dollies (a parallel view zooms); the keys of Cinema 4D's key map for Rotate, Move and Scale Camera (by default 3, 1, 2) held while dragging do the same. Plain drags and the wheel keep their meaning (the picture's own pan and zoom). The scheme is one function, `NavigationForDrag` in `ipr/ipr_navigation.cpp`, and a switch in the Preferences ("Navigate in the IPR Window") turns it off. A scene camera moves in one undo step per drag, an editor camera in its view's own undo ("Undo View"); Escape puts the camera back. The status bar says what is moved, or why nothing is (the IPR not running, its camera locked, a Protection tag, a locked layer, orbiting a fixed projection). Design decision 26.
 - **Status line:** time, RAM and VRAM of the Blender process, and a progress bar labelled with the samples.
 - The window's texts are English strings in the code, not yet in the string resources.
 
@@ -363,7 +411,7 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
    - *Neither*: the channel falls back to its plain value and the user is told.
 2. **A material of Cycles nodes** is written node for node, value for value and wire for wire. Nothing in Cinema 4D evaluates these nodes.
 3. **A Redshift material** whose output is a Standard Material node is read port by port.
-   The nodes wired into its inputs are translated node by node where Blender has the same thing (`materials/redshift_nodes`); any other is named in the console and the input's own value is used.
+   The nodes wired into its inputs are translated node by node where Blender has the same thing (`materials/redshift_nodes`); four whose random numbers and noises are Redshift's own become look-alikes that say so (`materials/redshift_lookalikes`): their per-object numbers vary by keys the exporter sends with each object that wears such a material (an object's `properties`, an instancer's per-copy `floats`), so that Blender varies them with the same objects as Redshift; any other node is named in the console and the input's own value is used.
 4. **Any other node material** is asked to describe itself as a Standard Surface, the route Cinema 4D's own FBX and USD exporters take.
 5. **A Cycles Native Material** is sent as the bytes it holds.
 

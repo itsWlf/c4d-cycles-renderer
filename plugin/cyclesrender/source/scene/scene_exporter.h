@@ -5,10 +5,12 @@
 #define CYCLESRENDER_SCENE_EXPORTER_H__
 
 #include "c4d.h"
+#include "maxon/delegate.h"
 #include "maxon/hashmap.h"
 
 #include "coords.h"
 #include "document_colors.h"
+#include "light_export.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -21,7 +23,12 @@ struct ExportSettings
 	maxon::Int32 height = 720;
 	maxon::Float64 pixelAspect = 1.0;                  ///< width of a pixel over its height (Cinema 4D's Pixel Aspect)
 	maxon::Bool depthOfField = false;                 ///< send the camera's focus and f-stop
-	maxon::Bool eevee = false;                         ///< the engine is Eevee (no panoramic camera there)
+	maxon::Bool eevee = false;                         ///< the engine is Eevee (no panoramic camera there before Blender 5.3)
+	/// The Blender that renders, as BlenderVersionCode() (503 for 5.3; session/blender_install.h), and
+	/// as Blender writes it. What it lacks is left out with a warning: nodes, sockets, settings and
+	/// options of the Cycles node space (cycles_node_material.cpp). 0: not known, nothing is left out.
+	maxon::Int32 blenderVersion = 0;
+	maxon::String blenderVersionText;
 	maxon::Float64 lightMultiplier = 1.0;              ///< applied to every light
 	cinema::Vector worldColor = cinema::Vector(0.05);  ///< environment when the scene has no Sky object
 	maxon::Float64 worldStrength = 1.0;
@@ -47,6 +54,16 @@ struct ExportStats
 	maxon::Int meshesKept = 0;         ///< left as Blender holds them (ExportSettings::reuse)
 	maxon::Int meshesByIdentity = 0;   ///< judged by what the object is (the rest by a hash of their data)
 	maxon::Float64 meshMilliseconds = 0.0;   ///< spent deciding about and exporting meshes
+};
+
+/// A light Write() went through that is an object of the document itself (not made by a generator
+/// or an instance), with what it needs to be written again on its own (SceneExporter::WriteLightAlone).
+struct WrittenLight
+{
+	cinema::BaseObject* object = nullptr;
+	maxon::String id;              ///< its `light` item
+	maxon::Bool linked = false;    ///< it has an include or exclude list, as `linking`
+	LightLinking linking;          ///< in the item ids of that export
 };
 
 //----------------------------------------------------------------------------------------
@@ -111,6 +128,22 @@ public:
 	maxon::Result<void> Write(SceneWriter& writer);
 	const ExportStats& GetStats() const { return _stats; }
 
+	/// After Write(): the lights of the document it went through, also those that emitted nothing
+	/// and were left out. Hands them over; a second call returns nothing.
+	maxon::BaseArray<WrittenLight> TakeWrittenLights() { return std::move(_writtenLights); }
+
+	//----------------------------------------------------------------------------------------
+	/// Writes one light of @p doc as Write() would, without walking the document: the IPR's light-only
+	/// update (0.2.0, F18), for a change of a light's values while Cinema 4D is in a modal loop. The item
+	/// is the same, byte for byte, as Write() gives with the same @p settings and the light's
+	/// @p linking (its global matrix is formed from the local ones as the walk forms it), so that the
+	/// full export afterwards finds it unchanged.
+	/// @param[in] light    A light that Write() found as an object of the document (WrittenLight).
+	/// @return             False when the light emits nothing and was not written.
+	//----------------------------------------------------------------------------------------
+	static maxon::Result<maxon::Bool> WriteLightAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
+		const cinema::BaseObject* light, const maxon::String& id, const LightLinking* linking);
+
 	/// One text line per collected item, for tests and debugging:
 	///   mesh "Null/Cube" points=8 polygons=6 pos=(0, 100, 0) size=(200, 200, 200) material="Red"
 	///   light "Key" type=0 pos=(200, 300, -200)
@@ -120,6 +153,22 @@ public:
 	/// document units rounded to whole numbers. A path names the object and its ancestors;
 	/// what a generator produces appears below the generator ("Cube/Cube").
 	maxon::Result<maxon::String> GetListing() const;
+
+	//----------------------------------------------------------------------------------------
+	/// After Collect(): where a ray first meets a mesh that renders and that the camera sees (its
+	/// Compositing or Cycles Object tag lets the camera see it), every copy of a multi-instance
+	/// included; hair, volumes and particles are not looked at. For the IPR's navigation (0.2.0, F17):
+	/// the point under the mouse. Both sides of a polygon count.
+	/// @param[in] origin     Where the ray starts, in document coordinates.
+	/// @param[in] direction  Its direction, normalised.
+	/// @param[in] length     How far it reaches.
+	/// @param[in] accept     Whether the meshes of an object of the document (or made by it) count;
+	///                       an empty delegate: all.
+	/// @param[out] distance  From @p origin to the hit, when there is one.
+	/// @return               False when the ray meets nothing within @p length.
+	//----------------------------------------------------------------------------------------
+	maxon::Bool FindNearestHit(const cinema::Vector& origin, const cinema::Vector& direction, maxon::Float64 length,
+		const maxon::Delegate<maxon::Bool(const cinema::BaseObject*)>& accept, maxon::Float64& distance) const;
 
 	/// For tests and measurements of the IPR's reuse of unchanged meshes: a JSON array with one
 	/// object per mesh leaf: "path", "generated", "deformed", "object" (address), "identity"
@@ -196,6 +245,12 @@ private:
 		const cinema::BaseObject* volumeSet = nullptr;     ///< volumes: the Volume Set (a loaded file) around it
 		const cinema::BaseTag* linkTag = nullptr;          ///< the Cycles Object tag whose light list counts for it
 		Visibility visibility;
+		/// The keys Redshift's random nodes (Jitter, Random Color Switch) vary by, as the object
+		/// properties OBJECT_NAME_KEY and OBJECT_ID_KEY (material_export.h): a number in 0..1 from
+		/// the names on the way to the leaf (ObjectKeyPath), and the Object ID of the nearest Redshift
+		/// Object tag that overrides it (0 without one).
+		maxon::Float64 nameKey = 0.0;
+		maxon::Int32 objectId = 0;
 	};
 
 	/// What an object hands down to its children and to the objects it generates.
@@ -215,7 +270,18 @@ private:
 		const cinema::BaseTag* linkTag = nullptr;
 		maxon::Bool forceVisible = false;    ///< the next object is shown whatever its render dot says (instanced by a Cycles Object tag)
 		maxon::Bool deformed = false;        ///< inside a deform cache
+		/// The next object is the cache of a Sphere that is not itself the input of a generator. A
+		/// render document that Cinema 4D prepared for its own renderer (before 2026.2, sdk_compat.h,
+		/// RENDERER_INFO) marks that cache as consumed when "Render Perfect" is on, as its renderer
+		/// draws a perfect sphere instead; here the mark is ignored and the polygons render.
+		maxon::Bool sphereCache = false;
 		Visibility visibility;
+		/// The names from the top down to the object being walked, joined by "/", which Redshift's
+		/// random nodes vary by in their "Name ID" mode (measured: equal paths, equal values; see
+		/// Walk). Equal to the walk's path except below a render instance, which takes the path of
+		/// the object it shows. Walk sets it for the object it is at; children start from it.
+		maxon::String keyPath;
+		maxon::Int32 objectId = 0;           ///< Redshift Object tag's Object ID, when one above overrides it
 	};
 
 	/// What a mesh leaf needs in Blender: the mesh item and one material per slot.
@@ -223,6 +289,7 @@ private:
 	{
 		maxon::String meshId;                ///< empty: nothing to show
 		maxon::BaseArray<maxon::String> materialIds;
+		maxon::Bool objectKeys = false;      ///< one of the materials reads the object keys (Leaf::nameKey)
 	};
 
 	/// @param[in] key      Identity of @p op that survives from one export to the next.
@@ -249,8 +316,10 @@ private:
 	maxon::Result<maxon::Bool> GetLightLinking(const Leaf& light, const maxon::BaseArray<maxon::String>& itemIds, struct LightLinking& linking) const;
 	/// @param[in] matrices  Global matrix of every copy.
 	/// @param[in] colors    MoGraph colour of every copy as MoGraph stores it, or nullptr.
+	/// @param[in] keys      The object keys of every copy (x the name key, y the Object ID), or nullptr.
 	maxon::Result<void> WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
-		const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const Visibility& visibility);
+		const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
+		const Visibility& visibility);
 
 	cinema::BaseDocument* _doc;
 	DocumentColors _colors;                    ///< the document's colour settings, for colours written here (lights, MoGraph)
@@ -272,6 +341,7 @@ private:
 	const MotionSample* _motionOpen = nullptr;
 	const MotionSample* _motionClose = nullptr;
 	ExportStats _stats;
+	maxon::BaseArray<WrittenLight> _writtenLights;
 
 public:
 	/// Copies of one mesh inside one generator are sent as one instancer from this number on.

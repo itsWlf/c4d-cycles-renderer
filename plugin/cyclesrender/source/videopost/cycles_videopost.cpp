@@ -23,6 +23,7 @@
 #include "../scene/scene_writer.h"
 #include "../session/capture.h"
 #include "../session/json.h"
+#include "../sdk_compat.h"
 #include "cycles_videopost.h"
 #include "output_settings.h"
 #include "render_settings_map.h"
@@ -151,8 +152,9 @@ static maxon::Result<void> FillBuffer(cinema::VPBuffer* buffer, const Blob& pixe
 
 cinema::VIDEOPOSTINFO CyclesVideoPost::GetRenderInfo(cinema::BaseVideoPost* node)
 {
-	// The plugin reads the scene itself, so Cinema 4D can skip preparing it for its own renderer.
-	return cinema::VIDEOPOSTINFO::EVALUATES_SCENE;
+	// The plugin reads the scene itself, so Cinema 4D can skip preparing it for its own renderer
+	// (from Cinema 4D 2026.2 on; sdk_compat.h).
+	return RENDERER_INFO;
 }
 
 cinema::Bool CyclesVideoPost::GetDDescription(const cinema::GeListNode* node, cinema::Description* description, cinema::DESCFLAGS_DESC& flags) const
@@ -340,6 +342,8 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 	{
 		ExportSettings exportSettings = GetExportSettings(settings, width, height);
 		exportSettings.pixelAspect = pixelAspect;
+		exportSettings.blenderVersion = _client->GetBlenderVersion();
+		exportSettings.blenderVersionText = _client->GetBlenderVersionText();
 
 		// Motion blur: look at the scene when the shutter opens and when it closes, then come
 		// back to the frame. Each look is one evaluation of the document.
@@ -463,7 +467,7 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 	};
 	if (colors == OUTPUTCOLORS::VIEW)
 	{
-		iferr (converter = cinema::OcioConverter::Init(vps->doc, nullptr))
+		iferr (converter = InitOcioConverter(vps->doc, nullptr))
 			converter = nullptr;
 	}
 	FillBuffer(rgba, reply.blobs[blobIndex], width, height, colors, converter) iferr_return;

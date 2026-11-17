@@ -23,7 +23,12 @@ enum
 {
 	SETTING_BLENDER_PATH = 1000,
 	SETTING_BLENDER_STATUS = 1001,
-	SETTING_IPR_SKIP_UNCHANGED = 1020
+	SETTING_BLENDER_MAJOR = 1002,		///< the version of the Blender at SETTING_BLENDER_PATH, learned when it was stored
+	SETTING_BLENDER_MINOR = 1003,
+	SETTING_BLENDER_PATCH = 1004,
+	SETTING_BLENDER_VERSION_TEXT = 1005,
+	SETTING_IPR_SKIP_UNCHANGED = 1020,
+	SETTING_IPR_NAVIGATE = 1021
 };
 
 // The container is keyed by the renderer's issued plugin ID so it survives ID changes elsewhere.
@@ -33,12 +38,34 @@ static cinema::BaseContainer ReadSettings()
 	return stored ? *stored : cinema::BaseContainer();
 }
 
+// The Blender in use and its version, by path: GetBlenderInUse().
+static maxon::Spinlock g_inUseLock;
+// cinema::String like the Filename strings it is compared with: with the 2024 SDK (C++17) a
+// maxon::String compared with a cinema::String is ambiguous.
+static cinema::String g_inUsePath;
+static BlenderInstall g_inUse;
+static maxon::Bool g_inUseKnown = false;
+
+static void RememberBlender(const cinema::Filename& path, const BlenderInstall& install)
+{
+	maxon::ScopedLock guard(g_inUseLock);
+	g_inUsePath = path.GetString();
+	g_inUse = install;
+	g_inUseKnown = true;
+}
+
 static void StoreBlender(const BlenderInstall& install, const cinema::Filename& path)
 {
 	cinema::BaseContainer settings = ReadSettings();
 	settings.SetFilename(SETTING_BLENDER_PATH, path);
 	settings.SetString(SETTING_BLENDER_STATUS, DescribeBlender(install));
+	settings.SetInt32(SETTING_BLENDER_MAJOR, install.major);
+	settings.SetInt32(SETTING_BLENDER_MINOR, install.minor);
+	settings.SetInt32(SETTING_BLENDER_PATCH, install.patch);
+	settings.SetString(SETTING_BLENDER_VERSION_TEXT, install.versionText);
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+	if (install.found)
+		RememberBlender(path, install);
 }
 
 cinema::Filename GetBlenderPath()
@@ -73,6 +100,55 @@ cinema::Filename GetBlenderPathOrDetect()
 		}
 	}
 	return detected;
+}
+
+BlenderInstall GetBlenderInUse()
+{
+	const cinema::Filename path = GetBlenderPathOrDetect();
+	BlenderInstall install;
+	if (!path.IsPopulated())
+		return install;
+	{
+		maxon::ScopedLock guard(g_inUseLock);
+		if (g_inUseKnown && g_inUsePath == path.GetString())
+			return g_inUse;
+	}
+
+	// The version stored with the path in the preferences (since 0.2.0), else ask the executable.
+	const cinema::BaseContainer settings = ReadSettings();
+	install.executable = cinema::MaxonConvert(path, cinema::MAXONCONVERTMODE::NONE);
+	if (g_cyclesRenderBlender.IsEmpty() && settings.GetFilename(SETTING_BLENDER_PATH) == path && settings.GetInt32(SETTING_BLENDER_MAJOR) > 0)
+	{
+		install.found = true;
+		install.major = settings.GetInt32(SETTING_BLENDER_MAJOR);
+		install.minor = settings.GetInt32(SETTING_BLENDER_MINOR);
+		install.patch = settings.GetInt32(SETTING_BLENDER_PATCH);
+		install.versionText = settings.GetString(SETTING_BLENDER_VERSION_TEXT);
+		install.supported = IsSupportedBlender(install.major, install.minor);
+	}
+	else
+	{
+		maxon::Result<BlenderInstall> probed = ProbeBlender(install.executable);
+		if (probed == maxon::OK)
+			install = probed.GetValue();
+	}
+	RememberBlender(path, install);	return install;
+}
+
+void NoteBlenderVersion(const cinema::Filename& executable, maxon::Int32 major, maxon::Int32 minor, maxon::Int32 patch,
+	const maxon::String& versionText)
+{
+	maxon::ScopedLock guard(g_inUseLock);
+	if (!g_inUseKnown || g_inUsePath != executable.GetString())
+		return;
+	if (g_inUse.major == major && g_inUse.minor == minor && g_inUse.patch == patch)
+		return;
+	g_inUse.found = true;
+	g_inUse.major = major;
+	g_inUse.minor = minor;
+	g_inUse.patch = patch;
+	g_inUse.versionText = versionText;
+	g_inUse.supported = IsSupportedBlender(major, minor);
 }
 
 cinema::String GetBlenderStatus()
@@ -118,6 +194,19 @@ void SetIprSkipUnchangedMeshes(cinema::Bool skip)
 {
 	cinema::BaseContainer settings = ReadSettings();
 	settings.SetBool(SETTING_IPR_SKIP_UNCHANGED, skip);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
+cinema::Bool GetIprNavigate()
+{
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	return stored ? stored->GetBool(SETTING_IPR_NAVIGATE, true) : true;
+}
+
+void SetIprNavigate(cinema::Bool navigate)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetBool(SETTING_IPR_NAVIGATE, navigate);
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
 }
 

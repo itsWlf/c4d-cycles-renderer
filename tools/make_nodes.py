@@ -1,13 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Writes what the plugin builds its Cinema 4D nodes of Blender's shader nodes from.
 
-    python tools\\make_nodes.py [path to blender.exe]
+    python tools\\make_nodes.py [path to blender.exe ...]
 
-It starts Blender once to ask it for its nodes (tools\\dump_blender_nodes.py) and writes
+It starts every supported Blender (VERSIONS; by default from the installer's usual place, or the
+executables named) once to ask it for its nodes (tools\\dump_blender_nodes.py), takes the union,
+and writes
     plugin/cyclesrender/source/nodespace/cycles_nodes_table.h                           the table
     plugin/cyclesrender/res/nodes/com.wolfnimations.cyclesrender.nodes.db.json          data and layout
     plugin/cyclesrender/res/nodes/com.wolfnimations.cyclesrender.nodes.db.en-US.json    names
-Run it again for a new Blender version; do not edit the three by hand.
+    docs/reference/cycles-nodes.md                                                      the list of nodes by version
+Run it again for a new Blender version; do not edit the four by hand.
+
+Versions. Every node, socket, setting and dropdown option carries the first supported version
+that has it ("since"); the plugin leaves out what the Blender in use does not have (materials/
+cycles_node_material.cpp) and the Node Editor marks a node that Blender lacks. The tool prints
+what each version adds, and fails when a version brings a node that NODES_BY_VERSION and
+SKIP_NODES do not name (so a new Blender cannot add a node unnoticed), when something a version
+had is gone from a later one (the table cannot say "until"), and when VERSIONS differs from the
+plugin's SUPPORTED_VERSIONS. What a node looks like (label, defaults, which settings show which
+socket, its folder) comes from the newest version that has it; a default that differs between
+versions is printed.
 
 The table: every node of a material's node tree is one entry with its Blender type, its label,
 its colour tag, its input and output sockets and the properties on the node itself (and the values
@@ -36,17 +49,59 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUTPUT = os.path.join(HERE, "..", "plugin", "cyclesrender", "source", "nodespace", "cycles_nodes_table.h")
 NODES_DIR = os.path.join(HERE, "..", "plugin", "cyclesrender", "res", "nodes")
+NODE_LIST = os.path.join(HERE, "..", "docs", "reference", "cycles-nodes.md")
+INSTALL_CPP = os.path.join(HERE, "..", "plugin", "cyclesrender", "source", "session", "blender_install.cpp")
 DATABASE = "com.wolfnimations.cyclesrender.nodes"
-BLENDER = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
 
-# Left out: they belong to other kinds of node trees, or need data the plugin cannot give them.
-SKIP_NODES = {"ShaderNodeOutputLight", "ShaderNodeOutputWorld", "ShaderNodeOutputLineStyle", "ShaderNodeUVAlongStroke", "ShaderNodeScript",
-              "ShaderNodeTexIES", "ShaderNodeMixRGB", "ShaderNodeEeveeSpecular", "ShaderNodeOutputAOV"}
+# The supported Blender versions, oldest first: the same as SUPPORTED_VERSIONS in the plugin's
+# session/blender_install.cpp (checked when the tool runs) and SUPPORTED_BLENDER in the bridge.
+VERSIONS = ["5.0", "5.1", "5.2", "5.3"]
+BLENDER = r"C:\Program Files\Blender Foundation\Blender {}\blender.exe"
+
+# The nodes each version brought, each looked at by hand: in the node space, or left out in
+# SKIP_NODES with the reason. "*" stands for every node of that version. The tool fails on a node
+# of a dumped Blender that the entry of the version that brought it does not name: add the node
+# here (and to SKIP_NODES if it cannot work in a material the plugin sends) after reading what it
+# does in Blender's manual.
+NODES_BY_VERSION = {
+    "5.0": "*",     # the table of 0.1.0 (made from Blender 5.2.3) was gone through node by node
+    "5.1": ["ShaderNodeRaycast"],
+    "5.2": [],
+    # Eevee only, all four; Light Evaluation, Light Info and Shadow Raycast work inside the input
+    # tree of a Light Accumulation (measured: built from Python they render in Eevee; Cycles
+    # renders a Light Accumulation black).
+    "5.3": ["ShaderNodeLightAccumulation", "ShaderNodeLightEvaluation", "ShaderNodeLightInfo", "ShaderNodeShadowRaycast",
+            "ShaderNodeLightIterInternalInput", "ShaderNodeLightIterInternalOutput"],
+}
+
+# Left out, with the reason (docs/reference/cycles-nodes.md lists them).
+SKIP_NODES = {
+    "ShaderNodeOutputLight": "the output of a light's node tree, not of a material's",
+    "ShaderNodeOutputWorld": "the output of the world's node tree, not of a material's",
+    "ShaderNodeOutputLineStyle": "Freestyle's line styles, which the plugin does not render",
+    "ShaderNodeUVAlongStroke": "Freestyle's line styles, which the plugin does not render",
+    "ShaderNodeScript": "an OSL script: needs the script's text or file in Blender, which the plugin does not send",
+    "ShaderNodeTexIES": "needs an IES file or text in Blender, which the plugin does not send",
+    "ShaderNodeMixRGB": "Blender's old Mix node, kept for old files; Mix (ShaderNodeMix) does the same",
+    "ShaderNodeEeveeSpecular": "Eevee's old Specular BSDF, kept by Blender for old files",
+    "ShaderNodeOutputAOV": "writes a custom AOV, which needs AOVs in the view layer that the plugin does not make",
+    "ShaderNodeLightIterInternalInput": "inserted by Blender itself around the input tree of a Light Accumulation when the "
+                                        "material is compiled; not in Blender's Add menu, does nothing alone",
+    "ShaderNodeLightIterInternalOutput": "inserted by Blender itself around the input tree of a Light Accumulation when the "
+                                         "material is compiled; not in Blender's Add menu, does nothing alone",
+}
+# Sockets left out of every node, with the reason. "LightIndex" (5.3, on Attribute, Vector
+# Transform and the material lighting nodes) is the light being evaluated: Blender fills it in
+# itself inside the input tree of a Light Accumulation, and it shows on no node.
+SKIP_SOCKETS = {"LightIndex"}
 # The buttons under a file setting (nodespace/path_commands.cpp registers the commands by these ids).
 PATH_COMMANDS = [("com.wolfnimations.cyclesrender.command.path.relative", "Make Relative"),
                  ("com.wolfnimations.cyclesrender.command.path.absolute", "Make Absolute")]
 # Properties that are no simple value. An image is replaced by a file and a colour space (below).
-SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash", "mode"}
+# ("mode" was left out up to 0.2.0, which hid the Mode of Combine Color and Separate Color, RGB,
+# HSV or HSL; Light Evaluation of 5.3 has one too. The only other nodes with a "mode", Script and
+# IES Texture, are left out as a whole.)
+SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash"}
 
 # The settings Blender keeps on a material next to its node tree. Cinema 4D lets only its own
 # material type carry a node graph, so they cannot be parameters of a material type of ours:
@@ -283,21 +338,30 @@ def table_rule(rule, enabled, property_ports):
 class Description:
     """The three descriptions of one node: data, layout, names."""
 
-    def __init__(self, asset, label, menu):
+    def __init__(self, asset, label, menu, version_dependent=False):
         self.asset = asset
         self.label = label
         self.menu = menu
         self.data = [include()]
         # A preview is the whole material's ball, whatever the node (Cinema 4D cannot compute
         # these nodes): it belongs on the material's thumbnail, and is folded away on the nodes.
+        # Except on a node that not every supported Blender has (version_dependent: newer than
+        # the oldest version): its preview is a card that says whether the Blender chosen in the
+        # Preferences has the node (VersionCard() in nodespace/cycles_nodespace.cpp). Whether a
+        # node shows a preview cannot follow the Preferences (measured 2026-11-16: a description
+        # is read once, the port description provider is not asked about a node's own
+        # attributes, a value set in InstantiateImpl is overridden by the description), so these
+        # nodes always show it; the card's picture follows the chosen Blender.
         self.data.append(entry("attribute", "net.maxon.node.base.displaypreview", {
-            D + "data.base.datatype": value("net.maxon.datatype.id", "bool"), D + "data.base.defaultvalue": value("bool", False)}))
+            D + "data.base.datatype": value("net.maxon.datatype.id", "bool"), D + "data.base.defaultvalue": value("bool", version_dependent)}))
         # ... and out of the Node Editor altogether: neither the "Preview" tab of a selected node
-        # nor the switch that would show it on the node.
+        # (it must stay for the card: hiding it hides the picture on the node too, measured) nor
+        # the switch that would show it on the node.
         hidden = {D + "ui.base.show": value("net.maxon.interface.cstring-C", "false")}
-        self.ui = [include(), entry("group", "net.maxon.node.base.preview", hidden),
-                   entry("attribute", "net.maxon.node.base.nodepreviewimage", hidden),
-                   entry("attribute", "net.maxon.node.base.displaypreview", hidden)]
+        self.ui = [include(), entry("attribute", "net.maxon.node.base.displaypreview", hidden)]
+        if not version_dependent:
+            self.ui.append(entry("group", "net.maxon.node.base.preview", hidden))
+            self.ui.append(entry("attribute", "net.maxon.node.base.nodepreviewimage", hidden))
         self.strings = [include()]
 
     def group(self, identifier, label, is_open, on_node):
@@ -307,7 +371,8 @@ class Description:
                                                    D + "ui.base.showgroupinportlist": value("bool", on_node)}))
         self.strings.append(entry("group", identifier, name_string(label)))
 
-    def port(self, identifier, label, kind, default, output=False, group=None, hidden=False, constant=False, show=None, options=None):
+    def port(self, identifier, label, kind, default, output=False, group=None, hidden=False, constant=False, show=None, options=None,
+             preview=False):
         data_type, _stored, widget = PORT_TYPES[kind]
         data = {D + "data.base.classification": value("net.maxon.datatype.id", "output" if output else "input"),
                 D + "data.base.datatype": value("net.maxon.datatype.id", data_type)}
@@ -321,6 +386,10 @@ class Description:
             data["net.maxon.node.attribute.constantparameter"] = value("bool", True)
         if hidden:
             data["net.maxon.node.attribute.hideportinnodegraph"] = value("bool", True)
+        if preview:
+            # The port the node's preview is asked for (the version card): without it Cinema 4D
+            # asked only for nodes with inputs and a colour output (measured).
+            data["net.maxon.node.attribute.ispreviewport"] = value("bool", True)
         self.data.append(entry("attribute", identifier, data))
         ui = {D + "ui.base.groupid": value("net.maxon.datatype.internedid",
                                            group or ("net.maxon.node.base.group.outputs" if output else "net.maxon.node.base.group.inputs")),
@@ -372,42 +441,239 @@ def write_database(descriptions, folders):
         json.dump({"identification": "net.maxon.fileid.descriptiondefinition", "content": {"_dbVersion": 6, "_db": strings}}, file, separators=(",", ":"))
 
 
-def property_row(identifier, port, label, kind, items, default):
+def property_row(identifier, port, label, kind, items, default, since):
     """A row of the plugin's table for a setting; a colour or vector default goes as "r g b" text,
     the area of Blender's curve that a curve setting stands for as "min_x min_y max_x max_y"."""
     text = default if isinstance(default, str) else (" ".join(repr(float(v)) for v in default) if isinstance(default, list) else "")
     number = float(default) if isinstance(default, (int, float, bool)) else 0.0
-    return f'\t{{ {c_string(identifier)}, {c_string(port)}, {c_string(label)}, \'{kind}\', {c_string(items)}, {c_string(text)}, {number!r} }},'
+    return f'\t{{ {c_string(identifier)}, {c_string(port)}, {c_string(label)}, \'{kind}\', {c_string(items)}, {c_string(text)}, {number!r}, {since} }},'
 
 
 def options_of(items):
-    return [tuple(item.split("|", 1)) for item in items.split(";") if item]
+    """"ID|Label;ID|Label|503" -> [(ID, Label), ...]; a third part is the version code of an option
+    that came after its setting (version_code)."""
+    return [tuple(item.split("|")[:2]) for item in items.split(";") if item]
+
+
+# ------------------------------------------------------------------------------------------------
+# Versions.
+
+def version_code(version):
+    """"5.3" -> 503, as the table and the plugin compare versions (major * 100 + minor)."""
+    major, minor = version.split(".")[:2]
+    return int(major) * 100 + int(minor)
+
+
+def plugin_versions():
+    """The versions in SUPPORTED_VERSIONS of the plugin's session/blender_install.cpp."""
+    text = open(INSTALL_CPP, encoding="utf-8").read()
+    block = text[text.index("SUPPORTED_VERSIONS[]"):]
+    block = block[:block.index("};")]
+    return [f"{major}.{minor}" for major, minor in re.findall(r"\{\s*(\d+),\s*(\d+),", block)]
+
+
+def dump_all(executables):
+    """Asks each Blender for its nodes: {"5.2": dump, ...}, oldest first."""
+    dumps = {}
+    for blender in executables:
+        out = os.path.join(tempfile.gettempdir(), "cyclesrender_blender_nodes_%d.json" % len(dumps))
+        if os.path.exists(out):
+            os.remove(out)
+        subprocess.run([blender, "-b", "--factory-startup", "--python", os.path.join(HERE, "dump_blender_nodes.py"), "--", out],
+                       check=True, stdout=subprocess.DEVNULL)
+        data = json.load(open(out, encoding="utf-8"))
+        version = ".".join(data["blender"].split(".")[:2])
+        if version in dumps:
+            sys.exit(f"Two of the executables are Blender {version}.")
+        dumps[version] = data
+    return dict(sorted(dumps.items(), key=lambda item: version_code(item[0])))
+
+
+class Union:
+    """Every node of every dumped version, as the newest version that has it describes it, and
+    the first version that has each node, socket, setting and option."""
+
+    def __init__(self, dumps):
+        self.dumps = dumps
+        self.versions = list(dumps)
+        self.since = {}         # ("node", type) / ("in"|"out"|"prop", type, identifier) / ("option", type, prop, item) -> version
+        self.newest = {}        # type -> (version, node)
+        self.menus = {}
+        self.problems = []      # what makes the tool fail
+        self.defaults = []      # (type, what, {version: default}) where versions differ
+        seen = {}               # key -> versions that have it
+        for version, data in dumps.items():
+            for node in data["nodes"]:
+                kind = node["type"]
+                self.newest[kind] = (version, node)
+                self.menus[kind] = data["menus"].get(kind)
+                keys = [("node", kind)]
+                keys += [("in", kind, s["identifier"]) for s in node["inputs"]]
+                keys += [("out", kind, s["identifier"]) for s in node["outputs"]]
+                for prop in node["properties"]:
+                    keys.append(("prop", kind, prop["identifier"]))
+                    keys += [("option", kind, prop["identifier"], item[0]) for item in prop.get("items", [])]
+                for key in keys:
+                    seen.setdefault(key, []).append(version)
+        for key, versions in seen.items():
+            self.since[key] = versions[0]
+            # What a version had and a later one that has the node lacks: the table has no "until".
+            node_versions = seen[("node", key[1])]
+            later = [v for v in node_versions if version_code(v) > version_code(versions[0]) and v not in versions]
+            if later:
+                self.problems.append(f"{' '.join(key)}: in Blender {versions[0]}, gone in {', '.join(later)}; "
+                                     f"the table cannot say that something ends with a version")
+        # Defaults that differ between versions (the table takes the newest).
+        for kind, (_version, _node) in sorted(self.newest.items()):
+            for side in ("inputs", "properties"):
+                values = {}
+                for version, data in dumps.items():
+                    for node in data["nodes"]:
+                        if node["type"] != kind:
+                            continue
+                        for entry in node[side]:
+                            values.setdefault(entry["identifier"], {})[version] = entry.get("default")
+                for identifier, by_version in values.items():
+                    if len({json.dumps(v) for v in by_version.values()}) > 1:
+                        self.defaults.append((kind, identifier, by_version))
+
+    def nodes(self):
+        return [self.newest[kind][1] for kind in sorted(self.newest)]
+
+    def code(self, *key):
+        return version_code(self.since[key])
+
+    def check_reviewed(self):
+        """Every node is named for the version that brought it (NODES_BY_VERSION) or left out (SKIP_NODES)."""
+        for version in self.versions:
+            if version not in NODES_BY_VERSION:
+                self.problems.append(f"Blender {version} is not in NODES_BY_VERSION: look at the nodes it brings and add it")
+        for kind in sorted(self.newest):
+            first = self.since[("node", kind)]
+            reviewed = NODES_BY_VERSION.get(first)
+            if reviewed == "*" and first == self.versions[0]:
+                continue
+            if reviewed is not None and kind in reviewed:
+                continue
+            self.problems.append(f"{kind} ({self.newest[kind][1]['label']}) came with Blender {first} and is named neither in "
+                                 f"NODES_BY_VERSION[\"{first}\"] nor in SKIP_NODES: read what it does and add it")
+        for version, kinds in NODES_BY_VERSION.items():
+            if kinds == "*" or version not in self.versions:
+                continue
+            for kind in kinds:
+                if self.since.get(("node", kind)) != version:
+                    self.problems.append(f"NODES_BY_VERSION[\"{version}\"] names {kind}, which "
+                                         + (f"came with Blender {self.since[('node', kind)]}" if ("node", kind) in self.since else "no Blender has"))
+
+    def report(self):
+        """What each version adds, in words."""
+        lines = []
+        for version in self.versions[1:]:
+            added = sorted(key for key, first in self.since.items() if first == version)
+            nodes = [key[1] for key in added if key[0] == "node"]
+            # (The options of a setting that is new itself are not listed again.)
+            rest = [key for key in added if key[0] != "node" and key[1] not in nodes
+                    and not (key[0] == "option" and self.since.get(("prop", key[1], key[2])) == version)]
+            lines.append(f"Blender {version} adds {len(nodes)} node(s) and {len(rest)} socket(s), setting(s) and option(s) to older nodes:")
+            for kind in nodes:
+                lines.append(f"  node {kind} ({self.newest[kind][1]['label']})" + (" - left out" if kind in SKIP_NODES else ""))
+            for key in rest:
+                lines.append("  " + {"in": "input", "out": "output", "prop": "setting", "option": "option"}[key[0]] + " " + " ".join(key[1:]))
+        for kind, identifier, by_version in self.defaults:
+            lines.append(f"Default of {kind} {identifier} differs: " + ", ".join(f"{v} {d}" for v, d in by_version.items())
+                         + "; the table uses the newest")
+        return lines
+
+
+def since_text(code):
+    return f"{code // 100}.{code % 100}"
+
+
+def write_node_list(union, skipped):
+    """docs/reference/cycles-nodes.md: every node with the version it exists from."""
+    blender = ", ".join(data["blender"] for data in union.dumps.values())
+    lines = ["<!-- Generated by tools/make_nodes.py. Do not edit: run the script again. -->", "",
+             "# Blender's shader nodes by version", "",
+             f"Every shader node of the supported Blender versions ({blender}), the version it exists from, and whether "
+             "it is in the Cycles node space of Cinema 4D. With an older Blender chosen in the Preferences, a node of a newer "
+             "version is left out of what is sent, and so are its wires, with a line in the console; the Node Editor marks "
+             "such a node (`docs/reference/c4d-sdk.md`, \"A node the chosen Blender does not have\").", "",
+             "| Node | Blender type | From | In the node space |", "|---|---|---|---|"]
+    for node in sorted(union.nodes(), key=lambda n: (union.code("node", n["type"]), n["label"])):
+        kind = node["type"]
+        where = "left out: " + SKIP_NODES[kind] if kind in SKIP_NODES else "yes, in " + (union.menus.get(kind) or MENU_BY_TAG.get(node["color_tag"], "Utilities"))
+        lines.append(f"| {node['label']} | `{kind}` | {union.since[('node', kind)]} | {where} |")
+    lines += ["", "## Added to nodes of an older version", "",
+              "Sockets, settings and dropdown options a later version added to a node that an older version has already. "
+              "With an older Blender each is left out of what is sent; the console names it where it matters (wired, or a "
+              "value other than its default, which is what the older Blender does).", "",
+              "| Node | Added | From |", "|---|---|---|"]
+    names = {"in": "input", "out": "output", "prop": "setting", "option": "option"}
+    for key, first in sorted(union.since.items(), key=lambda item: (version_code(item[1]), item[0])):
+        if key[0] == "node" or first == union.versions[0] or union.since[("node", key[1])] == first or key[1] in SKIP_NODES:
+            continue
+        if key[0] == "option" and union.since.get(("prop", key[1], key[2])) == first:
+            continue        # the options of a setting that is new itself
+        if key[2] == "__extend__" or (key[0] == "prop" and key[2] in SKIP_PROPERTIES):
+            continue        # not in the node space at all
+        what = f"{names[key[0]]} {' of '.join(reversed(key[2:])) if key[0] == 'option' else key[2]}"
+        note = " (not in the node space: " + skipped[key] + ")" if key in skipped else ""
+        if key == ("prop", "ShaderNodeRaycast", "active_index"):
+            note = " (which socket of the node's list of attributes is selected in Blender's sidebar; no effect on the render)"
+        lines.append(f"| {union.newest[key[1]][1]['label']} | {what}{note} | {first} |")
+    if union.defaults:
+        lines += ["", "## Defaults that differ between versions", "",
+                  "A new node in Cinema 4D takes the default of the newest version; the plugin sends every value, so a "
+                  "material renders the same on every version.", "", "| Node | Socket or setting | Defaults |", "|---|---|---|"]
+        for kind, identifier, by_version in union.defaults:
+            lines.append(f"| {union.newest[kind][1]['label']} | {identifier} | "
+                         + ", ".join(f"{v}: {round(d, 6) if isinstance(d, float) else d}" for v, d in by_version.items()) + " |")
+    with open(NODE_LIST, "w", encoding="utf-8", newline="\n") as file:
+        file.write("\n".join(lines) + "\n")
 
 
 # ------------------------------------------------------------------------------------------------
 def main():
-    blender = sys.argv[1] if len(sys.argv) > 1 else BLENDER
-    dump = os.path.join(tempfile.gettempdir(), "cyclesrender_blender_nodes.json")
-    subprocess.run([blender, "-b", "--factory-startup", "--python", os.path.join(HERE, "dump_blender_nodes.py"), "--", dump],
-                   check=True, stdout=subprocess.DEVNULL)
-    data = json.load(open(dump, encoding="utf-8"))
+    supported = plugin_versions()
+    if supported != VERSIONS:
+        sys.exit(f"VERSIONS {VERSIONS} differs from SUPPORTED_VERSIONS {supported} in session/blender_install.cpp: change both")
+    executables = sys.argv[1:] or [BLENDER.format(version) for version in VERSIONS]
+    missing = [path for path in executables if not os.path.isfile(path)]
+    if missing:
+        sys.exit("Not found: " + ", ".join(missing) + ". Every supported Blender is needed, or name the executables.")
+    dumps = dump_all(executables)
+    if list(dumps) != VERSIONS:
+        sys.exit(f"Dumped Blender {', '.join(dumps)}; every supported version is needed ({', '.join(VERSIONS)}), "
+                 "else the versions a node exists from would be wrong.")
+    union = Union(dumps)
+    union.check_reviewed()
+    for line in union.report():
+        print(line)
+    if union.problems:
+        for problem in union.problems:
+            print("PROBLEM:", problem)
+        sys.exit(f"{len(union.problems)} problem(s); nothing was written.")
+    skipped = {}            # (side, type, identifier) -> why a socket is not in the space
 
     lines = ["// SPDX-License-Identifier: Apache-2.0",
-             "// Generated by tools/make_nodes.py from Blender " + data["blender"] + ". Do not edit: run the script again.",
-             "// Included by nodespace/cycles_nodes.cpp only.", "",
+             "// Generated by tools/make_nodes.py from Blender " + ", ".join(d["blender"] for d in dumps.values())
+             + ". Do not edit: run the script again.",
+             "// Included by nodespace/cycles_nodes.cpp only. \"since\": the first Blender that has it, major * 100 + minor.", "",
              "#ifndef CYCLES_NODES_TABLE_H__", "#define CYCLES_NODES_TABLE_H__", ""]
     entries = []
     descriptions = []
     menus_used = []
-    for node in data["nodes"]:
+    oldest = version_code(VERSIONS[0])
+    for node in union.nodes():
         if node["type"] in SKIP_NODES:
             continue
         name = node["type"][len("ShaderNode"):]
         asset = "com.wolfnimations.cyclesrender.node." + name.lower()
-        menu = data["menus"].get(node["type"]) or MENU_BY_TAG.get(node["color_tag"], "Utilities")
+        menu = union.menus.get(node["type"]) or MENU_BY_TAG.get(node["color_tag"], "Utilities")
+        node_since = union.code("node", node["type"])
         if menu not in menus_used:
             menus_used.append(menu)
-        description = Description(asset, node["label"], menu)
+        description = Description(asset, node["label"], menu, node_since > oldest)
         inputs, outputs, properties = [], [], []
         in_ports, out_ports, prop_ports = [], [], []   # what the description needs of each
 
@@ -415,6 +681,9 @@ def main():
         for socket in node["inputs"]:
             kind = socket_kind(socket["kind"])
             if kind is None or (socket["identifier"] == "Weight" and not socket["enabled"]):
+                continue
+            if socket["identifier"] in SKIP_SOCKETS:
+                skipped[("in", node["type"], socket["identifier"])] = "Blender fills it in itself"
                 continue
             label = socket["name"]
             numbered = any(re.search(r"_\d+$", s["identifier"]) for s in node["inputs"] if s["name"] == label)
@@ -441,22 +710,23 @@ def main():
             if prop["identifier"] in SKIP_PROPERTIES:
                 continue
             kind = {"ENUM": "e", "BOOLEAN": "b", "INT": "i", "FLOAT": "f", "STRING": "t"}[prop["kind"]]
-            items = ";".join(f"{identifier}|{label}" for identifier, label in prop.get("items", []))
+            prop_since = union.code("prop", node["type"], prop["identifier"])
+            # An option that came after its setting carries its version as a third part.
+            items = ";".join(f"{identifier}|{label}" + (f"|{code}" if code > prop_since else "")
+                             for identifier, label in prop.get("items", [])
+                             for code in [union.code("option", node["type"], prop["identifier"], identifier)])
             default = prop["default"]
-            properties.append(f'\t{{ {c_string(prop["identifier"])}, {c_string(port_id("prop.", prop["identifier"]))}, {c_string(prop["name"])}, \'{kind}\', '
-                              f'{c_string(items)}, {c_string(default if isinstance(default, str) else "")}, '
-                              f'{float(default) if isinstance(default, (int, float, bool)) else 0.0!r} }},')
+            properties.append(property_row(prop["identifier"], port_id("prop.", prop["identifier"]), prop["name"], kind, items, default, prop_since))
             prop_ports.append((prop["identifier"], port_id("prop.", prop["identifier"]), prop["name"], kind, items, default, None))
         if node["type"] == "ShaderNodeOutputMaterial":
             for identifier, label, kind, items, default in MATERIAL_SETTINGS:
-                properties.append(f'\t{{ {c_string("material:" + identifier)}, {c_string(port_id("prop.material_", identifier))}, {c_string(label)}, \'{kind}\', '
-                                  f'{c_string(items)}, {c_string(default if isinstance(default, str) else "")}, '
-                                  f'{float(default) if not isinstance(default, str) else 0.0!r} }},')
+                properties.append(property_row("material:" + identifier, port_id("prop.material_", identifier), label, kind, items, default, node_since))
                 prop_ports.append(("material:" + identifier, port_id("prop.material_", identifier), label, kind, items, default, "group.material"))
         prop_show = {}      # port of a setting -> when it shows, for settings that are not always there
 
         def setting(identifier, port, label, kind, items, default, show=None):
-            properties.append(property_row(identifier, port, label, kind, items, default))
+            # Values the plugin keeps for Blender (an output's value, ramp stops, curves, frames): as old as the node.
+            properties.append(property_row(identifier, port, label, kind, items, default, node_since))
             prop_ports.append((identifier, port, label, kind, items, default, None))
             if show:
                 prop_show[port] = show
@@ -480,8 +750,8 @@ def main():
             setting("curve:extend", "prop.curve_extend", "Extend", "e", CURVE_EXTEND, "EXTRAPOLATED")
         if node["type"] in ("ShaderNodeTexImage", "ShaderNodeTexEnvironment"):
             # The image: a file, and how its values are meant. The plugin makes the image from the two.
-            properties.insert(0, '\t{ "image", "prop.image_file", "File", \'u\', "", "", 0.0 },')
-            properties.insert(1, '\t{ "image.colorspace", "prop.image_colorspace", "Color Space", \'e\', "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", 0.0 },')
+            properties.insert(0, property_row("image", "prop.image_file", "File", "u", "", "", node_since))
+            properties.insert(1, property_row("image.colorspace", "prop.image_colorspace", "Color Space", "e", "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", node_since))
             prop_ports.insert(0, ("image", "prop.image_file", "File", "u", "", None, None))
             prop_ports.insert(1, ("image.colorspace", "prop.image_colorspace", "Color Space", "e", "COLOR|Color (sRGB);DATA|Non-Color", "COLOR", None))
             # The first and last frame of an image sequence. Cinema 4D's drop of an image file on the
@@ -496,19 +766,21 @@ def main():
         for socket, kind, label in in_ports:
             inputs.append(f'\t{{ {c_string(socket["identifier"])}, {c_string(port_id("in.", socket["identifier"]))}, {c_string(label)}, \'{kind}\', '
                           f'{numbers(socket["default"])}, {c_string(socket["default"] if isinstance(socket["default"], str) else "")}, '
-                          f'{c_string(table_rule(node["show"].get("in:" + socket["identifier"]), socket["enabled"], by_property))} }},')
+                          f'{c_string(table_rule(node["show"].get("in:" + socket["identifier"]), socket["enabled"], by_property))}, '
+                          f'{union.code("in", node["type"], socket["identifier"])} }},')
         for socket, kind, label in out_ports:
             outputs.append(f'\t{{ {c_string(socket["identifier"])}, {c_string(port_id("out.", socket["identifier"]))}, {c_string(label)}, \'{kind}\', '
-                           f'{numbers(0.0)}, "", {c_string(table_rule(node["show"].get("out:" + socket["identifier"]), socket["enabled"], by_property))} }},')
+                           f'{numbers(0.0)}, "", {c_string(table_rule(node["show"].get("out:" + socket["identifier"]), socket["enabled"], by_property))}, '
+                           f'{union.code("out", node["type"], socket["identifier"])} }},')
 
         def shown_when(key, socket):
             # A socket Blender never switches on (for no setting of the node) is not shown at all.
             rule = condition(node["show"].get(key), by_property)
             return rule if rule or socket["enabled"] else "false"
 
-        for socket, kind, label in out_ports:
+        for index, (socket, kind, label) in enumerate(out_ports):
             description.port(port_id("out.", socket["identifier"]), label, kind, None, output=True, hidden=not socket["enabled"],
-                             show=shown_when("out:" + socket["identifier"], socket))
+                             show=shown_when("out:" + socket["identifier"], socket), preview=node_since > oldest and index == 0)
         if any(group for *_rest, group in prop_ports):
             description.group("group.material", "Material Settings", True, False)
         for identifier, port, label, kind, items, default, group in prop_ports:
@@ -537,7 +809,8 @@ def main():
         def block(kind_name, rows):
             return f"{name.upper()}_{kind_name}, {len(rows)}" if rows else "nullptr, 0"
         entries.append(f'\t{{ {c_string(node["type"])}, {c_string(asset)}, {c_string(node["label"])}, '
-                       f'{c_string(node["color_tag"])}, {block("INPUTS", inputs)}, {block("OUTPUTS", outputs)}, {block("PROPERTIES", properties)} }},')
+                       f'{c_string(node["color_tag"])}, {block("INPUTS", inputs)}, {block("OUTPUTS", outputs)}, {block("PROPERTIES", properties)}, '
+                       f'{node_since} }},')
     lines += ["static const CyclesNode CYCLES_NODES[] =", "{"] + entries + ["};", ""]
 
     # The folders: every menu path in use and its parents, parents first.
@@ -558,7 +831,8 @@ def main():
     with open(OUTPUT, "w", encoding="utf-8", newline="\n") as file:
         file.write("\n".join(lines))
     write_database(descriptions, folders)
-    print(f"{len(entries)} nodes written, {len(folders)} folders")
+    write_node_list(union, skipped)
+    print(f"{len(entries)} nodes written ({len(union.newest)} in Blender {', '.join(VERSIONS)}, {len(SKIP_NODES)} left out), {len(folders)} folders")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@
 #include "prefscyclesrender.h"
 
 #include "../ids.h"
+#include "../session/blender_install.h"
 #include "devices.h"
 #include "prefs_page.h"
 #include "settings.h"
@@ -122,6 +123,11 @@ public:
 				data = cinema::GeData(GetIprSkipUnchangedMeshes());
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
+
+			case PREF_CYCLES_IPR_NAVIGATE:
+				data = cinema::GeData(GetIprNavigate());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
 		}
 		const maxon::Int32 index = id[0].id - PREF_CYCLES_DEVICE_FIRST;
 		if (index >= 0 && id[0].id <= PREF_CYCLES_DEVICE_LAST)
@@ -165,6 +171,11 @@ public:
 				SetIprSkipUnchangedMeshes(data.GetInt32() != 0);
 				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
 				return true;
+
+			case PREF_CYCLES_IPR_NAVIGATE:
+				SetIprNavigate(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				return true;
 		}
 		const maxon::Int32 index = id[0].id - PREF_CYCLES_DEVICE_FIRST;
 		if (index >= 0 && id[0].id <= PREF_CYCLES_DEVICE_LAST)
@@ -186,7 +197,8 @@ public:
 			if (command->_descId[0].id == PREF_CYCLES_DETECT)
 			{
 				if (!DetectAndStoreBlender())
-					cinema::MessageDialog("No supported Blender was found. Cycles Render needs Blender 5.2; choose its blender.exe by hand."_s);
+					cinema::MessageDialog(FormatString("No supported Blender was found. Cycles Render needs Blender @; choose its blender.exe by hand.",
+						SupportedBlenderVersionsText()));
 				cinema::GeUpdateUI();
 				return true;
 			}

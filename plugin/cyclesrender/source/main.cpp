@@ -3,6 +3,10 @@
 //
 // Cinema 4D calls these while it loads and unloads the module. Each plugin hook the module
 // provides is registered from PluginStart().
+//
+// The two that return a value are written with a trailing return type: with the 2024 SDK,
+// where cinema:: reads as :: (sdk_compat.h), "cinema::Bool cinema::PluginStart()" would read as
+// the one name ::Bool::PluginStart.
 
 #include "c4d.h"
 #include "c4d_plugin.h"
@@ -13,6 +17,7 @@
 #include "ipr/ipr_add.h"
 #include "ipr/ipr_controller.h"
 #include "ipr/ipr_dialog.h"
+#include "ipr/ipr_scenehook.h"
 #include "ipr/ipr_testhook.h"
 #include "lights/light_object.h"
 #include "lights/light_tag.h"
@@ -26,13 +31,14 @@
 #include "materials/cycles_material.h"
 #include "materials/material_preview.h"
 #include "materials/native_material.h"
+#include "sdk_compat.h"
 #include "version.h"
 #include "videopost/cycles_videopost.h"
 
 // Registers every hook of the plugin. Only the renderer is essential: without it the module
 // reports failure and Cinema 4D unloads it. Any other hook that cannot be registered is named
 // in the console and the rest of the plugin keeps working.
-cinema::Bool cinema::PluginStart()
+auto cinema::PluginStart() -> cinema::Bool
 {
 	if (!cyclesrender::RegisterCyclesVideoPost())
 	{
@@ -56,9 +62,14 @@ cinema::Bool cinema::PluginStart()
 			cyclesrender::ID_NATIVE_MATERIAL_EDITS);
 	if (!cyclesrender::RegisterIprCommand())
 		ApplicationOutput("Cycles Render: could not register the IPR command.");
+	if (!cyclesrender::RegisterIprSceneHook())
+		ApplicationOutput("Cycles Render: could not register the IPR's scene hook (id @); light values follow in the IPR when a drag ends.", cyclesrender::ID_IPR_SCENE_HOOK);
 	if (!cyclesrender::RegisterBakedFilesWatch())
 		ApplicationOutput("Cycles Render: could not register the watch over closed documents; baked textures stay until Cinema 4D quits.");
-	ApplicationOutput("Cycles Render @: module loaded (renderer id @).", maxon::String(CYCLESRENDER_VERSION), cyclesrender::ID_CYCLES_VIDEOPOST);
+	// Names the Cinema 4D version this build is for: several builds can sit side by side in one
+	// plugin folder, and Cinema 4D loads the one that matches it (docs/reference/c4d-sdk.md).
+	ApplicationOutput("Cycles Render @ for Cinema 4D @: module loaded (renderer id @).", maxon::String(CYCLESRENDER_VERSION), CYCLESRENDER_C4D_YEAR,
+		cyclesrender::ID_CYCLES_VIDEOPOST);
 	return true;
 }
 
@@ -77,7 +88,7 @@ void cinema::PluginEnd()
 	cyclesrender::FreeVolumeFiles();
 }
 
-cinema::Bool cinema::PluginMessage(cinema::Int32 id, void* data)
+auto cinema::PluginMessage(cinema::Int32 id, void* data) -> cinema::Bool
 {
 	switch (id)
 	{

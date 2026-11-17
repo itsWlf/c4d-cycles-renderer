@@ -1,6 +1,6 @@
 # Example scene
 
-`cycles_render_examples.c4d` shows what Cycles Render translates, in one scene. Open it in Cinema 4D 2027 with the plugin loaded and render it to the Picture Viewer, or open the IPR window (Extensions > Cycles Render IPR) and press Start.
+`cycles_render_examples.c4d` shows what Cycles Render translates, in one scene. Open it in Cinema 4D 2027 with the plugin loaded and render it to the Picture Viewer, or open the IPR window (Extensions > Cycles Render IPR) and press Start. (The scene is saved with Cinema 4D 2027; opening it in 2024 to 2026 was not tried.)
 
 ![The example scene rendered with Cycles Render](cycles_render_examples.png)
 
