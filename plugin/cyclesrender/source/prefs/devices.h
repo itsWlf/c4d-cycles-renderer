@@ -55,6 +55,10 @@ void SetDeviceUse(const maxon::String& id, maxon::Bool use);
 /// Blender's name of a back end ("OPTIX", ...), "NONE", or empty for AUTOMATIC.
 maxon::String DeviceTypeName(DEVICETYPE type);
 
+/// The name of a back end as Blender's Preferences show it ("OptiX", "oneAPI", ...), for messages and the
+/// IPR's status line, from Blender's name of it (@p name: "OPTIX", ...); any other name as it is.
+maxon::String BackendLabel(const maxon::String& name);
+
 /// The back end AUTOMATIC stands for with the stored list (the first that lists a device), or
 /// NONE when the list has no GPU.
 DEVICETYPE ResolveDeviceType(const DeviceSettings& settings);

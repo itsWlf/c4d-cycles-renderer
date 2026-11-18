@@ -15,6 +15,19 @@
 namespace cyclesrender
 {
 
+/// What renders, as the IPR's Blender reported it in its reply to the last `settings` request
+/// (protocol/protocol.md, "Settings"): not what was asked for. For the window's status line.
+struct IprDeviceInfo
+{
+	maxon::Bool known = false;		///< a reply has come
+	maxon::String engine;					///< Blender's engine identifier: CYCLES, BLENDER_EEVEE
+	maxon::String device;					///< CPU or GPU (Cycles)
+	maxon::String backend;				///< OPTIX, CUDA, ...; NONE on the CPU
+	maxon::String devices;				///< the names of the devices in use, joined with ", "
+	maxon::Int32 threads = 0;			///< the CPU threads Cycles uses
+	maxon::String displayGpu;			///< the graphics card Blender draws with (and Eevee renders on)
+};
+
 /// One piece of work for the worker, done in the order posted.
 struct IprTask
 {
@@ -64,6 +77,9 @@ public:
 	/// Moves the warnings collected since the last call into @p warnings.
 	void TakeWarnings(maxon::BaseArray<maxon::String>& warnings);
 
+	/// What renders, from Blender's reply to the last `settings` request (IprDeviceInfo).
+	IprDeviceInfo GetDeviceInfo();
+
 	/// When the last `scene` request was answered by Blender (Unix seconds), for latency measurements.
 	maxon::Float64 GetLastSceneAnswerTime();
 
@@ -88,6 +104,7 @@ private:
 	maxon::Int _processId = 0;
 	maxon::BaseArray<maxon::String> _warnings;
 	maxon::Float64 _sceneAnswerTime = 0.0;
+	IprDeviceInfo _device;
 
 	maxon::AtomicInt32 _pending;
 	maxon::AtomicInt32 _scenesSent;

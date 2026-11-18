@@ -55,12 +55,16 @@ CONTAINER Prefscyclesrender
 		STATICTEXT PREF_CYCLES_DEVICES_STATUS { ANIM OFF; }
 	}
 
-	// What of the IPR can be switched off when hunting a fault.
+	// What of the IPR can be switched off: following changes while they are made, and features to
+	// turn off when hunting a fault; and what a Cycles render on the CPU leaves to Cinema 4D.
 	GROUP PREF_CYCLES_IPR_GROUP
 	{
 		DEFAULT 1;
 		COLUMNS 1;
 
+		BOOL PREF_CYCLES_IPR_LIVE_UPDATES { ANIM OFF; }
+		BOOL PREF_CYCLES_IPR_OPTIMIZED_UPDATES { ANIM OFF; }
+		LONG PREF_CYCLES_IPR_THREADS_FREE { ANIM OFF; MIN 0; MAX 256; STEP 1; }
 		BOOL PREF_CYCLES_IPR_SKIP_UNCHANGED { ANIM OFF; }
 		BOOL PREF_CYCLES_IPR_NAVIGATE { ANIM OFF; }
 	}

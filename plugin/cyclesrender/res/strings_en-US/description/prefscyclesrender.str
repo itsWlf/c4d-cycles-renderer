@@ -26,6 +26,9 @@ STRINGTABLE Prefscyclesrender
 	PREF_CYCLES_DEVICES_STATUS    "Devices";
 
 	PREF_CYCLES_IPR_GROUP         "IPR";
+	PREF_CYCLES_IPR_LIVE_UPDATES  "Live Updates During Drags and Playback";
+	PREF_CYCLES_IPR_OPTIMIZED_UPDATES "Optimized Live Updates";
+	PREF_CYCLES_IPR_THREADS_FREE  "CPU Threads Left Free";
 	PREF_CYCLES_IPR_SKIP_UNCHANGED "Skip Unchanged Meshes";
 	PREF_CYCLES_IPR_NAVIGATE      "Navigate in the IPR Window";
 }

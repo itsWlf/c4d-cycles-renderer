@@ -9,6 +9,8 @@
 // timer does not run until the mouse is released. What takes part in the evaluation is called then
 // (a scene hook is, for every document and every kind of light), and jobs handed to the main thread's
 // queue run inside the loop.
+//
+// With the Preferences' live updates off (0.2.0, F22) both do nothing (IsIprInModalLoop is false).
 
 #ifndef CYCLESRENDER_IPR_SCENEHOOK_H__
 #define CYCLESRENDER_IPR_SCENEHOOK_H__

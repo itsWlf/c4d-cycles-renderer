@@ -9,6 +9,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../platform/process_stats.h"
 #include "../session/blender_install.h"
 #include "settings.h"
 
@@ -17,12 +18,15 @@
 MAXON_CONFIGURATION_STRING(g_cyclesRenderBlender, "", maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
 	"Cycles Render: path of the Blender executable. Empty: use the one set in the Preferences.");
 
+MAXON_CONFIGURATION_BOOL(g_cyclesRenderIprUnoptimized, false, maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
+	"Cycles Render: the IPR exports as before 0.2.0's B11 (every redraw exports the scene, generated meshes are hashed byte by byte, nothing but lights is sent alone), for comparing.");
+
 namespace cyclesrender
 {
 
 // Keys inside the plugin's container in Cinema 4D's preferences. Never renumber, never reuse.
 // (prefs/devices.cpp uses 1010 to 1012, the IPR's test hook 9000 and 9001. 1006 to 1009 and 1013
-// to 1019 have never been used; 1022 on is kept for further switches of the IPR, 1031 on for
+// to 1019 have never been used; 1025 on is kept for further switches of the IPR, 1031 on for
 // further defaults of new render settings.)
 enum
 {
@@ -34,6 +38,9 @@ enum
 	SETTING_BLENDER_VERSION_TEXT = 1005,
 	SETTING_IPR_SKIP_UNCHANGED = 1020,
 	SETTING_IPR_NAVIGATE = 1021,
+	SETTING_IPR_LIVE_UPDATES = 1022,	///< 0.2.0 (F22): GetIprLiveUpdates()
+	SETTING_IPR_THREADS_FREE = 1023,	///< 0.2.0 (B11): GetIprThreadsFree()
+	SETTING_IPR_OPTIMIZED_UPDATES = 1024,	///< 0.2.0 (B11): GetIprOptimizedUpdates()
 	SETTING_DEFAULT_ENGINE = 1030		///< 0.2.0 (F21): GetDefaultEngine()
 };
 
@@ -247,6 +254,60 @@ void SetIprNavigate(cinema::Bool navigate)
 {
 	cinema::BaseContainer settings = ReadSettings();
 	settings.SetBool(SETTING_IPR_NAVIGATE, navigate);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
+cinema::Bool GetIprLiveUpdates()
+{
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	return stored ? stored->GetBool(SETTING_IPR_LIVE_UPDATES, true) : true;
+}
+
+void SetIprLiveUpdates(cinema::Bool live)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetBool(SETTING_IPR_LIVE_UPDATES, live);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
+maxon::Bool IsIprUnoptimized()
+{
+	return g_cyclesRenderIprUnoptimized;
+}
+
+cinema::Bool GetIprOptimizedUpdates()
+{
+	if (g_cyclesRenderIprUnoptimized)
+		return false;
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	return stored ? stored->GetBool(SETTING_IPR_OPTIMIZED_UPDATES, true) : true;
+}
+
+void SetIprOptimizedUpdates(cinema::Bool optimized)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetBool(SETTING_IPR_OPTIMIZED_UPDATES, optimized);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
+maxon::Int32 DefaultIprThreadsFree()
+{
+	const maxon::Int32 logical = maxon::Int32(platform::GetLogicalProcessorCount());
+	return maxon::Max(maxon::Int32(0), maxon::Min(maxon::Max(maxon::Int32(2), logical / 4), logical - 1));
+}
+
+maxon::Int32 GetIprThreadsFree()
+{
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	if (!stored || stored->FindIndex(SETTING_IPR_THREADS_FREE) == NOTOK)
+		return DefaultIprThreadsFree();
+	return maxon::ClampValue(stored->GetInt32(SETTING_IPR_THREADS_FREE), maxon::Int32(0), IPR_THREADS_FREE_MAX);
+}
+
+void SetIprThreadsFree(maxon::Int32 threads)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetInt32(SETTING_IPR_THREADS_FREE, maxon::ClampValue(threads, maxon::Int32(0), IPR_THREADS_FREE_MAX));
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
 }
 

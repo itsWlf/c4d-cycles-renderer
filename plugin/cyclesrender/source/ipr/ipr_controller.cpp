@@ -11,8 +11,10 @@
 
 #include "vpcyclesrender.h"
 
+#include "../ids.h"
 #include "../platform/process_stats.h"
 #include "../platform/shared_memory.h"
+#include "../prefs/devices.h"
 #include "../prefs/settings.h"
 #include "../scene/camera_export.h"
 #include "../videopost/output_settings.h"
@@ -79,7 +81,40 @@ static const maxon::Int32 MAX_SIDE = 8192;
 // stood still this long.
 static const maxon::Float64 WINDOW_SIZE_SETTLE_SECONDS = 0.12;
 
+// After steps sent alone and after redraws that exported nothing, the scene is exported whole once
+// nothing has happened for this long (the settle export; a change event or a tool's last step brings it
+// at once). Long enough that a redraw of every frame of a slow view (4 a second) does not trigger it
+// between two frames, short enough to be no wait.
+static const maxon::Float64 SETTLE_SECONDS = 0.25;
+
 static IprController* g_controller = nullptr;
+
+// A Cycles render on the CPU in the IPR leaves the Preferences' "CPU Threads Left Free" to Cinema 4D
+// (0.2.0, B11; prefs/settings.h): a fixed thread count of the logical processors less those, or the
+// Render Settings' own fixed count if that is smaller. Only for the IPR: final frames use the machine.
+static void LeaveThreadsFree(cinema::BaseContainer& data)
+{
+	const maxon::Int32 free = GetIprThreadsFree();
+	if (free <= 0)
+		return;	// the Render Settings as they are
+	const maxon::Int32 limit = maxon::Max(maxon::Int32(1), maxon::Int32(platform::GetLogicalProcessorCount()) - free);
+	const maxon::Bool fixed = data.GetInt32(CYCLES_THREADS_MODE, CYCLES_THREADS_MODE_AUTO) == CYCLES_THREADS_MODE_FIXED;
+	const maxon::Int32 threads = fixed ? maxon::ClampValue(data.GetInt32(CYCLES_THREADS, limit), maxon::Int32(1), limit) : limit;
+	data.SetInt32(CYCLES_THREADS_MODE, CYCLES_THREADS_MODE_FIXED);
+	data.SetInt32(CYCLES_THREADS, threads);
+}
+
+// The priority class of the IPR's Blender for Cinema 4D's class (ranks of platform/process_stats.h):
+// one below, but not below "below normal" unless Cinema 4D itself is there. Not idle: a Blender at idle
+// stands completely still while Cinema 4D's threads keep every core busy, no reply and no frame for as
+// long as that lasts, on the GPU too (measured 2026-11-17, internal/b11/priority_probe.py: 0 of 79 moves
+// answered within 10 s, also with Blender's main thread raised to 6 or 15), and the IPR's worker would
+// wait for it. So with Cinema 4D's default (below normal) both share the class, and the threads a CPU render
+// leaves free (GetIprThreadsFree) keep cores for Cinema 4D; with Cinema 4D at normal Blender is below it.
+static maxon::Int32 BlenderPriorityRank(maxon::Int32 own)
+{
+	return own >= 2 ? own - 1 : own;
+}
 
 IprController& IprController::Get()
 {
@@ -163,6 +198,7 @@ void IprController::Fail(const maxon::String& message)
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	ForgetFollowed();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
 	_sentSettings = maxon::String();
@@ -233,6 +269,10 @@ void IprController::Start()
 	_viewStarted = false;
 	_sceneState.Reset();
 	_cameraState.Reset();
+	ForgetFollowed();
+	_gatedCount = 0;
+	_aloneCount = 0;
+	_settleCount = 0;
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
 	_sentSettings = maxon::String();
@@ -279,6 +319,7 @@ void IprController::Stop()
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	ForgetFollowed();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
 	_sentSettings = maxon::String();
@@ -462,9 +503,29 @@ void IprController::KillBlenderForTest()
 
 void IprController::MarkSceneChanged()
 {
+	_activityTime = platform::UnixTime();
 	if (!_sceneDirty)
-		_dirtySince = platform::UnixTime();
+		_dirtySince = _activityTime;
 	_sceneDirty = true;
+}
+
+void IprController::NoteRedraw()
+{
+	_activityTime = platform::UnixTime();
+	if (!_redrawn && !_sceneDirty)
+		_dirtySince = _activityTime;
+	_redrawn = true;
+}
+
+void IprController::ForgetFollowed()
+{
+	_nodes.Reset();
+	_objects.Reset();
+	_nodesValid = false;
+	_counters = DocumentCounters();
+	_redrawn = false;
+	_settlePending = false;
+	_wholeNeeded = false;
 }
 
 void IprController::NoteFrame(const Frame& frame)
@@ -511,12 +572,19 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 		_sentView = "?"_s;
 		_sentRegion = "?"_s;
 	}
+	// What this export sees of the document's change counters: the gate and FollowStep() compare with it.
+	const DocumentCounters counters = ReadCounters(doc);
+	const maxon::UInt32 otherCounters = ReadOtherCounters(doc);
 
 	// The Blender that renders: what its version lacks is left out of what is sent.
 	const BlenderInstall blender = GetBlenderInUse();
 
-	// Render settings, when they differ from what Blender has.
-	const cinema::BaseContainer data = GetDocumentRenderSettings(doc);
+	// Render settings, when they differ from what Blender has. The thread count goes with them, so it is
+	// sent when the IPR starts and when the settings or the preference change, never during a drag:
+	// changing it recreates Cycles' render session.
+	cinema::BaseContainer data = GetDocumentRenderSettings(doc);
+	LeaveThreadsFree(data);
+	_askedDevice = data.GetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU);
 	{
 		JsonWriter settings;
 		maxon::BaseArray<maxon::String> warnings;
@@ -552,6 +620,9 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 	const maxon::Bool skip = GetIprSkipUnchangedMeshes();
 	_exportSettings.reuse = !clear && skip ? &_sceneState : nullptr;
 	_exportSettings.noteSources = skip;
+	// What can be written alone in a step of a change in progress (FollowStep).
+	_exportSettings.noteFollowed = GetIprLiveUpdates() && GetIprOptimizedUpdates();
+	_exportSettings.hashBytes = IsIprUnoptimized();
 	_exportedTime = doc->GetTime();
 	_exportedTimeKnown = true;
 
@@ -582,6 +653,11 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 	}
 	_lastChangeCount = maxon::Int32(changes);
 	NoteLights(exporter) iferr_return;
+	NoteFollowed(doc, exporter) iferr_return;
+	_counters = counters;
+	_otherCounters = otherCounters;
+	_redrawn = false;
+	_settlePending = false;
 	const maxon::Float64 compared = platform::UnixTime();
 	_lastStats = exporter.GetStats();
 	_lastExportMilliseconds = (compared - exportStart) * 1000.0;
@@ -715,6 +791,8 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 {
 	iferr_scope;
 
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
+	finally { TraceIpr("camera_ms", (maxon::TimeValue::GetTime() - started).GetMilliseconds()); };
 	// A locked camera is a set of values that never changes (SetCameraLock); it is sent like
 	// any other, which changes nothing in Blender unless the image changed its shape.
 	CameraValues camera;
@@ -817,6 +895,8 @@ void IprController::Tick()
 			_watcher->Watch(maxon::String());
 	}
 
+	FollowPriority();
+
 	if (_state == IPRSTATE::STOPPED || _state == IPRSTATE::FAILED)
 		return;
 
@@ -843,9 +923,18 @@ void IprController::Tick()
 		return;
 	}
 
+	// With the Preferences' live updates off (0.2.0, F22) nothing is sent while the timeline plays,
+	// neither the scene nor an animated camera: the IPR shows the frame playback stopped at, as before
+	// 0.2.0 for the scene (and so that the camera does not run ahead of the objects).
+	if (!GetIprLiveUpdates() && cinema::CheckIsRunning(cinema::CHECKISRUNNING::ANIMATIONRUNNING))
+	{
+		TraceIpr("playback_held");
+		return;
+	}
+
 	// Playback changes the document's time without any change event (measured: none in 3 s of
 	// playing, an EVMSG_CHANGE only when it stopped), so the time is compared on every tick; the
-	// window's timer runs while Cinema 4D plays.
+	// window's timer runs while Cinema 4D plays. This also follows a time set without an event.
 	if (_exportedTimeKnown && doc->GetTime() != _exportedTime)
 		MarkSceneChanged();
 
@@ -860,14 +949,77 @@ void IprController::Tick()
 		iferr (SyncScene(false))
 			Fail(err.GetMessage());
 	}
-	else
+	else if (_redrawn)
 	{
-		// The window got another size, or the menu asked for one: no need to look at the scene.
-		if (_sizeDirty && platform::UnixTime() - _windowSizeTime >= WINDOW_SIZE_SETTLE_SECONDS)
-			SyncSize(doc);
-		iferr (SyncCamera(doc))
+		_redrawn = false;
+		iferr (FollowRedraw(doc))
 			Fail(err.GetMessage());
 	}
+	else if (_settlePending && platform::UnixTime() - _activityTime >= SETTLE_SECONDS)
+	{
+		// Things have stood still: Blender now gets exactly what a whole export gives.
+		++_settleCount;
+		TraceIpr("settle");
+		iferr (SyncScene(false))
+			Fail(err.GetMessage());
+	}
+	else
+	{
+		iferr (SyncView(doc))
+			Fail(err.GetMessage());
+	}
+}
+
+maxon::Result<void> IprController::SyncView(cinema::BaseDocument* doc)
+{
+	// The window got another size, or the menu asked for one: no need to look at the scene.
+	if (_sizeDirty && platform::UnixTime() - _windowSizeTime >= WINDOW_SIZE_SETTLE_SECONDS)
+		SyncSize(doc);
+	return SyncCamera(doc);
+}
+
+void IprController::FollowPriority()
+{
+	if (_processId == 0)
+	{
+		_priorityProcess = 0;
+		return;
+	}
+	const maxon::Float64 now = platform::UnixTime();
+	if (_processId == _priorityProcess && now >= _priorityTime && now - _priorityTime < 1.0)
+		return;
+	_priorityTime = now;
+	const maxon::Int32 own = platform::GetOwnPriorityRank();
+	if (own < 0 || (_processId == _priorityProcess && own == _ownPriority))
+		return;
+	const maxon::Int32 wanted = BlenderPriorityRank(own);
+	if (!platform::SetProcessPriorityRank(_processId, wanted))
+		return;	// tried again in a second
+	_priorityProcess = _processId;
+	_ownPriority = own;
+	_blenderPriority = wanted;
+	TraceIpr("priority", maxon::Float64(own * 10 + wanted));
+}
+
+maxon::String IprController::GetDeviceText() const
+{
+	if (!_worker || _state == IPRSTATE::STOPPED || _state == IPRSTATE::FAILED)
+		return maxon::String();
+	const IprDeviceInfo info = _worker->GetDeviceInfo();
+	if (!info.known)
+		return maxon::String();
+	// Blender names its graphics card as the driver does ("NVIDIA GeForce RTX 4090/PCIe/SSE2").
+	maxon::String display = info.displayGpu;
+	maxon::Int slash = 0;
+	if (display.Find("/"_s, &slash))
+		display = display.GetLeftPart(slash);
+	if (info.engine == "BLENDER_EEVEE"_s)
+		return display.IsEmpty() ? "Eevee"_s : "Eevee on "_s + display;
+	if (info.device == "GPU"_s)
+		return FormatString("Cycles on @: @", BackendLabel(info.backend), info.devices);
+	// Why the CPU (0.2.0, B11: the reported lag was a scene whose Render Settings said CPU while the
+	// Preferences named a GPU type): the Render Settings ask for it, or no GPU could be used.
+	return FormatString("Cycles on CPU, @ threads @", info.threads, _askedDevice == CYCLES_DEVICE_CPU ? "(Render Settings)"_s : "(no GPU found)"_s);
 }
 
 maxon::Result<maxon::String> IprController::VerifySync()
@@ -990,11 +1142,380 @@ maxon::Result<void> IprController::SyncLights(cinema::BaseDocument* doc)
 	return maxon::OK;
 }
 
+// --- a change in progress: the gate, and what moves sent alone (0.2.0, B11) --------------------
+
+IprController::DocumentCounters IprController::ReadCounters(cinema::BaseDocument* doc)
+{
+	DocumentCounters counters;
+	counters.all = doc->GetHDirty(cinema::HDIRTYFLAGS::ALL);
+	counters.time = doc->GetTime();
+	counters.known = true;
+	return counters;
+}
+
+maxon::UInt32 IprController::ReadOtherCounters(cinema::BaseDocument* doc)
+{
+	return doc->GetHDirty(cinema::HDIRTYFLAGS::ALL & ~(cinema::HDIRTYFLAGS::OBJECT | cinema::HDIRTYFLAGS::OBJECT_MATRIX | cinema::HDIRTYFLAGS::TAG));
+}
+
+// The data counter of an object with those of its tags (their number and order count too).
+static maxon::UInt32 DataDirty(const cinema::BaseObject* op)
+{
+	maxon::UInt32 dirty = op->GetDirty(cinema::DIRTYFLAGS::DATA);
+	for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
+		dirty = dirty * 31 + tag->GetDirty(cinema::DIRTYFLAGS::DATA) + 1;
+	return dirty;
+}
+
+// The counters of everything an object generated: its cache, the objects in it, their caches and their
+// deformed copies. For objects that show a deformed mesh: when a deformer moves, Cinema 4D 2024 counts
+// that only on the object inside that carries the deformed copy, not on the generator around it.
+static void MixCacheTree(const cinema::BaseObject* first, maxon::UInt32& sum);
+
+static void MixCacheCounters(const cinema::BaseObject* op, maxon::UInt32& sum)
+{
+	sum = sum * 31 + op->GetDirty(cinema::DIRTYFLAGS::CACHE);
+	if (const cinema::BaseObject* const deformed = op->GetDeformCache())
+		sum = (sum * 31 + maxon::UInt32(reinterpret_cast<maxon::UInt>(deformed) >> 4)) * 31 + deformed->GetDirty(cinema::DIRTYFLAGS::DATA);
+	MixCacheTree(op->GetCache(), sum);
+}
+
+static void MixCacheTree(const cinema::BaseObject* first, maxon::UInt32& sum)
+{
+	for (const cinema::BaseObject* op = first; op; op = op->GetNext())
+	{
+		sum = sum * 31 + op->GetDirty(cinema::DIRTYFLAGS::DATA);
+		MixCacheCounters(op, sum);
+		MixCacheTree(op->GetDown(), sum);
+	}
+}
+
+// What a step compares of an object's cache: its cache counter, which moves when the cache is built
+// anew, or with @p deformed everything in the cache.
+static maxon::UInt32 CacheDirty(const cinema::BaseObject* op, maxon::Bool deformed)
+{
+	if (!deformed)
+		return op->GetDirty(cinema::DIRTYFLAGS::CACHE);
+	maxon::UInt32 sum = 0;
+	MixCacheCounters(op, sum);
+	return sum;
+}
+
+// The next object of a walk from the top, each object before the objects below it; @p depth follows.
+static const cinema::BaseObject* NextInWalk(const cinema::BaseObject* op, maxon::Int& depth)
+{
+	if (op->GetDown())
+	{
+		++depth;
+		return op->GetDown();
+	}
+	while (op && !op->GetNext())
+	{
+		op = op->GetUp();
+		--depth;
+	}
+	return op ? op->GetNext() : nullptr;
+}
+
+// The global matrix of an object as the exporter's walk forms it: the top object's local matrix times
+// each child's, from the top down (SceneExporter::WriteLightAlone).
+static cinema::Matrix WalkMatrix(const cinema::BaseObject* op)
+{
+	const cinema::BaseObject* const up = op->GetUp();
+	return up ? WalkMatrix(up) * op->GetMl() : op->GetMl();
+}
+
+maxon::Result<void> IprController::NoteFollowed(cinema::BaseDocument* doc, SceneExporter& exporter)
+{
+	iferr_scope;
+	_nodes.Reset();
+	_objects.Reset();
+	_nodesValid = false;
+	if (!_exportSettings.noteFollowed)
+		return maxon::OK;
+
+	// The objects of the document, in the walk's order, with their counters as this export saw them.
+	maxon::HashMap<const cinema::BaseObject*, maxon::Int32> nodeOf;
+	maxon::BaseArray<maxon::Int32> open;	// the nodes whose objects below are being listed
+	maxon::Int depth = 0;
+	for (const cinema::BaseObject* op = doc->GetFirstObject(); op; op = NextInWalk(op, depth))
+	{
+		while (open.GetCount() > depth)
+		{
+			_nodes[open[open.GetCount() - 1]].end = maxon::Int32(_nodes.GetCount());
+			open.Pop();
+		}
+		FollowedNode node;
+		node.object = op;
+		node.matrixDirty = op->GetDirty(cinema::DIRTYFLAGS::MATRIX);
+		node.dataDirty = DataDirty(op);
+		node.cacheDirty = op->GetDirty(cinema::DIRTYFLAGS::CACHE);
+		node.renderMode = op->GetRenderMode();
+		const maxon::Int32 type = op->GetType();
+		// A light's values are written with the light alone, a camera's are sent by SyncCamera().
+		node.dataAlone = type == Olight || type == Orslight || type == ID_LIGHT_OBJECT || type == Orscamera || op->IsInstanceOf(Ocamera);
+		nodeOf.Insert(op, maxon::Int32(_nodes.GetCount())) iferr_return;
+		open.Append(maxon::Int32(_nodes.GetCount())) iferr_return;
+		_nodes.Append(node) iferr_return;
+	}
+	for (const maxon::Int32 index : open)
+		_nodes[index].end = maxon::Int32(_nodes.GetCount());
+
+	for (const cinema::BaseObject* const owner : exporter.GetUnfollowedOwners())
+	{
+		if (const auto* const found = nodeOf.Find(owner))
+		{
+			FollowedNode& node = _nodes[found->GetValue()];
+			node.unfollowed = true;
+			node.dataAlone = false;	// a dome light is the world, a light of a generator is not written alone
+		}
+	}
+	for (const cinema::BaseObject* const owner : exporter.GetDeformedOwners())
+	{
+		if (const auto* const found = nodeOf.Find(owner))
+		{
+			FollowedNode& node = _nodes[found->GetValue()];
+			node.deformed = true;
+			node.cacheDirty = CacheDirty(owner, true);
+		}
+	}
+	for (const cinema::BaseObject* const root : exporter.GetReferenceRoots())
+	{
+		if (const auto* const found = nodeOf.Find(root))
+		{
+			for (maxon::Int32 index = found->GetValue() + 1; index < _nodes[found->GetValue()].end; ++index)
+				_nodes[index].referenced = true;
+		}
+	}
+
+	// The items, grouped by their owner's node.
+	maxon::BaseArray<WrittenObject> written = exporter.TakeWrittenObjects();
+	for (const WrittenObject& object : written)
+	{
+		if (const auto* const found = nodeOf.Find(object.owner))
+			++_nodes[found->GetValue()].objectCount;
+	}
+	maxon::Int32 first = 0;
+	for (FollowedNode& node : _nodes)
+	{
+		node.firstObject = first;
+		first += node.objectCount;
+		node.objectCount = 0;
+	}
+	_objects.Resize(first) iferr_return;
+	for (WrittenObject& object : written)
+	{
+		if (const auto* const found = nodeOf.Find(object.owner))
+		{
+			FollowedNode& node = _nodes[found->GetValue()];
+			_objects[node.firstObject + node.objectCount++] = std::move(object);
+		}
+	}
+	_nodesValid = true;
+	return maxon::OK;
+}
+
+maxon::Result<maxon::Bool> IprController::SyncAlone(cinema::BaseDocument* doc, const DocumentCounters& counters)
+{
+	iferr_scope;
+	const maxon::TimeValue start = maxon::TimeValue::GetTime();
+	_lastAloneObjects = 0;
+	// Another time moves whatever is animated; anything but objects and tags (materials, render settings,
+	// the hierarchy, layers, takes) is not looked at here.
+	if (!_nodesValid || !_counters.known || counters.time != _counters.time || ReadOtherCounters(doc) != _otherCounters)
+		return false;
+
+	IprTask* task = NewObj(IprTask) iferr_return;
+	finally
+	{
+		DeleteObj(task);
+	};
+	task->kind = IprTask::KIND::SCENE;
+	task->scene = NewObj(SceneWriter, false) iferr_return;
+	const Coords coords = Coords::FromDocument(doc);
+
+	// Every object of the document against what the last whole export saw of it. `moving` holds, per
+	// level of the walk, whether the object there or one above it moved, and `matrices` its matrix then.
+	struct Seen
+	{
+		maxon::Int32 node;
+		maxon::UInt32 matrixDirty;
+		maxon::UInt32 dataDirty;
+	};
+	maxon::BaseArray<Seen> seen;
+	maxon::BaseArray<maxon::Bool> moving;
+	maxon::BaseArray<cinema::Matrix> matrices;
+	maxon::Int depth = 0;
+	maxon::Int32 index = 0;
+	for (const cinema::BaseObject* op = doc->GetFirstObject(); op; op = NextInWalk(op, depth), ++index)
+	{
+		// An object added, removed or put elsewhere: the hierarchy counter said so already; a guard.
+		if (index >= _nodes.GetCount() || _nodes[index].object != op)
+			return false;
+		const FollowedNode& node = _nodes[index];
+		const maxon::UInt32 matrixDirty = op->GetDirty(cinema::DIRTYFLAGS::MATRIX);
+		const maxon::UInt32 dataDirty = DataDirty(op);
+		// A cache built anew (the object is a generator whose input changed, or is deformed), or the render
+		// dot (which counts as a change of the matrix): not a change of place.
+		if (CacheDirty(op, node.deformed) != node.cacheDirty || op->GetRenderMode() != node.renderMode)
+			return false;
+		if (dataDirty != node.dataDirty && !node.dataAlone)
+			return false;
+		const maxon::Bool movedItself = matrixDirty != node.matrixDirty;
+		if (movedItself && node.referenced)
+			return false;
+		const maxon::Bool above = depth > 0 && moving[depth - 1];
+		const maxon::Bool moves = movedItself || above;
+		if (moves && node.unfollowed)
+			return false;
+		if (moving.GetCount() <= depth)
+		{
+			moving.Resize(depth + 1) iferr_return;
+			matrices.Resize(depth + 1) iferr_return;
+		}
+		moving[depth] = moves;
+		if (moves)
+		{
+			matrices[depth] = above ? matrices[depth - 1] * op->GetMl() : WalkMatrix(op);
+			for (maxon::Int32 i = 0; i < node.objectCount; ++i)
+				SceneExporter::WriteObjectAlone(*task->scene, coords, _objects[node.firstObject + i], matrices[depth]);
+			_lastAloneObjects += node.objectCount;
+		}
+		if (movedItself || dataDirty != node.dataDirty)
+		{
+			seen.Append(Seen{ index, matrixDirty, dataDirty }) iferr_return;
+		}
+	}
+	if (index != _nodes.GetCount())
+		return false;
+
+	// The lights, each by itself as since F18: their values and their places.
+	maxon::Bool lost = false;
+	for (const FollowedLight& light : _lights)
+	{
+		const cinema::BaseObject* const object = static_cast<const cinema::BaseObject*>(light.link->GetLink(doc, Obase));
+		if (!object)
+		{
+			lost = true;
+			continue;
+		}
+		const maxon::Bool written = SceneExporter::WriteLightAlone(*task->scene, doc, _exportSettings, object, light.id, light.linked ? &light.linking : nullptr) iferr_return;
+		if (!written)
+			task->scene->RemoveItem(light.id);
+	}
+	if (lost)
+		return false;
+	for (const maxon::String& warning : task->scene->GetWarnings())
+		ReportOnce(warning);
+
+	const maxon::Int changes = task->scene->KeepChanges(_sceneState, true) iferr_return;
+	for (const Seen& entry : seen)
+	{
+		_nodes[entry.node].matrixDirty = entry.matrixDirty;
+		_nodes[entry.node].dataDirty = entry.dataDirty;
+	}
+	_counters = counters;
+	_settlePending = true;
+	_lastChangeCount = maxon::Int32(changes);
+	_lastAloneMilliseconds = (maxon::TimeValue::GetTime() - start).GetMilliseconds();
+	TraceIpr("alone_ms", _lastAloneMilliseconds);
+	if (changes > 0)
+	{
+		++_aloneCount;
+		TraceIpr("posted_alone", maxon::Float64(changes));
+		_worker->Post(task);
+		task = nullptr;
+		ArmLatency(_dirtySince);
+	}
+	_dirtySince = 0.0;
+	return true;
+}
+
+void IprController::FollowStep(maxon::Bool allowWhole)
+{
+	if (!_worker || _state != IPRSTATE::RUNNING)
+		return;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	if (!doc || doc != _document)
+		return;
+	_activityTime = platform::UnixTime();
+	if (_sceneDirty && allowWhole)
+	{
+		// A whole export is due anyway (an edit before this step).
+		Tick();
+		return;
+	}
+	// While Blender is still busy with the last step, wait: the next one covers this one.
+	if (_worker->GetPendingCount() != 0)
+		return;
+
+	const DocumentCounters counters = ReadCounters(doc);
+	_wholeNeeded = false;
+	if (!(counters == _counters))
+	{
+		iferr (const maxon::Bool alone = SyncAlone(doc, counters))
+		{
+			Fail(err.GetMessage());
+			return;
+		}
+		_wholeNeeded = !alone;
+		if (!alone)
+		{
+			TraceIpr("step_whole");
+			MarkSceneChanged();
+			if (allowWhole)
+			{
+				Tick();
+				return;
+			}
+			// Inside an evaluation: the whole export waits for the end of the change, the lights go on.
+			iferr (SyncLights(doc))
+			{
+				Fail(err.GetMessage());
+				return;
+			}
+		}
+	}
+	iferr (SyncCamera(doc))
+		Fail(err.GetMessage());
+}
+
+maxon::Result<void> IprController::FollowRedraw(cinema::BaseDocument* doc)
+{
+	iferr_scope;
+	// (For comparisons: as before 0.2.0, every redraw exports.)
+	if (IsIprUnoptimized())
+		return SyncScene(false);
+	const DocumentCounters counters = ReadCounters(doc);
+	_wholeNeeded = false;
+	if (counters == _counters)
+	{
+		// No counter moved since the last export or update: the redraw came from something that is not
+		// in the scene (the view navigated, a manager). The settle export looks again.
+		++_gatedCount;
+		TraceIpr("gated");
+		_settlePending = true;
+		_dirtySince = 0.0;
+		_lastChangeCount = 0;
+		_lastStats = ExportStats();
+		_lastExportMilliseconds = 0.0;
+		return SyncView(doc);
+	}
+	if (GetIprLiveUpdates() && GetIprOptimizedUpdates())
+	{
+		const maxon::Bool alone = SyncAlone(doc, counters) iferr_return;
+		_wholeNeeded = !alone;
+		if (alone)
+			return SyncView(doc);
+	}
+	return SyncScene(false);
+}
+
 // --- results --------------------------------------------------------------------------------
 
-maxon::Bool IprController::ReadFrame(Frame& frame)
+maxon::Bool IprController::ReadFrame(Frame& frame, maxon::Float64 minSeconds)
 {
-	if (!_watcher || !_watcher->Take(frame, _frameArrival))
+	if (!_watcher || !_watcher->Take(frame, _frameArrival, minSeconds))
 		return false;
 
 	// Outside a render region Blender's viewport shows whatever it drew before: make it black.

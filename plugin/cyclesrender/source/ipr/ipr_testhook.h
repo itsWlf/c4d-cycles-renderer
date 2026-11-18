@@ -78,6 +78,25 @@ namespace cyclesrender
 /// why none can be started; empty when one can), "detected"}; defaultengine [<0|1>] sets the
 /// page's Default Engine and answers {"default_engine"}. The status has blender_missing
 /// (IprController::IsBlenderMissing) and window_message (the text on the window's picture).
+/// What renders, and what is left to Cinema 4D (0.2.0, B11): the status has device, device_engine,
+/// device_type, device_names, device_threads, display_gpu (Blender's reply to the last `settings`
+/// request, IprWorker::GetDeviceInfo), device_text (the status line's words for it) and
+/// window_device_text (what the window's line shows), threads_free (the preference) and
+/// logical_processors, c4d_priority, blender_priority (the classes FollowPriority saw and set, ranks of
+/// platform/process_stats.h), blender_priority_now (Blender's class read now), blender_pid, state_block (the name of
+/// the frame block's state block, for a test that reads the newest published frame itself) and shown_frame (the id of
+/// the frame the window shows; 0 without a window); threadsfree [<n>] sets
+/// the page's "CPU Threads Left Free" and answers {"threads_free"}.
+/// A change in progress (0.2.0, B11): redrawn tells the controller of a redraw (IprController::NoteRedraw,
+/// what EVMSG_DOCUMENTRECALCULATED does: the next tick exports only if the document's change counters
+/// moved), step runs IprController::FollowStep(true) (a tool's step: what moved is sent alone, or the
+/// scene whole), evaluated runs FollowStep(false) (a step inside an evaluation, as the scene hook's:
+/// never the whole scene). The status has optimized_updates (the preference), gated (redraws that
+/// exported nothing), alone (updates of single items sent), settled (settle exports), all three since
+/// the IPR started; settle_pending, whole_needed (the last step could not be sent alone), alone_ms and
+/// alone_objects (of the last step: its time, the `object` items it wrote), objects_followed and
+/// nodes_followed (what a step can write and what it compares), and meshes_by_data_hash (meshes of the
+/// last export judged by Cinema 4D's data hashes, scene/mesh_export.h).
 /// With the window open the status also has image_rect (where the picture is on the screen: left,
 /// top, width, height) and image_center (the image point in its middle), for tests that post mouse
 /// messages to it.

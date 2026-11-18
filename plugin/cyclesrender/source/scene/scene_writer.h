@@ -23,13 +23,13 @@ maxon::UInt64 HashBytes(const maxon::Char* data, maxon::Int count, maxon::UInt64
 /// live session; SceneWriter::KeepChanges() compares against it and brings it up to date.
 ///
 /// For items whose export can be skipped (the IPR's meshes, SceneWriter::KeepMesh), it also
-/// keeps the signature of what each was made from (SceneWriter::NoteMeshSource).
+/// keeps the signatures of what each was made from (SceneWriter::NoteMeshSource).
 //----------------------------------------------------------------------------------------
 class SyncState
 {
 public:
 	/// Forget everything, as after Blender's scene was cleared.
-	void Reset() { _items.Reset(); _sources.Reset(); }
+	void Reset() { _items.Reset(); _sources.Reset(); _sourcesAfter.Reset(); }
 	maxon::Int GetItemCount() const { return _items.GetCount(); }
 	/// Makes this a copy of @p other (for comparing a fresh export with it, without changing it).
 	maxon::Result<void> CopyFrom(const SyncState& other);
@@ -38,6 +38,7 @@ private:
 	friend class SceneWriter;
 	maxon::HashMap<maxon::String, maxon::UInt64> _items;
 	maxon::HashMap<maxon::String, maxon::UInt64> _sources;   ///< item id -> signature of what it was made from
+	maxon::HashMap<maxon::String, maxon::UInt64> _sourcesAfter;   ///< item id -> that signature as it read after the export (NoteMeshSource)
 };
 
 //----------------------------------------------------------------------------------------
@@ -111,10 +112,16 @@ public:
 	/// they were made from (scene_exporter.cpp, MeshSignature), and KeepChanges() stores it in the
 	/// SyncState. Next time KeepMesh() with the same signature puts the two items into the request
 	/// as Blender holds them, by their fingerprints and without their content, instead of an export.
+	///
+	/// @p after is the same signature taken again once the mesh was exported. It can differ although
+	/// nothing changed: Cinema 4D 2027 makes the data of some tags of a generator's mesh only when it
+	/// is asked for (a primitive's UVW tag), and such a tag's data hash is another before and after
+	/// (measured: docs/reference/c4d-sdk.md, "Skipping unchanged meshes in the IPR"). KeepMesh() takes
+	/// either.
 	/// @return  False, with nothing added, unless @p state holds both items made from @p signature.
 	//----------------------------------------------------------------------------------------
 	maxon::Bool KeepMesh(const SyncState& state, const maxon::String& meshId, maxon::UInt64 signature);
-	void NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature);
+	void NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature, maxon::UInt64 after);
 	/// True when KeepChanges() found an item of KeepMesh() that Blender does not hold as kept: the
 	/// request lacks its content and must be made again without KeepMesh(). Never seen; a guard.
 	maxon::Bool IsMissingKeptItems() const { return _missingKept; }
@@ -138,8 +145,9 @@ private:
 		maxon::Int sendWith = NOTOK;     ///< index of the item whose sending forces this one
 		maxon::Bool kept = false;        ///< KeepMesh(): no content, only the fingerprint below
 		maxon::UInt64 keptFingerprint = 0;
-		maxon::Bool hasSource = false;   ///< NoteMeshSource() or KeepMesh() gave it a signature
+		maxon::Bool hasSource = false;   ///< NoteMeshSource() or KeepMesh() gave it its signatures
 		maxon::UInt64 source = 0;
+		maxon::UInt64 sourceAfter = 0;
 	};
 
 	maxon::UInt64 Fingerprint(const Item& item) const;

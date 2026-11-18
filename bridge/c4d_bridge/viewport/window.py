@@ -69,14 +69,3 @@ def set_client_size(hwnd, width, height):
     extra_height = (outer.bottom - outer.top) - (client.bottom - client.top)
     user32.SetWindowPos(hwnd, None, 0, 0, width + extra_width, height + extra_height,
                         _SWP_NOMOVE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_NOSENDCHANGING)
-
-
-def lower_process_priority():
-    """Run this Blender below normal priority. A CPU render uses every core; without this the
-    application the user works in (Cinema 4D) stutters while the live render refines."""
-    if sys.platform != "win32":
-        return
-    kernel32 = ctypes.windll.kernel32
-    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
-    kernel32.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-    kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00004000)  # BELOW_NORMAL_PRIORITY_CLASS

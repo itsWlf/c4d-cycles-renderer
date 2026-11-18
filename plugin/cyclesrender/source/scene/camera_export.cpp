@@ -20,8 +20,24 @@ namespace cyclesrender
 // not care; Eevee's depth buffer loses precision when the range is much wider.
 static const maxon::Float64 DEFAULT_CLIP_START = 0.01;
 static const maxon::Float64 DEFAULT_CLIP_END = 10000.0;
-// Blender's smallest clip_start.
-static const maxon::Float64 MIN_CLIP_START = 1e-6;
+// The smallest clip_start sent, and the widest range (clip_end / clip_start). Measured with Eevee
+// of Blender 5.0, 5.2 and 5.3 (0.2.0, B10; docs/reference/blender.md, "Cameras"): a ball under an
+// omni light renders black (no light at all) once the range exceeds about 10^7 (3e-4 m to 10 km,
+// 1e-5 m to 1 km, 1e-6 m to 100 m), and too bright below 1 mm (+4 % at 1e-4 m, +40 % at 1e-5 m);
+// from 1 mm and within 10^6 it renders as with Blender's defaults (within 0.4 %). Cinema 4D 2024's
+// editor camera has near clipping on at 0, which was sent as Blender's smallest clip_start (1e-6).
+static const maxon::Float64 MIN_CLIP_START = 1e-3;
+static const maxon::Float64 MAX_CLIP_RANGE = 1e6;
+
+// Blender's clip range, in metres, for a camera that clips as Cinema 4D's does (every camera but an
+// orthographic one that clips nothing, below). A near clipping of 0 clips nothing in front of a
+// perspective camera: the default start then. The start is kept where Eevee renders right.
+static void ClipRange(const Coords& coords, const CameraValues& camera, maxon::Float64& start, maxon::Float64& end)
+{
+	end = camera.farEnabled ? coords.Length(camera.farClip) : DEFAULT_CLIP_END;
+	start = camera.nearEnabled && camera.nearClip > 0.0 ? coords.Length(camera.nearClip) : DEFAULT_CLIP_START;
+	start = maxon::Max(start, maxon::Max(MIN_CLIP_START, end / MAX_CLIP_RANGE));
+}
 
 // Where Cinema 4D clips nothing (its fixed views, a parallel camera without near clipping),
 // not even behind the camera, Blender's orthographic camera is moved back this far along its
@@ -445,8 +461,11 @@ maxon::Result<void> ExportCamera(SceneWriter& writer, const Coords& coords, cons
 	}
 	else
 	{
-		json.Float("clip_start", camera.nearEnabled ? maxon::Max(coords.Length(camera.nearClip), MIN_CLIP_START) : DEFAULT_CLIP_START);
-		json.Float("clip_end", camera.farEnabled ? coords.Length(camera.farClip) : DEFAULT_CLIP_END);
+		maxon::Float64 clipStart = 0.0;
+		maxon::Float64 clipEnd = 0.0;
+		ClipRange(coords, camera, clipStart, clipEnd);
+		json.Float("clip_start", clipStart);
+		json.Float("clip_end", clipEnd);
 	}
 
 	if (camera.HasDepthOfField(depthOfField))
@@ -556,8 +575,11 @@ maxon::Bool WriteFreeView(JsonWriter& request, const Coords& coords, const Camer
 	request.Float("sensor_width", sensorWidth);
 	request.Int("width", width);
 	request.Int("height", height);
-	request.Float("clip_start", camera.nearEnabled ? maxon::Max(coords.Length(camera.nearClip), MIN_CLIP_START) : DEFAULT_CLIP_START);
-	request.Float("clip_end", camera.farEnabled ? coords.Length(camera.farClip) : DEFAULT_CLIP_END);
+	maxon::Float64 clipStart = 0.0;
+	maxon::Float64 clipEnd = 0.0;
+	ClipRange(coords, camera, clipStart, clipEnd);
+	request.Float("clip_start", clipStart);
+	request.Float("clip_end", clipEnd);
 	return true;
 }
 

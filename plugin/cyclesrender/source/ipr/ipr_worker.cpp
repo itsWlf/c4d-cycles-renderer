@@ -5,6 +5,7 @@
 #include "c4d.h"
 
 #include "../platform/shared_memory.h"
+#include "../session/json.h"
 #include "ipr_trace.h"
 #include "ipr_worker.h"
 
@@ -102,6 +103,12 @@ void IprWorker::TakeWarnings(maxon::BaseArray<maxon::String>& warnings)
 	_warnings.Reset();
 }
 
+IprDeviceInfo IprWorker::GetDeviceInfo()
+{
+	maxon::ScopedLock guard(_lock);
+	return _device;
+}
+
 maxon::Float64 IprWorker::GetLastSceneAnswerTime()
 {
 	maxon::ScopedLock guard(_lock);
@@ -120,6 +127,7 @@ void IprWorker::DropSession()
 	maxon::ScopedLock guard(_lock);
 	_token = maxon::String();
 	_processId = 0;
+	_device = IprDeviceInfo();
 }
 
 void IprWorker::Fail(const maxon::String& message)
@@ -177,8 +185,30 @@ maxon::Result<void> IprWorker::Run(IprTask& task)
 			// Without a session there is nobody to tell; the failure that ended it was reported.
 			if (!_client)
 				return maxon::OK;
-			_client->Request(task.request, BlobViews(), Get()) iferr_return;
+			const BridgeMessage reply = _client->Request(task.request, BlobViews(), Get()) iferr_return;
 			_requestsSent.SwapIncrement();
+			// What Blender could not honour (a `settings` request: a GPU it does not have, an option it lacks)
+			// is said in the console like a scene's warnings; before 0.2.0 (B11) it was dropped here, so a GPU
+			// render that fell back to the CPU said nothing in the IPR.
+			const maxon::BaseArray<maxon::String> warnings = GetJsonStrings(reply.header, "warnings"_s);
+			maxon::ScopedLock guard(_lock);
+			for (const maxon::String& warning : warnings)
+			{
+				_warnings.Append(warning) iferr_return;
+			}
+			// The reply to `settings` says what renders.
+			if (GetJsonString(reply.header, "device"_s).IsPopulated())
+			{
+				_device.known = true;
+				_device.engine = GetJsonString(reply.header, "engine"_s);
+				_device.device = GetJsonString(reply.header, "device"_s);
+				_device.backend = GetJsonString(reply.header, "device_type"_s);
+				_device.threads = maxon::Int32(GetJsonInt(reply.header, "threads"_s, 0));
+				_device.displayGpu = GetJsonString(reply.header, "display_gpu"_s);
+				_device.devices = maxon::String();
+				for (const maxon::String& name : GetJsonStrings(reply.header, "devices"_s))
+					_device.devices += (_device.devices.IsEmpty() ? ""_s : ", "_s) + name;
+			}
 			return maxon::OK;
 		}
 		case IprTask::KIND::SCENE:

@@ -33,10 +33,14 @@ enum
 	PREF_CYCLES_DEVICE_FIRST = 1100,
 	PREF_CYCLES_DEVICE_LAST = 1163,
 
-	// The IPR: switches for its riskier features, to turn them off when hunting a fault.
+	// The IPR: switches for its riskier features, to turn them off when hunting a fault, and for
+	// following changes while they are made (prefs/settings.h).
 	PREF_CYCLES_IPR_GROUP = 997,
 	PREF_CYCLES_IPR_SKIP_UNCHANGED = 1007,
-	PREF_CYCLES_IPR_NAVIGATE = 1008
+	PREF_CYCLES_IPR_NAVIGATE = 1008,
+	PREF_CYCLES_IPR_LIVE_UPDATES = 1010,	// 0.2.0, F22 (1009 is F21's Default Engine)
+	PREF_CYCLES_IPR_THREADS_FREE = 1011,	// 0.2.0, B11
+	PREF_CYCLES_IPR_OPTIMIZED_UPDATES = 1012	// 0.2.0, B11 (1013 to 1099 have never been used)
 };
 
 #endif // PREFSCYCLESRENDER_H__

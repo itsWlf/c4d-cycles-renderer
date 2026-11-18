@@ -127,6 +127,56 @@ void QueryMemoryStats(long long processId, MemoryStats& stats)
 	stats.processVram = ProcessVideoMemory(processId);
 }
 
+int GetLogicalProcessorCount()
+{
+	SYSTEM_INFO info = {};
+	::GetSystemInfo(&info);
+	return info.dwNumberOfProcessors > 0 ? static_cast<int>(info.dwNumberOfProcessors) : 1;
+}
+
+// The classes in the order of the ranks of process_stats.h.
+static const DWORD PRIORITY_CLASSES[] = { IDLE_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+	ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS };
+
+static int RankOfClass(DWORD value)
+{
+	for (int rank = 0; rank < 6; ++rank)
+	{
+		if (PRIORITY_CLASSES[rank] == value)
+			return rank;
+	}
+	return -1;
+}
+
+int GetOwnPriorityRank()
+{
+	return RankOfClass(::GetPriorityClass(::GetCurrentProcess()));
+}
+
+int GetProcessPriorityRank(long long processId)
+{
+	if (processId <= 0)
+		return -1;
+	const HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(processId));
+	if (!process)
+		return -1;
+	const int rank = RankOfClass(::GetPriorityClass(process));
+	::CloseHandle(process);
+	return rank;
+}
+
+bool SetProcessPriorityRank(long long processId, int rank)
+{
+	if (processId <= 0 || rank < 0 || rank > 5)
+		return false;
+	const HANDLE process = ::OpenProcess(PROCESS_SET_INFORMATION, FALSE, static_cast<DWORD>(processId));
+	if (!process)
+		return false;
+	const bool done = ::SetPriorityClass(process, PRIORITY_CLASSES[rank]) != FALSE;
+	::CloseHandle(process);
+	return done;
+}
+
 } // namespace platform
 } // namespace cyclesrender
 

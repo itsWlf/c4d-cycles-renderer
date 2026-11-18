@@ -56,11 +56,28 @@ maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op);
 //----------------------------------------------------------------------------------------
 /// HashMeshSource() and the rest of what ExportMesh() reads from @p op: the edges that break
 /// the Phong normals, the n-gons, and whether vertex colours are per point. Two objects with the
-/// same value export the same items for the same mesh id, slots and units. A pass over the mesh's
-/// data (points, polygons, every tag ExportMesh reads), several times cheaper than exporting it
-/// (docs/reference/c4d-sdk.md, "Skipping unchanged meshes in the IPR").
+/// same value export the same items for the same mesh id, slots and units.
+///
+/// @param[in] how  Where the arrays' content comes from (points, polygons, UVW, normal, vertex map and
+///                 vertex colour tags).
+///                 BYTES: a pass over the data itself, as HashMeshSource() does it: several times
+///                 cheaper than exporting the mesh, but 10 ms for a million quads, and in Cinema 4D
+///                 2027 asking a generated mesh's tag for its data or their number makes the tag build
+///                 them again and the view draw the mesh anew (measured: 11 ms more here and 20 ms more
+///                 in the next redraw for a plane of a million quads).
+///                 DATA_HASH: Cinema 4D's own hash of each array (VariableTag::GetDataHash), which it
+///                 keeps with the data: nothing per polygon, and no data is asked for (0.1 ms for the
+///                 same plane, 2024 and 2027). The two kinds of value do not compare with each other,
+///                 and in Cinema 4D 2027 a tag's data hash is another once its data were asked for
+///                 (SceneWriter::NoteMeshSource). Measurements: docs/reference/c4d-sdk.md, "Skipping
+///                 unchanged meshes in the IPR".
 //----------------------------------------------------------------------------------------
-maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op);
+enum class MESHHASH
+{
+	BYTES,
+	DATA_HASH
+} MAXON_ENUM_LIST(MESHHASH);
+maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op, MESHHASH how = MESHHASH::BYTES);
 
 //----------------------------------------------------------------------------------------
 /// Which object @p op is and how often it and its tags were changed: its address and GUID, its

@@ -17,7 +17,7 @@ enum class IPRADD
 	CAMERA_WITH_TAG,				///< a camera where the active view looks from, with a Cycles Camera tag, made the render view's camera
 	CAMERA_TAG,							///< a Cycles Camera tag on every selected camera that has none
 	OBJECT_TAG,							///< a Cycles Object tag on every selected object that has none
-	CYCLES_LIGHT,						///< a Cycles Light where the render view looks from, shining where it looks
+	CYCLES_LIGHT,						///< a Cycles Light where Cinema 4D's own Create menu puts one (its command: at the workplane)
 	LIGHT_TAG								///< a Cycles Light tag on every selected light of Cinema 4D or Redshift that has none
 } MAXON_ENUM_LIST(IPRADD);
 

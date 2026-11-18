@@ -13,6 +13,7 @@ enum
 	CYCLES_DEVICE = 1001,
 		CYCLES_DEVICE_CPU = 0,
 		CYCLES_DEVICE_GPU = 1,
+		CYCLES_DEVICE_AUTOMATIC = 2,	// 0.2.0 (B11): the GPU when Blender has one, else the CPU; what new settings start with
 	CYCLES_LAYOUT = 1002,
 		CYCLES_LAYOUT_SIMPLE = 0,
 		CYCLES_LAYOUT_ADVANCED = 1,

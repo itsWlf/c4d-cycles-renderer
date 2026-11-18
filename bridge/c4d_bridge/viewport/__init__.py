@@ -3,9 +3,9 @@
 
 Blender's window is turned into one borderless 3D viewport in Rendered mode, hidden from the
 user. Blender then does what it does for its own users: it restarts the render the moment the
-scene changes and refines it sample by sample. After every redraw the driver copies the
-viewport's float pixels into the shared-memory frame block (frame_block.py), where the plugin
-picks them up. Mechanisms and their measurements: docs/reference/blender.md.
+scene changes and refines it sample by sample. After a redraw the driver copies the viewport's
+float pixels into the shared-memory frame block (frame_block.py), where the plugin picks them up:
+at most PUBLISH_SECONDS apart, the last picture always. Mechanisms and their measurements: docs/reference/blender.md.
 """
 
 import ctypes
@@ -33,6 +33,13 @@ _SETTLE_SECONDS = 0.6
 # After the region has taken a new size the view is set once more, this much later; see
 # Viewport._after_resize.
 _RESIZE_NUDGE_SECONDS = 0.25
+
+# Frames are published at most this often (0.2.0, B11): Cycles redraws after every piece of work, 50 to
+# 230 times a second while something moves, and every frame costs a read-back from the GPU here and a
+# conversion and a draw on the client's interface thread. A redraw in between only updates the progress;
+# the newest picture follows when the time has come, by a redraw this driver asks for if Blender makes
+# none (the trailing frame), and the picture of a finished or paused render is published at once.
+PUBLISH_SECONDS = 1.0 / 30.0
 
 
 def free_view_lens(lens, sensor_width, width, height):
@@ -81,6 +88,12 @@ class Viewport:
         self._last_sample = 0
         self._start_time = 0.0
         self._end_time = 0.0
+        self._published_at = -1.0          # perf_counter() of the last published frame
+        self._published_state = None       # the progress state it was published with
+        self._publish_pending = False      # a redraw was not published; a later one must be
+        self._trailing_timer = False
+        self.redrawn = 0                   # redraws seen while rendering, and frames published (for tests)
+        self.published = 0
         self.error = None                  # traceback of a failed draw callback, sent with the next reply
 
     # --- set-up: two steps, because the screen is swapped between them -----------------
@@ -99,7 +112,8 @@ class Viewport:
         self._refresh_area()
         self.hwnd = window.find()
         window.show(self.hwnd, show_window)
-        window.lower_process_priority()
+        # The process's priority class is the client's to choose (it started this Blender and knows
+        # what else runs on the machine); the bridge leaves it as it is.
         self.space.overlay.show_overlays = False
         self.space.show_gizmo = False
         self.space.shading.type = 'SOLID'
@@ -346,7 +360,8 @@ class Viewport:
 
     def describe(self):
         fields = {"state_block": self.block.state_name, "rendering": self.rendering or self._starting, "paused": self.paused,
-                  "width": self.region.width if self.region else 0, "height": self.region.height if self.region else 0}
+                  "width": self.region.width if self.region else 0, "height": self.region.height if self.region else 0,
+                  "redrawn": self.redrawn, "published": self.published, "pending": self._publish_pending}
         if self.error:
             fields["draw_error"], self.error = self.error, None
         return fields
@@ -396,6 +411,16 @@ class Viewport:
             if (width, height) != self._frame_size:
                 self._frame_size = (width, height)
                 self._settle()   # Cycles starts over shortly after a resize
+            # Every redraw counts for the progress (Eevee's samples are its redraws), published or not.
+            state = self._update_progress()
+            self.redrawn += 1
+            now = time.perf_counter()
+            due = (now - self._published_at >= PUBLISH_SECONDS - 0.002 or (width, height) != self.block.size
+                   or (state in (DONE, PAUSED) and state != self._published_state))
+            if not due:
+                self._publish_pending = True
+                self._ask_for_trailing_frame(PUBLISH_SECONDS - (now - self._published_at))
+                return
             index, _array = self.block.begin(width, height)
             if self._gpu_buffers[0] != self.block.generation:
                 # The gpu Buffers wrap the shared memory, so the pixels are read straight into it.
@@ -403,10 +428,25 @@ class Viewport:
                     gpu.types.Buffer('FLOAT', (height, width, 4), array) for array in self.block.buffers))
             with framebuffer.bind():
                 framebuffer.read_color(0, 0, width, height, 4, 0, 'FLOAT', data=self._gpu_buffers[1][index])
-            self._update_progress()
             self.block.end(index)
+            self._published_at, self._published_state, self._publish_pending = now, state, False
+            self.published += 1
         except Exception:
             self.error = traceback.format_exc()
+
+    def _ask_for_trailing_frame(self, delay):
+        """A redraw was not published: make sure one is, once the time has come, also when Blender
+        draws nothing more by itself (the last picture of a burst)."""
+        if self._trailing_timer:
+            return
+        self._trailing_timer = True
+        bpy.app.timers.register(self._trailing_redraw, first_interval=max(0.001, delay + 0.001))
+
+    def _trailing_redraw(self):
+        self._trailing_timer = False
+        if self._publish_pending and self.rendering and self.area:
+            self.area.tag_redraw()
+        return None
 
     def _update_progress(self):
         scene = bpy.context.scene
@@ -458,3 +498,4 @@ class Viewport:
             self._end_time = 0.0
         self.block.set_progress(state, sample, wanted, status)
         self.block.set_times(self._start_time, self._end_time)
+        return state

@@ -101,7 +101,7 @@ public:
 
 			case PREF_CYCLES_DEVICE_NOTE:
 				// Short: a long text widens the page's column and pushes the fields out of sight (screenshot).
-				data = cinema::GeData("What the Render Settings' device GPU uses. Blender's own preferences stay as they are."_s);
+				data = cinema::GeData("Used when the Render Settings' Device is Automatic or GPU Compute, not CPU Compute."_s);
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
 
@@ -126,6 +126,21 @@ public:
 
 			case PREF_CYCLES_IPR_NAVIGATE:
 				data = cinema::GeData(GetIprNavigate());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
+
+			case PREF_CYCLES_IPR_LIVE_UPDATES:
+				data = cinema::GeData(GetIprLiveUpdates());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
+
+			case PREF_CYCLES_IPR_THREADS_FREE:
+				data = cinema::GeData(GetIprThreadsFree());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
+
+			case PREF_CYCLES_IPR_OPTIMIZED_UPDATES:
+				data = cinema::GeData(GetIprOptimizedUpdates());
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
 
@@ -182,6 +197,26 @@ public:
 				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
 				return true;
 
+			case PREF_CYCLES_IPR_LIVE_UPDATES:
+				// A running IPR reads it at its next timer tick (ipr/ipr_dialog.cpp).
+				SetIprLiveUpdates(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				// "Optimized Live Updates" is greyed out without it.
+				cinema::GeUpdateUI();
+				return true;
+
+			case PREF_CYCLES_IPR_OPTIMIZED_UPDATES:
+				// A running IPR reads it at its next step and its next export.
+				SetIprOptimizedUpdates(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				return true;
+
+			case PREF_CYCLES_IPR_THREADS_FREE:
+				// A running IPR sends it with its next export of the settings (ipr/ipr_controller.cpp).
+				SetIprThreadsFree(data.GetInt32());
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				return true;
+
 			case PREF_CYCLES_DEFAULT_ENGINE:
 				SetDefaultEngine(data.GetInt32());
 				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
@@ -197,6 +232,15 @@ public:
 			return true;
 		}
 		return SUPER::SetDParameter(node, id, data, flags);
+	}
+
+	virtual cinema::Bool GetDEnabling(const cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data, cinema::DESCFLAGS_ENABLE flags,
+		const cinema::BaseContainer* itemdesc) const override
+	{
+		// "Optimized Live Updates" says how the live updates are sent: without them it does nothing.
+		if (id[0].id == PREF_CYCLES_IPR_OPTIMIZED_UPDATES)
+			return GetIprLiveUpdates();
+		return SUPER::GetDEnabling(node, id, data, flags, itemdesc);
 	}
 
 	virtual cinema::Bool Message(cinema::GeListNode* node, cinema::Int32 type, void* data) override

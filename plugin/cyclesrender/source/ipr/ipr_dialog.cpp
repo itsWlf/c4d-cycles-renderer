@@ -17,6 +17,7 @@
 #include "vpcyclesrender.h"
 
 #include "../ids.h"
+#include "../prefs/settings.h"
 #include "../videopost/render_settings_map.h"
 #include "ipr_add.h"
 #include "../sdk_compat.h"
@@ -36,6 +37,12 @@ static const cinema::Int32 COMMAND_EDIT_RENDER_SETTINGS = 12161;
 // refreshes the status line at this pace.
 static const cinema::Int32 TIMER_MILLISECONDS = 15;
 
+// While frames keep coming the window shows at most one per this time, always the newest, and the
+// last one in any case (0.2.0, B11; FrameWatcher::Take holds a frame back and announces it again when
+// its time has come). Every path that shows frames goes through ShowNewFrame(). The bridge publishes at
+// most as often (bridge/c4d_bridge/viewport/__init__.py, PUBLISH_SECONDS).
+static const maxon::Float64 FRAME_SECONDS = 1.0 / 30.0;
+
 enum
 {
 	ID_BUTTON_START = 1000,
@@ -54,6 +61,7 @@ enum
 	ID_TEXT_RAM,
 	ID_TEXT_VRAM,
 	ID_AREA_PROGRESS,
+	ID_TEXT_DEVICE,
 	ID_GROUP_TOOLBAR,
 	ID_GROUP_STATUS,
 
@@ -211,6 +219,8 @@ public:
 	virtual void EndNavigation(maxon::Bool cancelled) override;
 
 	IprImageArea& GetImage() { return _image; }
+	/// The device text the status line shows (RefreshStatus).
+	maxon::String GetShownDevice() const { return _shownDevice; }
 	void SendSnapshot();
 	maxon::Bool SaveImage(const cinema::Filename& file);
 	void SetZoomPercent(maxon::Float64 percent);
@@ -262,6 +272,7 @@ private:
 	maxon::String _shownTime;
 	maxon::String _shownRam;
 	maxon::String _shownVram;
+	maxon::String _shownDevice;
 	maxon::Float64 _shownZoom = 0.0;	///< the zoom last written into the zoom field
 	maxon::Int _ticks = 0;
 	maxon::Float64 _lastTimer = 0.0;	///< when Timer() last ran (GeGetMilliSeconds); see CoreMessage()
@@ -269,8 +280,9 @@ private:
 
 static IprDialog* g_dialog = nullptr;
 
-// For IsIprInModalLoop(), on any thread: the window is open and the IPR renders (set by the timer,
-// which stops only in a modal loop), and when the timer last ran (GeGetMilliSeconds, whole ms).
+// For IsIprInModalLoop(), on any thread: the window is open, the IPR renders and the Preferences'
+// live updates are on (set by the timer, which stops only in a modal loop; so a switch of the
+// preference counts from the next tick), and when the timer last ran (GeGetMilliSeconds, whole ms).
 static maxon::AtomicBool g_following;
 static maxon::AtomicInt64 g_lastTimerMs;
 
@@ -372,7 +384,8 @@ cinema::Bool IprDialog::CreateLayout()
 		AddStaticText(ID_TEXT_TIME, cinema::BFH_LEFT, 170, 0, "Time:  00:00:00"_s, 0);
 		AddStaticText(ID_TEXT_RAM, cinema::BFH_LEFT, 190, 0, "RAM:  0.0 GB"_s, 0);
 		AddStaticText(ID_TEXT_VRAM, cinema::BFH_LEFT, 190, 0, "VRAM:  0.0 GB"_s, 0);
-		AddStaticText(0, cinema::BFH_SCALEFIT, 0, 0, maxon::String(), 0);
+		// What renders, as Blender reports it (0.2.0, B11): takes the room up to the samples bar.
+		AddStaticText(ID_TEXT_DEVICE, cinema::BFH_SCALEFIT, 0, 0, maxon::String(), 0);
 		AddUserArea(ID_AREA_PROGRESS, cinema::BFH_RIGHT, 290, 0);
 		AttachUserArea(_progress, ID_AREA_PROGRESS);
 	}
@@ -540,6 +553,13 @@ void IprDialog::RefreshStatus()
 		SetString(ID_TEXT_VRAM, vram);
 	}
 
+	const maxon::String device = ipr.GetDeviceText();
+	if (device != _shownDevice)
+	{
+		_shownDevice = device;
+		SetString(ID_TEXT_DEVICE, device);
+	}
+
 	_progress.Set(status.state == VIEWSTATE::STOPPED ? 0 : status.sample, status.state == VIEWSTATE::STOPPED ? 0 : status.samples);
 }
 
@@ -551,14 +571,32 @@ void IprDialog::ShowZoom()
 	SetPercent(ID_EDIT_ZOOM, _shownZoom, 2.0, 6400.0, 5.0);
 }
 
+// Milliseconds since @p start, for the durations in the trace (ipr_trace.h): what each entry point of
+// the window costs Cinema 4D's main thread.
+static maxon::Float64 MillisecondsSince(const maxon::TimeValue& start)
+{
+	return (maxon::TimeValue::GetTime() - start).GetMilliseconds();
+}
+
 void IprDialog::ShowNewFrame()
 {
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
 	IprController& ipr = IprController::Get();
-	if (!ipr.ReadFrame(_incoming))
+	if (!ipr.ReadFrame(_incoming, FRAME_SECONDS))
 		return;
+	finally { TraceIpr("show_ms", MillisecondsSince(started)); };
 	// A frame that was still under way when the render was stopped is not shown.
 	if (ipr.GetState() == IPRSTATE::STOPPED)
 		return;
+	// A frame equal to the one on screen (Blender drew again without anything new) is not converted and
+	// drawn again (0.2.0, B11).
+	const Frame& onScreen = _image.GetFrame();
+	if (_incoming.contentHash != 0 && _incoming.contentHash == onScreen.contentHash && _incoming.width == onScreen.width &&
+		_incoming.height == onScreen.height)
+	{
+		TraceIpr("same", maxon::Float64(_incoming.frameId));
+		return;
+	}
 	// With "Fit Window" the frame shows more than the camera's picture.
 	const CameraFraming& framing = ipr.GetFraming();
 	const maxon::Bool wider = framing.frameWidth < maxon::Float64(framing.width) - 0.5 || framing.frameHeight < maxon::Float64(framing.height) - 0.5;
@@ -570,6 +608,8 @@ void IprDialog::ShowNewFrame()
 void IprDialog::Timer(const cinema::BaseContainer& msg)
 {
 	TraceIpr("timer");
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
+	finally { TraceIpr("timer_ms", MillisecondsSince(started)); };
 	_lastTimer = cinema::GeGetMilliSeconds();
 	g_lastTimerMs.Set(maxon::Int64(_lastTimer));
 	IprController& ipr = IprController::Get();
@@ -577,7 +617,7 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 	ipr.SetWindowSize(_image.GetWidth(), _image.GetHeight());
 	_image.SetFill(ipr.IsFitWindow());
 	ipr.Tick();
-	g_following.Set(ipr.GetState() == IPRSTATE::RUNNING);
+	g_following.Set(ipr.GetState() == IPRSTATE::RUNNING && GetIprLiveUpdates());
 	ShowNewFrame();	// normally the frame thread's message got here first
 
 	RefreshControls(false);
@@ -593,11 +633,20 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 
 void IprDialog::FollowEvaluation()
 {
-	// Only in a modal loop, as in CoreMessage(): otherwise the change event and the timer do it.
-	if (cinema::GeGetMilliSeconds() - _lastTimer <= STARVED_MILLISECONDS)
+	// Only in a modal loop, as in CoreMessage(): otherwise the change event and the timer do it. And
+	// only with live updates (0.2.0, F22): a call handed over before the preference went off is dropped.
+	if (cinema::GeGetMilliSeconds() - _lastTimer <= STARVED_MILLISECONDS || !GetIprLiveUpdates())
 		return;
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
+	finally { TraceIpr("follow_ms", MillisecondsSince(started)); };
 	TraceIpr("evaluated");
-	IprController::Get().FollowLights();
+	// With "Optimized Live Updates" whatever can be sent alone follows (the camera's values, the lights,
+	// the place of an object typed or dragged in the Coordinates tab); without it the lights, as since
+	// F18. Never the whole scene: this is inside an evaluation of the document.
+	if (GetIprOptimizedUpdates())
+		IprController::Get().FollowStep(false);
+	else
+		IprController::Get().FollowLights();
 	ShowNewFrame();
 }
 
@@ -676,6 +725,8 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 {
 	// EVMSG_CHANGE: something in a document changed. EVMSG_DOCUMENTRECALCULATED: Cinema 4D has
 	// evaluated the scene for its own redraw, so the caches the exporter reads are current.
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
+	finally { TraceIpr("core_ms", MillisecondsSince(started)); };
 	if (id == ID_CORE_MESSAGE)
 	{
 		// The frame thread has a new frame.
@@ -699,14 +750,54 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 	// end), but a tool tells the managers about every step at once (EVMSG_ASYNCEDITORMOVE, sent with
 	// GeSyncMessage). Then the IPR does here what the timer would: it sends what changed while
 	// Blender is idle and shows the newest frame. Any other message in such a loop moves the camera.
-	if (cinema::GeGetMilliSeconds() - _lastTimer > STARVED_MILLISECONDS)
+	// With the Preferences' live updates off (0.2.0, F22) none of this: the loop's change is sent when
+	// it has ended, by the change event and the timer, as before 0.2.0.
+	//
+	// With "Optimized Live Updates" (0.2.0, B11) a step sends only what moves (IprController::FollowStep),
+	// and a tool's message is taken as it says: its first parameter tells the first, a further and the
+	// last step of a drag, so every step is followed at once whether or not the timer runs (a step that
+	// was followed here costs the timer nothing more: no counter of the document has moved since), and
+	// the last one brings the whole export. Without the switch the whole scene is exported at every step
+	// of a loop, as since F15.
+	const maxon::Bool starved = cinema::GeGetMilliSeconds() - _lastTimer > STARVED_MILLISECONDS;
+	const maxon::Bool live = GetIprLiveUpdates();
+	const maxon::Bool optimized = live && GetIprOptimizedUpdates();
+	IprController& ipr = IprController::Get();
+	if (id == EVMSG_ASYNCEDITORMOVE)
 	{
-		IprController& ipr = IprController::Get();
-		if (id == EVMSG_ASYNCEDITORMOVE)
+		if (!live)
+		{
+			if (starved)
+				TraceIpr("drag_held");
+		}
+		else if (optimized)
+		{
+			TraceIpr("drag_step");
+			if (maxon::Int(reinterpret_cast<maxon::UInt>(msg.GetVoid(cinema::BFM_CORE_PAR1))) == MOVE_END)
+			{
+				TraceIpr("drag_end");
+				ipr.MarkSceneChanged();
+				ipr.Tick();
+			}
+			else
+			{
+				ipr.FollowStep(true);
+			}
+			ShowNewFrame();
+		}
+		else if (starved)
 		{
 			TraceIpr("drag_step");
 			ipr.MarkSceneChanged();
 			ipr.Tick();
+			ShowNewFrame();
+		}
+	}
+	else if (starved && live)
+	{
+		if (optimized)
+		{
+			ipr.FollowStep(false);
 		}
 		else
 		{
@@ -715,15 +806,19 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 		}
 		ShowNewFrame();
 	}
-	if (id == EVMSG_CHANGE || id == EVMSG_DOCUMENTRECALCULATED)
+	// A finished edit is exported whole. A redraw (Cinema 4D evaluated the scene for it) only if the
+	// document's change counters moved: every redraw of a view sends this message, also when only the
+	// view was navigated (IprController::NoteRedraw).
+	if (id == EVMSG_CHANGE)
 	{
-		IprController::Get().MarkSceneChanged();
-		if (id == EVMSG_CHANGE)
-		{
-			RefreshCameras(false);
-			if (IprController::Get().GetState() == IPRSTATE::STOPPED)
-				IprController::Get().SetEngineOverride(IprController::Get().GetEngineOverride());
-		}
+		ipr.MarkSceneChanged();
+		RefreshCameras(false);
+		if (ipr.GetState() == IPRSTATE::STOPPED)
+			ipr.SetEngineOverride(ipr.GetEngineOverride());
+	}
+	else if (id == EVMSG_DOCUMENTRECALCULATED)
+	{
+		ipr.NoteRedraw();
 	}
 	return cinema::GeDialog::CoreMessage(id, msg);
 }
@@ -997,6 +1092,11 @@ const Frame* GetIprDialogFrame()
 maxon::String GetIprDialogMessage()
 {
 	return g_dialog && g_dialog->IsOpen() ? g_dialog->GetImage().GetMessage() : maxon::String();
+}
+
+maxon::String GetIprDialogDeviceText()
+{
+	return g_dialog && g_dialog->IsOpen() ? g_dialog->GetShownDevice() : maxon::String();
 }
 
 void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Float64& convertMilliseconds, maxon::Bool& open)

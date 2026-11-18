@@ -270,6 +270,7 @@ void IprImageArea::Convert(cinema::BaseDocument* doc)
 		_display->SetPixelCnt(0, y, width, target + maxon::Int(y) * width * 3, 3, cinema::COLORMODE::RGB, cinema::PIXELCNT::NONE);
 
 	_convertMs = cinema::GeGetMilliSeconds() - started;
+	TraceIpr("convert_ms", _convertMs);
 }
 
 cinema::BaseBitmap* IprImageArea::CreateFloatBitmap(cinema::BaseDocument* doc) const
@@ -407,6 +408,8 @@ void IprImageArea::ZoomAround(maxon::Float64 zoom, maxon::Float64 areaX, maxon::
 void IprImageArea::DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2, cinema::Int32 y2, const cinema::BaseContainer& msg)
 {
 	TraceIpr("drawn", maxon::Float64(_frame.frameId));
+	const maxon::TimeValue started = maxon::TimeValue::GetTime();
+	finally { TraceIpr("draw_ms", (maxon::TimeValue::GetTime() - started).GetMilliseconds()); };
 	OffScreenOn();
 	const cinema::Int32 areaWidth = GetWidth();
 	const cinema::Int32 areaHeight = GetHeight();

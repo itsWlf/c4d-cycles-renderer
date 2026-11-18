@@ -9,6 +9,7 @@ STRINGTABLE VPcyclesrender
 	CYCLES_DEVICE "Device";
 	CYCLES_DEVICE_CPU "CPU Compute";
 	CYCLES_DEVICE_GPU "GPU Compute";
+	CYCLES_DEVICE_AUTOMATIC "Automatic";
 	CYCLES_LAYOUT "Settings";
 	CYCLES_LAYOUT_SIMPLE "Simple Layout";
 	CYCLES_LAYOUT_ADVANCED "Advanced Layout";

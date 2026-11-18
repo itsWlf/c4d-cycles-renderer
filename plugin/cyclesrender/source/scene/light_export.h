@@ -116,7 +116,11 @@ struct BlenderLight
 ///
 /// Shadows (0.2.0, F20): a standard light always casts them, whatever its "Shadow" type, also
 /// "None", Cinema 4D's default (the Standard renderer casts none then); a Cycles Light tag's
-/// Settings tab turns them off. A Redshift light follows its own "Shadow" switch.
+/// Settings tab turns them off. The type sets their softness through the light's size (radius,
+/// a sun's angle): None and Raytraced sharp; Area from the area shape or the Infinite Angle, as
+/// physical as Cinema 4D's; Shadow Maps (Soft) from the map's size and sample radius, an
+/// approximation matched at the light's reference distance. An area light keeps its own size.
+/// A Redshift light follows its own "Shadow" switch.
 ///
 /// @param[in] colors      The document's colour settings: a standard light's colour is a colour
 ///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored.

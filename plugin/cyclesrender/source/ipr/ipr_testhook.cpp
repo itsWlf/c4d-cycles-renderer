@@ -25,6 +25,7 @@
 #include "ipr_testhook.h"
 #include "ipr_trace.h"
 #include "../materials/baked_files.h"
+#include "../platform/process_stats.h"
 #include "../platform/shared_memory.h"
 #include "../scene/scene_exporter.h"
 #include "../materials/material_export.h"
@@ -444,6 +445,83 @@ static maxon::Result<maxon::String> ImageNodeCommand(const maxon::String& comman
 	return json.GetText();
 }
 
+// The status's fields of what renders, as Blender reported it (0.2.0, B11), and the status line's words for it.
+static void WriteDeviceStatus(JsonWriter& json, IprController& ipr, const Frame* shown)
+{
+	const IprDeviceInfo device = ipr.GetDeviceInfo();
+	json.String("device", device.device);
+	json.String("device_engine", device.engine);
+	json.String("device_type", device.backend);
+	json.String("device_names", device.devices);
+	json.Int("device_threads", device.threads);
+	json.String("display_gpu", device.displayGpu);
+	json.String("device_text", ipr.GetDeviceText());
+	json.String("window_device_text", GetIprDialogDeviceText());
+	json.Int("threads_free", GetIprThreadsFree());
+	json.Int("logical_processors", platform::GetLogicalProcessorCount());
+	json.Int("c4d_priority", ipr.GetOwnPriority());
+	json.Int("blender_priority", ipr.GetBlenderPriority());
+	json.Int("blender_priority_now", platform::GetProcessPriorityRank(ipr.GetBlenderProcessId()));
+	json.Int("blender_pid", ipr.GetBlenderProcessId());
+	// For tests that read the newest published frame themselves (tests/bridge/frames.py), and the one
+	// the window shows.
+	json.String("state_block", ipr.GetSessionToken().IsEmpty() ? maxon::String() : "cyclesrender_"_s + ipr.GetSessionToken() + "_state"_s);
+	json.Int("shown_frame", shown ? maxon::Int64(shown->frameId) : 0);
+}
+
+// What the window tells the controller while a change is in progress (0.2.0, B11), without the window:
+// "redrawn" is EVMSG_DOCUMENTRECALCULATED (the next tick looks at the document's change counters),
+// "step" a tool's step (IprController::FollowStep, a whole export allowed), "evaluated" a step inside an
+// evaluation of the document, as the scene hook's (no whole export). False for any other command.
+static maxon::Bool RunFollowCommand(const maxon::String& command, IprController& ipr)
+{
+	if (command == "redrawn"_s)
+		ipr.NoteRedraw();
+	else if (command == "step"_s)
+		ipr.FollowStep(true);
+	else if (command == "evaluated"_s)
+		ipr.FollowStep(false);
+	else
+		return false;
+	return true;
+}
+
+// The status's fields of what the IPR did with the last changes (0.2.0, B11).
+static void WriteFollowStatus(JsonWriter& json, IprController& ipr)
+{
+	json.Bool("optimized_updates", GetIprOptimizedUpdates());
+	json.Int("gated", ipr.GetGatedCount());
+	json.Int("alone", ipr.GetAloneCount());
+	json.Int("settled", ipr.GetSettleCount());
+	json.Bool("settle_pending", ipr.IsSettlePending());
+	json.Bool("whole_needed", ipr.WasWholeNeeded());
+	json.Float("alone_ms", ipr.GetLastAloneMilliseconds());
+	json.Int("alone_objects", ipr.GetLastAloneObjects());
+	json.Int("objects_followed", ipr.GetFollowedObjectCount());
+	json.Int("nodes_followed", ipr.GetFollowedNodeCount());
+	json.Int("meshes_by_data_hash", ipr.GetLastExportStats().meshesByDataHash);
+}
+
+// The mean RGB of @p frame on a coarse grid, which is enough to tell pictures apart and cheap for large frames.
+static void MeanOfFrame(const Frame& frame, maxon::Float64* mean)
+{
+	const maxon::Int pixelCount = maxon::Int(frame.width) * frame.height;
+	const maxon::Int step = pixelCount > 40000 ? pixelCount / 40000 : 1;
+	maxon::Int counted = 0;
+	for (maxon::Int i = 0; i < pixelCount; i += step, ++counted)
+	{
+		mean[0] += frame.pixels[i * 4 + 0];
+		mean[1] += frame.pixels[i * 4 + 1];
+		mean[2] += frame.pixels[i * 4 + 2];
+	}
+	if (counted > 0)
+	{
+		mean[0] /= maxon::Float64(counted);
+		mean[1] /= maxon::Float64(counted);
+		mean[2] /= maxon::Float64(counted);
+	}
+}
+
 static maxon::String Execute(const maxon::String& commandLine)
 {
 	IprController& ipr = IprController::Get();
@@ -562,6 +640,10 @@ static maxon::String Execute(const maxon::String& commandLine)
 	{
 		// What the scene hook has done in a modal loop (FollowIprEvaluation): the lights alone.
 		ipr.FollowLights();
+	}
+	else if (RunFollowCommand(command, ipr))
+	{
+		// A change in progress, as the window reports it to the controller.
 	}
 	else if (command == "kill"_s)
 	{
@@ -824,6 +906,14 @@ static maxon::String Execute(const maxon::String& commandLine)
 			SetDefaultEngine(number);
 		return FormatString("{\"default_engine\":@}", GetDefaultEngine());
 	}
+	else if (command == "threadsfree"_s)
+	{
+		// The Preferences page's "CPU Threads Left Free" (0.2.0, B11): "threadsfree <n>" sets it as the page
+		// does; then {"threads_free"}.
+		if (argument.IsPopulated())
+			SetIprThreadsFree(number);
+		return FormatString("{\"threads_free\":@}", GetIprThreadsFree());
+	}
 	else if (command == "bakes"_s)
 	{
 		// The baked files instead of the status; "bakes check" first compares the documents with
@@ -842,22 +932,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 	}
 
 	maxon::Float64 mean[3] = { 0.0, 0.0, 0.0 };
-	const maxon::Int pixelCount = maxon::Int(frame.width) * frame.height;
-	// A coarse grid is enough to tell pictures apart, and keeps this cheap for large frames.
-	const maxon::Int step = pixelCount > 40000 ? pixelCount / 40000 : 1;
-	maxon::Int counted = 0;
-	for (maxon::Int i = 0; i < pixelCount; i += step, ++counted)
-	{
-		mean[0] += frame.pixels[i * 4 + 0];
-		mean[1] += frame.pixels[i * 4 + 1];
-		mean[2] += frame.pixels[i * 4 + 2];
-	}
-	if (counted > 0)
-	{
-		mean[0] /= maxon::Float64(counted);
-		mean[1] /= maxon::Float64(counted);
-		mean[2] /= maxon::Float64(counted);
-	}
+	MeanOfFrame(frame, mean);
 
 	const FrameStatus status = ipr.GetStatus();
 	const IprMemory memory = ipr.GetMemory();
@@ -907,6 +982,9 @@ static maxon::String Execute(const maxon::String& commandLine)
 	json.Float("mesh_ms", ipr.GetLastExportStats().meshMilliseconds);
 	json.Float("lights_ms", ipr.GetLastLightsMilliseconds());
 	json.Int("lights_followed", ipr.GetFollowedLightCount());
+	json.Bool("live_updates", GetIprLiveUpdates());
+	WriteFollowStatus(json, ipr);
+	WriteDeviceStatus(json, ipr, shown);
 	json.Int("engine", ipr.GetEngine());
 	json.Int("pass", ipr.GetPass());
 	json.Int("pass_count", ipr.GetPasses().GetCount());

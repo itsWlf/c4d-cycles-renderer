@@ -22,6 +22,11 @@ scene renders with them in every version. 5.3's are 5.2's. The shadow pool's 153
 came with 5.2; an older Blender keeps its own choice and the bridge's warning says so.
 Retired: 1900 (a test colour), 2003 (the old Eevee tab), 2190 to 2192 (the Color Settings tab).
 
+The one default that is not Blender's: the Device (1001), which new render settings start with as
+"Automatic" (2, since 0.2.0, B11: the GPU when Blender has one, else the CPU; the maintainer's decision of
+2026-11-17), where Blender starts with the CPU. Its value is set in source/videopost/render_settings_map.cpp
+(InitRenderSettings); a scene saved with CPU (0) or GPU (1) keeps that.
+
 Each entry:
     B/I/F(id, SYMBOL, label, default, path, ...)   a checkbox, whole number or number
     C(id, SYMBOL, label, default index, [(SUFFIX, label, Blender identifier), ...], path)
@@ -514,8 +519,9 @@ def res_entry(entry, depth):
         return (f"{tab}LONG CYCLES_LAYOUT\n{tab}{{\n{tab}\tANIM OFF;\n{tab}\tCUSTOMGUI QUICKTABRADIO;\n{tab}\tCYCLE\n{tab}\t{{\n"
                 f"{tab}\t\tCYCLES_LAYOUT_SIMPLE;\n{tab}\t\tCYCLES_LAYOUT_ADVANCED;\n{tab}\t}}\n{tab}}}\n")
     if kind == "DEVICE":
-        return (f"{tab}LONG CYCLES_DEVICE\n{tab}{{\n{tab}\tANIM OFF;\n{tab}\tCYCLE\n{tab}\t{{\n{tab}\t\tCYCLES_DEVICE_CPU;\n"
-                f"{tab}\t\tCYCLES_DEVICE_GPU;\n{tab}\t}}\n{tab}}}\n")
+        # Automatic first: what new render settings start with since 0.2.0 (B11; render_settings_map.cpp).
+        return (f"{tab}LONG CYCLES_DEVICE\n{tab}{{\n{tab}\tANIM OFF;\n{tab}\tCYCLE\n{tab}\t{{\n{tab}\t\tCYCLES_DEVICE_AUTOMATIC;\n"
+                f"{tab}\t\tCYCLES_DEVICE_CPU;\n{tab}\t\tCYCLES_DEVICE_GPU;\n{tab}\t}}\n{tab}}}\n")
     if kind == "GROUP":
         inner = group_body(entry["children"], depth + 1)
         # A top-level group is a tab: only the first is open, or all would show at once.
@@ -559,6 +565,7 @@ def main():
              "// and never reuse a retired number (1900 was a test colour, 2003 the old Eevee tab).", "enum", "{",
              "\tCYCLES_ENGINE = 1000,", "\t\tCYCLES_ENGINE_CYCLES = 0,", "\t\tCYCLES_ENGINE_EEVEE = 1,",
              "\tCYCLES_DEVICE = 1001,", "\t\tCYCLES_DEVICE_CPU = 0,", "\t\tCYCLES_DEVICE_GPU = 1,",
+             "\t\tCYCLES_DEVICE_AUTOMATIC = 2,\t// 0.2.0 (B11): the GPU when Blender has one, else the CPU; what new settings start with",
              "\tCYCLES_LAYOUT = 1002,", "\t\tCYCLES_LAYOUT_SIMPLE = 0,", "\t\tCYCLES_LAYOUT_ADVANCED = 1,", ""]
     for entry in sorted(entries, key=lambda e: e["id"]):
         lines.append(f"\t{entry['symbol']} = {entry['id']},")
@@ -577,6 +584,7 @@ def main():
     lines = ["STRINGTABLE VPcyclesrender", "{", '\tVPcyclesrender "Cycles Render";', "",
              '\tCYCLES_ENGINE "Render Engine";', '\tCYCLES_ENGINE_CYCLES "Cycles";', '\tCYCLES_ENGINE_EEVEE "Eevee";',
              '\tCYCLES_DEVICE "Device";', '\tCYCLES_DEVICE_CPU "CPU Compute";', '\tCYCLES_DEVICE_GPU "GPU Compute";',
+             '\tCYCLES_DEVICE_AUTOMATIC "Automatic";',
              '\tCYCLES_LAYOUT "Settings";', '\tCYCLES_LAYOUT_SIMPLE "Simple Layout";', '\tCYCLES_LAYOUT_ADVANCED "Advanced Layout";', ""]
     for entry in entries:
         lines.append(f"\t{entry['symbol']} \"{entry['label']}\";")

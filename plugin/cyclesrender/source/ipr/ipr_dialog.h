@@ -33,14 +33,17 @@ void OpenIprDialog();
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::String& argument, maxon::String& problem);
 
-/// Any thread: the window is open, the IPR renders, and its timer has not run for three periods,
-/// so Cinema 4D is in a modal loop (a drag in a view or in the Attribute Manager). For ipr_scenehook.h.
+/// Any thread: the window is open, the IPR renders, the Preferences' live updates are on (0.2.0, F22;
+/// prefs/settings.h, GetIprLiveUpdates), and its timer has not run for three periods, so Cinema 4D is
+/// in a modal loop (a drag in a view or in the Attribute Manager) that the IPR follows. For ipr_scenehook.h.
 maxon::Bool IsIprInModalLoop();
 
 //----------------------------------------------------------------------------------------
 /// Main thread: the active document has been evaluated, or a frame arrived (ipr_scenehook.h). If
-/// Cinema 4D is in a modal loop, the lights are followed (IprController::FollowLights) and the
-/// newest frame is shown. Otherwise nothing: the change event and the timer do that.
+/// Cinema 4D is in a modal loop, what can be sent alone follows (IprController::FollowStep with the
+/// Preferences' "Optimized Live Updates": the camera, the lights, the place of objects; without it
+/// the lights, IprController::FollowLights) and the newest frame is shown. Otherwise nothing: the
+/// change event and the timer do that.
 //----------------------------------------------------------------------------------------
 void FollowIprEvaluation();
 
@@ -57,6 +60,10 @@ void GetIprDialogInfo(maxon::Float64& zoom, maxon::Float64& zoomField, maxon::Fl
 /// The text the window's picture shows ("Press Start ...", why the IPR failed); empty when there is
 /// none or the window is closed. For tests.
 maxon::String GetIprDialogMessage();
+
+/// What the window's status line says about the device in use (IprController::GetDeviceText(), as the
+/// line holds it); empty when the window is closed. For tests.
+maxon::String GetIprDialogDeviceText();
 
 /// Where the window's picture is on the screen, in screen pixels, and the image point shown in its
 /// middle (render pixels). False while the window is closed. For tests that post mouse messages to it.

@@ -65,27 +65,40 @@ static const cinema::BaseObject* RenderViewCamera(cinema::BaseDocument* doc, cin
 	return looking;
 }
 
-// A Cycles Light (lights/light_object.h, Blender's defaults: a point light of 10 W) where the
-// render view looks from, turned as that camera, so that a spot or an area light made of it later
-// shines where the picture looks. Selected, in one undo step.
+// A Cycles Light (lights/light_object.h, Blender's defaults: a point light of 10 W) as Cinema 4D's
+// own Create menu makes it: through the object's command (its plugin id), so that it lands where
+// Cinema 4D's light lands, at the workplane's origin and turned as the workplane, with Cinema 4D's
+// preferences for new objects, selected, in one undo step (0.2.0, B12; measured in 2024 and 2027:
+// Cinema 4D's light and the Cycles Light from their commands land alike). Before B12 this entry put
+// the light where the render view looks from, which nobody had asked for. The command works on the
+// active document; for another one (not seen: the IPR shows the active document) the light is
+// inserted at the world's origin.
 static maxon::Int AddCyclesLight(cinema::BaseDocument* doc, maxon::String& message)
 {
+	if (doc == cinema::GetActiveDocument())
+	{
+		const cinema::BaseObject* const before = doc->GetActiveObject();
+		cinema::CallCommand(ID_LIGHT_OBJECT);
+		const cinema::BaseObject* const made = doc->GetActiveObject();
+		if (made && made != before && made->GetType() == ID_LIGHT_OBJECT)
+		{
+			message = "Added a Cycles Light."_s;
+			return 1;
+		}
+	}
 	cinema::BaseObject* const light = cinema::BaseObject::Alloc(ID_LIGHT_OBJECT);
 	if (!light)
 	{
 		message = "The Cycles Light could not be made."_s;
 		return 0;
 	}
-	cinema::BaseDraw* view = nullptr;
-	if (const cinema::BaseObject* const looking = RenderViewCamera(doc, view))
-		light->SetMg(looking->GetMg());
 	light->SetName(cinema::GeLoadString(IDS_LIGHT_OBJECT_NAME));
 	doc->StartUndo();
 	doc->InsertObject(light, nullptr, nullptr);
 	doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, light);
 	doc->SetActiveObject(light, SELECTION_NEW);
 	doc->EndUndo();
-	message = "Added a Cycles Light where the render view looks from."_s;
+	message = "Added a Cycles Light."_s;
 	return 1;
 }
 

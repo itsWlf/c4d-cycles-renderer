@@ -64,6 +64,113 @@ maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light)
 }
 
 //----------------------------------------------------------------------------------------
+// The softness of a standard light's shadow type in Blender's terms: the size of the light
+// (0.2.0, F20 follow-up). Measured in the Standard renderer (docs/reference/c4d-sdk.md, "Soft
+// and area shadows"): the 10-90 % width W of a straight shadow edge on a floor, the caster
+// between light and floor, g = (light-to-floor - light-to-caster) / light-to-caster.
+//
+//   Blender, Cycles: a point or spot light of radius r: W = 1.391 r g; a sun of angle a
+//                    (its angular diameter): W = 0.692 a gap (gap = caster to floor).
+//   Area shadow, omni or spot: the Details tab's area shape is the source, a physical penumbra:
+//                    rectangle of side s across the edge W = 0.795 s g; disc of diameter d
+//                    W = 0.678 d g; sphere of diameter d W = 0.826 d g.
+//   Area shadow, infinite light: W = 1.567 x gap, x its "Infinite Angle".
+//   Shadow maps (Soft): a blur of a fixed angle seen from the light, whatever the caster:
+//                    omni or spot W = 1.1 (R + 1) 2 tan(F / 2) / N x light-to-floor, with R the
+//                    sample radius, N the map size, F the map's field (90 degrees for an omni,
+//                    the cone for a spot or with "Shadow Cone"); infinite W = 1.1 (R + 1) P / N,
+//                    P the parallel width.
+//----------------------------------------------------------------------------------------
+static const maxon::Float64 BLENDER_POINT_PENUMBRA = 1.391;
+static const maxon::Float64 BLENDER_SUN_PENUMBRA = 0.692;
+static const maxon::Float64 C4D_SPHERE_PENUMBRA = 0.826;
+static const maxon::Float64 C4D_INFINITE_PENUMBRA = 1.567;
+static const maxon::Float64 C4D_SHADOW_MAP_BLUR = 1.1;
+
+// A shadow map's resolution: its texels across (the two sides averaged for a map of the user's size).
+static maxon::Float64 ShadowMapTexels(const cinema::BaseObject* light)
+{
+	const maxon::Float64 x = maxon::Float64(GetIntParameter(light, LIGHT_SHADOW_MAPSIZEX, 250));
+	const maxon::Float64 y = maxon::Float64(GetIntParameter(light, LIGHT_SHADOW_MAPSIZEY, 250));
+	return maxon::Max(1.0, 0.5 * (x + y));
+}
+
+// The blur of a shadow map, in texels: its sample radius, plus one.
+static maxon::Float64 ShadowMapBlur(const cinema::BaseObject* light)
+{
+	return C4D_SHADOW_MAP_BLUR * (maxon::Float64(maxon::Max(0, GetIntParameter(light, LIGHT_SHADOW_SAMPLERADIUS, 3))) + 1.0);
+}
+
+// Sets out.radius (point, spot) or out.angle (sun) from the light's shadow type. Raytraced (Hard)
+// and None are sharp: 0. An area light, or an area light shaped as a sphere (a point light with
+// its own radius), keeps its own size, whatever the shadow type: the caller does not ask.
+// `reference` is the distance in metres at which the light's brightness matches (its Radius/Decay);
+// a shadow map's blur, which is not physical, is matched for a caster halfway along it.
+static void ApplyShadowSoftness(const cinema::BaseObject* light, const Coords& coords, maxon::Float64 reference, BlenderLight& out, SceneWriter* writer)
+{
+	const maxon::Int32 shadow = GetIntParameter(light, LIGHT_SHADOWTYPE, LIGHT_SHADOWTYPE_NONE);
+	const maxon::Bool sun = out.type == BLENDERLIGHT::SUN;
+	if (shadow == LIGHT_SHADOWTYPE_AREA)
+	{
+		if (sun)
+		{
+			// The same edge as Cinema 4D's for every gap: angle = 1.567 / 0.692 x Infinite Angle.
+			const maxon::Float64 angle = GetFloatParameter(light, LIGHT_AREADETAILS_INFINITE_ANGLE, maxon::PI / 360.0);
+			out.angle = maxon::ClampValue(angle * C4D_INFINITE_PENUMBRA / BLENDER_SUN_PENUMBRA, 0.0, maxon::PI);
+			return;
+		}
+		// The area shape of the Details tab. A disc is Blender's sphere light seen from the side it
+		// lights (radius = half the diameter, 2.5 % narrower than Cinema 4D's edge); Cinema 4D's sphere
+		// casts a wider edge than a disc of its size (0.826 against 0.678), matched; a rectangle and
+		// every other shape become the radius of a disc of the same area, which matches the default
+		// 200 x 200 square within 1.3 % (a rectangle's edge depends on its side across the edge, a
+		// sphere light's does not).
+		const maxon::Int32 shape = GetIntParameter(light, LIGHT_AREADETAILS_SHAPE, LIGHT_AREADETAILS_SHAPE_RECTANGLE);
+		const maxon::Float64 sizeX = coords.Length(maxon::Max(0.0, GetFloatParameter(light, LIGHT_AREADETAILS_SIZEX, 200.0)));
+		const maxon::Float64 sizeY = coords.Length(maxon::Max(0.0, GetFloatParameter(light, LIGHT_AREADETAILS_SIZEY, 200.0)));
+		switch (shape)
+		{
+			case LIGHT_AREADETAILS_SHAPE_DISC:
+				out.radius = 0.5 * sizeX;
+				break;
+			case LIGHT_AREADETAILS_SHAPE_SPHERE:
+			case LIGHT_AREADETAILS_SHAPE_HEMISPHERE:
+				out.radius = sizeX * C4D_SPHERE_PENUMBRA / BLENDER_POINT_PENUMBRA;
+				break;
+			default:
+				if (shape != LIGHT_AREADETAILS_SHAPE_RECTANGLE)
+					Warn(writer, FormatString("Light \"@\": its area shadow's shape is rendered as a round light of the same area (Size X by Size Y).", light->GetName()));
+				out.radius = maxon::Sqrt(sizeX * sizeY / maxon::PI);
+				break;
+		}
+		return;
+	}
+	if (shadow == LIGHT_SHADOWTYPE_SOFT)
+	{
+		const maxon::Float64 blur = ShadowMapBlur(light) / ShadowMapTexels(light);
+		if (sun)
+		{
+			// Cinema 4D's blur is a width (blur x parallel width), whatever the gap between caster and
+			// floor; Blender's sun gives a width growing with the gap. Matched, as for an omni, with the
+			// caster halfway along the light's reference distance (a gap of half of it).
+			const maxon::Float64 width = blur * coords.Length(maxon::Max(0.0, GetFloatParameter(light, LIGHT_SHADOW_PARALLELWIDTH, 500.0)));
+			out.angle = maxon::ClampValue(width / (BLENDER_SUN_PENUMBRA * 0.5 * reference), 0.0, maxon::PI);
+			return;
+		}
+		// Cinema 4D's blur is an angle seen from the light; Blender's edge grows with the gap. Matched
+		// at the light's reference distance with the caster halfway (g = 1).
+		maxon::Float64 field = maxon::PI * 0.5;
+		if (out.type == BLENDERLIGHT::SPOT)
+			field = out.spotSize;
+		if (GetBoolParameter(light, LIGHT_SHADOW_USECONE, false))
+			field = GetFloatParameter(light, LIGHT_SHADOW_CONEANGLE, maxon::PI * 0.5);
+		field = maxon::ClampValue(field, MIN_SPOT_SIZE, maxon::PI * 175.0 / 180.0);
+		const maxon::Float64 angle = blur * 2.0 * maxon::Tan(field * 0.5);
+		out.radius = angle * reference / BLENDER_POINT_PENUMBRA;
+	}
+}
+
+//----------------------------------------------------------------------------------------
 // A Redshift light. Unlike Cinema 4D's standard lights these are physical, so the conversion
 // is exact. Measured by rendering a white wall with Redshift (docs/reference/c4d-sdk.md,
 // "Redshift lights"), with intensity I, exposure e and v = I * 2^e, units "Image":
@@ -169,9 +276,9 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 	out.color = colors.Input(GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0)));
 	// Every standard light casts shadows, also with "Shadow" set to None (Cinema 4D's default, under
 	// which the Standard renderer casts none): the maintainer's decision for 0.2.0 (F20). A Cycles
-	// Light tag's Settings tab turns them off (ExportLight). The shadow types carry nothing else
-	// across: Shadow Maps (Soft), Raytraced (Hard) and Area all give Blender's shadow of the light's
-	// own size (sharp for an omni, spot or infinite light, soft for an area light).
+	// Light tag's Settings tab turns them off (ExportLight). The shadow type decides how soft they are
+	// (ApplyShadowSoftness): None and Raytraced (Hard) sharp, Area and Shadow Maps (Soft) through the
+	// light's size; an area light keeps its own size whatever the type.
 	out.useShadow = true;
 
 	// The distance, in metres, at which the Blender light is as bright as the Cinema 4D light.
@@ -221,10 +328,14 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 		case BLENDERLIGHT::SUN:
 			out.energy = brightness * SUN_STRENGTH;
 			out.angle = 0.0;
+			ApplyShadowSoftness(light, coords, reference, out, writer);
 			break;
 		case BLENDERLIGHT::POINT:
 			out.energy = brightness * POINT_POWER * reference * reference;
 			out.radius = sphere ? sizeX * 0.5 : 0.0;
+			// A sphere-shaped area light has a size of its own, which wins over the shadow type.
+			if (!sphere)
+				ApplyShadowSoftness(light, coords, reference, out, writer);
 			break;
 		case BLENDERLIGHT::SPOT:
 		{
@@ -234,6 +345,7 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 			out.radius = 0.0;
 			out.spotSize = outer;
 			out.spotBlend = SpotBlend(inner, outer);
+			ApplyShadowSoftness(light, coords, reference, out, writer);
 			break;
 		}
 		case BLENDERLIGHT::AREA:

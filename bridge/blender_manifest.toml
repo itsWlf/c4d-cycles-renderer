@@ -10,7 +10,7 @@
 schema_version = "1.0.0"
 
 id = "cycles_render_bridge"
-version = "0.1.0"
+version = "0.2.1"
 name = "Cycles Render Bridge"
 tagline = "Lets the Cycles Render plugin of Cinema 4D render with Blender"
 maintainer = "Wolfnimations"

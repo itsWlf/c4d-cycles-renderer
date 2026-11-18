@@ -33,6 +33,7 @@ maxon::Result<void> SyncState::CopyFrom(const SyncState& other)
 	iferr_scope;
 	_items.Reset();
 	_sources.Reset();
+	_sourcesAfter.Reset();
 	for (const auto& entry : other._items)
 	{
 		_items.Insert(entry.GetKey(), entry.GetValue()) iferr_return;
@@ -40,6 +41,10 @@ maxon::Result<void> SyncState::CopyFrom(const SyncState& other)
 	for (const auto& entry : other._sources)
 	{
 		_sources.Insert(entry.GetKey(), entry.GetValue()) iferr_return;
+	}
+	for (const auto& entry : other._sourcesAfter)
+	{
+		_sourcesAfter.Insert(entry.GetKey(), entry.GetValue()) iferr_return;
 	}
 	return maxon::OK;
 }
@@ -188,13 +193,18 @@ maxon::Bool SceneWriter::KeepMesh(const SyncState& state, const maxon::String& m
 		return false;
 	const maxon::String ids[2] = { meshId, meshId + ".points"_s };
 	maxon::UInt64 fingerprints[2] = { 0, 0 };
+	maxon::UInt64 sources[2] = { 0, 0 };
+	maxon::UInt64 sourcesAfter[2] = { 0, 0 };
 	for (maxon::Int i = 0; i < 2; ++i)
 	{
 		const auto* const source = state._sources.Find(ids[i]);
+		const auto* const after = state._sourcesAfter.Find(ids[i]);
 		const auto* const held = state._items.Find(ids[i]);
-		if (!source || !held || source->GetValue() != signature)
+		if (!source || !after || !held || (source->GetValue() != signature && after->GetValue() != signature))
 			return false;
 		fingerprints[i] = held->GetValue();
+		sources[i] = source->GetValue();
+		sourcesAfter[i] = after->GetValue();
 	}
 	const maxon::Int before = _items.GetCount();
 	for (maxon::Int i = 0; i < 2; ++i)
@@ -206,7 +216,8 @@ maxon::Bool SceneWriter::KeepMesh(const SyncState& state, const maxon::String& m
 		item.kept = true;
 		item.keptFingerprint = fingerprints[i];
 		item.hasSource = true;
-		item.source = signature;
+		item.source = sources[i];
+		item.sourceAfter = sourcesAfter[i];
 		iferr (_items.Append(std::move(item)))
 		{
 			// Without both the mesh is exported as usual.
@@ -217,7 +228,7 @@ maxon::Bool SceneWriter::KeepMesh(const SyncState& state, const maxon::String& m
 	return true;
 }
 
-void SceneWriter::NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature)
+void SceneWriter::NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature, maxon::UInt64 after)
 {
 	// The two items ExportMesh() has just written are the last ones.
 	const maxon::String pointsId = meshId + ".points"_s;
@@ -227,6 +238,7 @@ void SceneWriter::NoteMeshSource(const maxon::String& meshId, maxon::UInt64 sign
 		{
 			_items[i].hasSource = true;
 			_items[i].source = signature;
+			_items[i].sourceAfter = after;
 		}
 	}
 }
@@ -250,6 +262,7 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 
 	maxon::HashMap<maxon::String, maxon::UInt64> current;
 	maxon::HashMap<maxon::String, maxon::UInt64> sources;
+	maxon::HashMap<maxon::String, maxon::UInt64> sourcesAfter;
 	maxon::Int changes = 0;
 	for (Item& item : _items)
 	{
@@ -271,6 +284,7 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 			if (item.hasSource)
 			{
 				state._sources.Insert(item.id, item.source) iferr_return;
+				state._sourcesAfter.Insert(item.id, item.sourceAfter) iferr_return;
 			}
 		}
 		else
@@ -279,6 +293,7 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 			if (item.hasSource)
 			{
 				sources.Insert(item.id, item.source) iferr_return;
+				sourcesAfter.Insert(item.id, item.sourceAfter) iferr_return;
 			}
 		}
 	}
@@ -290,6 +305,7 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 			if (state._items.Erase(id).GetValue())
 			{
 				state._sources.Erase(id) iferr_return;
+				state._sourcesAfter.Erase(id) iferr_return;
 				_removed.Append(id) iferr_return;
 				++changes;
 			}
@@ -310,6 +326,7 @@ maxon::Result<maxon::Int> SceneWriter::KeepChanges(SyncState& state, maxon::Bool
 	}
 	state._items = std::move(current);
 	state._sources = std::move(sources);
+	state._sourcesAfter = std::move(sourcesAfter);
 	return changes;
 }
 

@@ -28,6 +28,16 @@ def cycles_devices():
         return []
 
 
+def display_gpu():
+    """The graphics card Blender draws with (and Eevee renders on), as its GPU module names it, or
+    None where Blender draws with none (in the background)."""
+    try:
+        import gpu
+        return gpu.platform.renderer_get() or None
+    except Exception:
+        return None
+
+
 def _backend_has_device(preferences, backend):
     """Switch Blender to `backend` and say whether it lists a device of it."""
     try:
@@ -39,18 +49,24 @@ def _backend_has_device(preferences, backend):
 
 
 def use_cycles_device(scene, device, device_type=None, device_ids=None):
-    """Select "CPU" or "GPU" for Cycles.
+    """Select "CPU", "GPU" or "AUTO" for Cycles. "AUTO" is "GPU" when this computer has one, and
+    the CPU otherwise, which is then said once as a warning (it is what was chosen, but the user
+    should know where the render runs).
 
     device_type: a back end (OPTIX, CUDA, HIP, ONEAPI, METAL), "NONE" for no GPU, or None for the
     first that lists a device. device_ids: Blender's ids of the devices to use (of that back end,
     and the CPU next to it as in Blender's preferences); None for every device of the back end.
-    Returns (device used, back end used or "NONE", names of the devices in use, warnings)."""
+    Returns (device used, back end used or "NONE", names of the devices in use, warnings). Every
+    case where "GPU" or "AUTO" ends on the CPU comes with a warning, except "AUTO" with "NONE",
+    which is the user's own choice of no GPU."""
     warnings = []
     scene.cycles.device = 'CPU'
-    if device != "GPU":
+    if device not in ("GPU", "AUTO"):
         return "CPU", "NONE", [], warnings
+    automatic = device == "AUTO"
     if device_type == "NONE":
-        warnings.append("The Cycles Render preferences choose no GPU device type; rendering on the CPU.")
+        if not automatic:
+            warnings.append("The Cycles Render preferences choose no GPU device type; rendering on the CPU.")
         return "CPU", "NONE", [], warnings
     preferences = _preferences()
     backend = None
@@ -63,6 +79,10 @@ def use_cycles_device(scene, device, device_type=None, device_ids=None):
     if backend is None:
         backend = next((candidate for candidate in _GPU_BACKENDS if _backend_has_device(preferences, candidate)), None)
     if backend is None:
+        if automatic:
+            warnings.append("Cycles found no GPU it can render on in this computer (Device: Automatic); rendering on the CPU.")
+        else:
+            warnings.append("Cycles found no GPU it can render on in this computer; rendering on the CPU.")
         return "CPU", "NONE", [], warnings
     preferences.compute_device_type = backend
     preferences.refresh_devices()

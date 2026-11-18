@@ -40,6 +40,7 @@ struct Frame
 	maxon::Int32 width = 0;
 	maxon::Int32 height = 0;
 	maxon::UInt64 frameId = 0;
+	maxon::UInt64 contentHash = 0;	///< of size and pixels, set by the frame thread (FrameWatcher); 0: not known
 	maxon::BaseArray<maxon::Float32> pixels;
 };
 

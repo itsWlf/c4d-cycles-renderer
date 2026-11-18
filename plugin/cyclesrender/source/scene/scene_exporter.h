@@ -45,6 +45,12 @@ struct ExportSettings
 	/// Note what each mesh is made from even without reuse (a scene sent from scratch), so that the
 	/// next export can skip what did not change. Implied by reuse.
 	maxon::Bool noteSources = false;
+	/// Note what can be written again by itself when only its place changes (TakeWrittenObjects and what
+	/// goes with it): for the IPR's updates of a change in progress (0.2.0, B11).
+	maxon::Bool noteFollowed = false;
+	/// Judge every mesh that is not judged by its identity by a pass over its data, as before Cinema 4D's
+	/// data hashes were used (MESHHASH::BYTES): for comparisons (prefs/settings.h, IsIprUnoptimized).
+	maxon::Bool hashBytes = false;
 };
 
 /// What one Write() did with the meshes, for tests and measurements.
@@ -53,7 +59,44 @@ struct ExportStats
 	maxon::Int meshesExported = 0;     ///< exported in full
 	maxon::Int meshesKept = 0;         ///< left as Blender holds them (ExportSettings::reuse)
 	maxon::Int meshesByIdentity = 0;   ///< judged by what the object is (the rest by a hash of their data)
+	maxon::Int meshesByDataHash = 0;   ///< of the rest: judged by Cinema 4D's own hashes of their arrays, without a pass over them (MESHHASH::DATA_HASH)
 	maxon::Float64 meshMilliseconds = 0.0;   ///< spent deciding about and exporting meshes
+};
+
+/// Which rays see an object: the switches of its Compositing tag, or of the nearest one above it.
+struct ObjectVisibility
+{
+	maxon::Bool camera = true;
+	maxon::Bool shadow = true;         ///< casts shadows
+	maxon::Bool diffuse = true;        ///< seen by bounced (GI) light
+	maxon::Bool glossy = true;         ///< seen in reflections
+	maxon::Bool transmission = true;   ///< seen through refracting and transparent surfaces
+	maxon::Bool volumeScatter = true;  ///< seen by light scattered in volumes (Cycles Object tag only)
+	maxon::Bool holdout = false;       ///< renders as a hole in the picture (Cycles Object tag only)
+	maxon::Bool shadowCatcher = false; ///< shows only the shadows it receives (Cycles Object tag only)
+	maxon::Int32 passIndex = 0;        ///< Blender's pass index (the Object Index pass): the Compositing tag's first enabled Object Buffer
+	maxon::Bool IsDefault() const { return camera && shadow && diffuse && glossy && transmission && volumeScatter && !holdout && !shadowCatcher && passIndex == 0; }
+};
+
+//----------------------------------------------------------------------------------------
+/// An `object` item Write() made that can be written again by itself when only its place changed
+/// (SceneExporter::WriteObjectAlone; 0.2.0, B11): everything of the item but its matrix, and how the
+/// matrix follows from the object of the document it belongs to. The walk forms a matrix as a product
+/// from the top of the document down; @p tail is the part below @p owner (the generator's cache and
+/// the objects inside it), so that the product can be formed again in the same order and the item
+/// agrees with a full export's to the last bit.
+//----------------------------------------------------------------------------------------
+struct WrittenObject
+{
+	const cinema::BaseObject* owner = nullptr;      ///< the object of the document itself, or the generator that made the mesh
+	maxon::String id;                               ///< its `object` item
+	maxon::String meshId;
+	maxon::BaseArray<maxon::String> materialIds;
+	ObjectVisibility visibility;
+	maxon::Bool objectKeys = false;                 ///< the item carries the keys of Redshift's random nodes
+	maxon::Float64 nameKey = 0.0;
+	maxon::Int32 objectId = 0;
+	maxon::BaseArray<cinema::Matrix> tail;          ///< local matrices below the owner, outermost first
 };
 
 /// A light Write() went through that is an object of the document itself (not made by a generator
@@ -133,6 +176,41 @@ public:
 	maxon::BaseArray<WrittenLight> TakeWrittenLights() { return std::move(_writtenLights); }
 
 	//----------------------------------------------------------------------------------------
+	/// After Write() with ExportSettings::noteFollowed: what the IPR needs to send a change of place by
+	/// itself (0.2.0, B11), and to know when it must not.
+	/// - TakeWrittenObjects(): the `object` items that follow their owner's place and nothing else. Hands
+	///   them over.
+	/// - GetUnfollowedOwners(): objects of the document that own something whose place cannot be written
+	///   alone: an instancer (a Cloner's clones, a multi-instance, copies batched into one), a volume, hair,
+	///   particles, a light made by a generator, the sky or a dome light (the world), and everything shown
+	///   through a render instance or a Cycles Object tag's instances. When one of them, or an object above
+	///   it, moves, the scene is exported whole.
+	/// - GetReferenceRoots(): the objects that an Instance object (in any mode) or a Cycles Object tag
+	///   shows. What lies below such an object shows at the instance's place as well, so when it moves the
+	///   scene is exported whole (measured: an Instance object's copy follows without any counter of the
+	///   Instance object changing).
+	//----------------------------------------------------------------------------------------
+	/// - GetDeformedOwners(): objects of the document with a deformed mesh among what they show. Their
+	///   own cache counter does not say when that mesh is deformed anew (measured in Cinema 4D 2024: only
+	///   the counter of the object inside that carries the deformed copy moves), so the IPR looks into
+	///   their caches.
+	maxon::BaseArray<WrittenObject> TakeWrittenObjects() { return std::move(_writtenObjects); }
+	const maxon::BaseArray<const cinema::BaseObject*>& GetUnfollowedOwners() const { return _unfollowedOwners; }
+	const maxon::BaseArray<const cinema::BaseObject*>& GetDeformedOwners() const { return _deformedOwners; }
+	const maxon::BaseArray<const cinema::BaseObject*>& GetReferenceRoots() const { return _referenceRoots; }
+
+	//----------------------------------------------------------------------------------------
+	/// Writes one `object` item of the last Write() again for a new place of its owner, without walking
+	/// the document: the IPR's update of an object that is being moved (0.2.0, B11). The item is the
+	/// same, byte for byte, as Write() gives once the owner stands at @p ownerMg, as long as nothing but
+	/// places changed, so that the full export afterwards finds it unchanged.
+	/// @param[in] ownerMg  The owner's global matrix, formed as the walk forms it: the top object's local
+	///                     matrix times each child's, from the top down (not GetMg(), which may round
+	///                     differently).
+	//----------------------------------------------------------------------------------------
+	static void WriteObjectAlone(SceneWriter& writer, const Coords& coords, const WrittenObject& object, const cinema::Matrix& ownerMg);
+
+	//----------------------------------------------------------------------------------------
 	/// Writes one light of @p doc as Write() would, without walking the document: the IPR's light-only
 	/// update (0.2.0, F18), for a change of a light's values while Cinema 4D is in a modal loop. The item
 	/// is the same, byte for byte, as Write() gives with the same @p settings and the light's
@@ -186,19 +264,14 @@ private:
 		PARTICLES
 	} MAXON_ENUM_LIST_CLASS(LEAF);
 
-	/// Which rays see an object: the switches of its Compositing tag, or of the nearest one above it.
-	struct Visibility
+	using Visibility = ObjectVisibility;
+
+	/// A local matrix the walk multiplied on below an object of the document, and the one before it
+	/// (WrittenObject::tail): kept only with ExportSettings::noteFollowed.
+	struct TailNode
 	{
-		maxon::Bool camera = true;
-		maxon::Bool shadow = true;         ///< casts shadows
-		maxon::Bool diffuse = true;        ///< seen by bounced (GI) light
-		maxon::Bool glossy = true;         ///< seen in reflections
-		maxon::Bool transmission = true;   ///< seen through refracting and transparent surfaces
-		maxon::Bool volumeScatter = true;  ///< seen by light scattered in volumes (Cycles Object tag only)
-		maxon::Bool holdout = false;       ///< renders as a hole in the picture (Cycles Object tag only)
-		maxon::Bool shadowCatcher = false; ///< shows only the shadows it receives (Cycles Object tag only)
-		maxon::Int32 passIndex = 0;        ///< Blender's pass index (the Object Index pass): the Compositing tag's first enabled Object Buffer
-		maxon::Bool IsDefault() const { return camera && shadow && diffuse && glossy && transmission && volumeScatter && !holdout && !shadowCatcher && passIndex == 0; }
+		maxon::Int parent = NOTOK;         ///< index into _tails, or NOTOK for the first below the owner
+		cinema::Matrix ml;
 	};
 
 	/// One texture tag as far as the exporter reads it.
@@ -242,6 +315,8 @@ private:
 		cinema::Vector color;
 		maxon::Int instanceSet = NOTOK;      ///< index into _instanceSets
 		const cinema::BaseObject* ownerObject = nullptr;   ///< the object behind `owner`
+		maxon::Int tail = NOTOK;             ///< index into _tails: the matrices between the owner's and `mg`
+		maxon::Bool followable = true;       ///< `mg` follows from the owner's place and the tail alone (not shown through an instance)
 		const cinema::BaseObject* volumeSet = nullptr;     ///< volumes: the Volume Set (a loaded file) around it
 		const cinema::BaseTag* linkTag = nullptr;          ///< the Cycles Object tag whose light list counts for it
 		Visibility visibility;
@@ -266,6 +341,8 @@ private:
 		maxon::Int instanceSet = NOTOK;
 		const CloneColors* clones = nullptr; ///< set for the root of a Cloner's cache only
 		const cinema::BaseObject* ownerObject = nullptr;
+		maxon::Int tail = NOTOK;             ///< Leaf::tail of what is being walked
+		maxon::Bool followable = true;       ///< Leaf::followable
 		const cinema::BaseObject* volumeSet = nullptr;
 		const cinema::BaseTag* linkTag = nullptr;
 		maxon::Bool forceVisible = false;    ///< the next object is shown whatever its render dot says (instanced by a Cycles Object tag)
@@ -309,8 +386,16 @@ private:
 	class WriteState;
 	maxon::Result<void> Resolve(const Leaf& leaf, WriteState& state, Resolved& resolved);
 	/// Everything the mesh items of @p leaf are made from (ExportSettings::reuse), as one hash.
-	maxon::UInt64 MeshSignature(const Leaf& leaf, const maxon::String& meshId, const struct MeshMaterials& materials);
+	/// @param[in] count  Count the leaf in the statistics (false for the second reading after its export).
+	maxon::UInt64 MeshSignature(const Leaf& leaf, const maxon::String& meshId, const struct MeshMaterials& materials, maxon::Bool count);
+	/// Writes the `object` item of a mesh leaf, and with ExportSettings::noteFollowed notes it, or its
+	/// owner when its place cannot be written alone.
 	maxon::Result<void> WriteObject(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved);
+	/// The walk went one level down inside a generator's cache: @p ml joins the tail. Returns the new
+	/// index, or NOTOK when tails are not kept.
+	maxon::Result<maxon::Int> ExtendTail(maxon::Int parent, const cinema::Matrix& ml);
+	/// Notes that the place of what @p owner owns cannot be written alone.
+	maxon::Result<void> NoteUnfollowed(const cinema::BaseObject* owner);
 	/// The light's include or exclude list as item ids. @p itemIds: the item written for each leaf, or empty.
 	/// @return  False when the light has no such list.
 	maxon::Result<maxon::Bool> GetLightLinking(const Leaf& light, const maxon::BaseArray<maxon::String>& itemIds, struct LightLinking& linking) const;
@@ -342,6 +427,11 @@ private:
 	const MotionSample* _motionClose = nullptr;
 	ExportStats _stats;
 	maxon::BaseArray<WrittenLight> _writtenLights;
+	maxon::BaseArray<TailNode> _tails;
+	maxon::BaseArray<WrittenObject> _writtenObjects;
+	maxon::BaseArray<const cinema::BaseObject*> _unfollowedOwners;
+	maxon::BaseArray<const cinema::BaseObject*> _deformedOwners;
+	maxon::BaseArray<const cinema::BaseObject*> _referenceRoots;
 
 public:
 	/// Copies of one mesh inside one generator are sent as one instancer from this number on.

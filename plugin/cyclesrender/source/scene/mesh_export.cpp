@@ -312,15 +312,54 @@ maxon::Result<maxon::Bool> ExportMesh(SceneWriter& writer, const Coords& coords,
 	return true;
 }
 
-maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op)
+// One array of a mesh into @p hash: Cinema 4D's own hash of the tag's data (MESHHASH::DATA_HASH; the
+// tag is not asked for its data or their number, see mesh_export.h), or the data themselves.
+static maxon::UInt64 HashVariableTag(const cinema::VariableTag* tag, MESHHASH how, maxon::UInt64 hash)
+{
+	if (how == MESHHASH::DATA_HASH)
+	{
+		const maxon::UniqueHash data = tag->GetDataHash();
+		hash = (hash ^ data.low) * 0x100000001B3ull;
+		return (hash ^ data.high) * 0x9E3779B97F4A7C15ull;
+	}
+	if (const void* const data = tag->GetLowlevelDataAddressR())
+		hash = HashBytes(static_cast<const maxon::Char*>(data), maxon::Int(tag->GetDataCount()) * tag->GetDataSize(), hash);
+	return hash;
+}
+
+// HashMeshSource(), with the arrays read as @p how says.
+static maxon::UInt64 HashSource(const cinema::PolygonObject* op, MESHHASH how)
 {
 	const maxon::Int32 pointCount = op->GetPointCount();
 	const maxon::Int32 polygonCount = op->GetPolygonCount();
 	maxon::UInt64 hash = maxon::UInt64(pointCount) * 0x9E3779B97F4A7C15ull + maxon::UInt64(polygonCount);
-	if (const cinema::Vector* const points = op->GetPointR())
-		hash = HashBytes(reinterpret_cast<const maxon::Char*>(points), maxon::Int(pointCount) * SIZEOF(cinema::Vector), hash);
-	if (const cinema::CPolygon* const polygons = op->GetPolygonR())
-		hash = HashBytes(reinterpret_cast<const maxon::Char*>(polygons), maxon::Int(polygonCount) * SIZEOF(cinema::CPolygon), hash);
+	// Points and polygons are tags too (Tpoint, Tpolygon), which is where their data hashes are; an
+	// object without them (none seen) has its arrays hashed.
+	maxon::Bool pointsHashed = false;
+	maxon::Bool polygonsHashed = false;
+	if (how == MESHHASH::DATA_HASH)
+	{
+		for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
+		{
+			const maxon::Int32 type = tag->GetType();
+			if ((type == Tpoint && !pointsHashed) || (type == Tpolygon && !polygonsHashed))
+			{
+				hash = HashVariableTag(static_cast<const cinema::VariableTag*>(tag), how, hash * 31 + maxon::UInt64(type));
+				pointsHashed = pointsHashed || type == Tpoint;
+				polygonsHashed = polygonsHashed || type == Tpolygon;
+			}
+		}
+	}
+	if (!pointsHashed)
+	{
+		if (const cinema::Vector* const points = op->GetPointR())
+			hash = HashBytes(reinterpret_cast<const maxon::Char*>(points), maxon::Int(pointCount) * SIZEOF(cinema::Vector), hash);
+	}
+	if (!polygonsHashed)
+	{
+		if (const cinema::CPolygon* const polygons = op->GetPolygonR())
+			hash = HashBytes(reinterpret_cast<const maxon::Char*>(polygons), maxon::Int(polygonCount) * SIZEOF(cinema::CPolygon), hash);
+	}
 
 	for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
 	{
@@ -334,10 +373,8 @@ maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op)
 		}
 		else if (type == Tuvw || type == Tnormal || type == Tvertexmap || type == Tvertexcolor)
 		{
-			const cinema::VariableTag* const variable = static_cast<const cinema::VariableTag*>(tag);
 			hash = hash * 31 + maxon::UInt64(type) + maxon::UInt64(tag->GetName().GetHashCode());
-			if (const void* const data = variable->GetLowlevelDataAddressR())
-				hash = HashBytes(static_cast<const maxon::Char*>(data), maxon::Int(variable->GetDataCount()) * variable->GetDataSize(), hash);
+			hash = HashVariableTag(static_cast<const cinema::VariableTag*>(tag), how, hash);
 		}
 		else if (type == Tpolygonselection)
 		{
@@ -355,6 +392,11 @@ maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op)
 	return hash;
 }
 
+maxon::UInt64 HashMeshSource(const cinema::PolygonObject* op)
+{
+	return HashSource(op, MESHHASH::BYTES);
+}
+
 // A selection by its ranges, as HashMeshSource hashes the polygon selections.
 static maxon::UInt64 HashSelection(const cinema::BaseSelect* selection, maxon::Int32 maxElements, maxon::UInt64 hash)
 {
@@ -369,9 +411,9 @@ static maxon::UInt64 HashSelection(const cinema::BaseSelect* selection, maxon::I
 	return hash;
 }
 
-maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op)
+maxon::UInt64 HashMeshContent(const cinema::PolygonObject* op, MESHHASH how)
 {
-	maxon::UInt64 hash = HashMeshSource(op);
+	maxon::UInt64 hash = HashSource(op, how);
 	const maxon::Int32 polygonCount = op->GetPolygonCount();
 	// CreatePhongNormals() breaks the normals at these edges (indexed 4 * polygon + edge).
 	hash = HashSelection(op->GetPhongBreak(), polygonCount * 4, hash);

@@ -27,9 +27,12 @@ def set_properties(obj, item):
     for name, value in wanted.items():
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not name or "\n" in name:
             raise RequestError("bad_request", f"{item['kind']} {item['id']!r}: property {name!r} must be a number")
-        obj[name] = value
+        # (Only what differs is set, as in set_visibility.)
+        if obj.get(name) != value:
+            obj[name] = value
     if wanted:
-        obj[_SENT] = "\n".join(wanted)
+        if obj.get(_SENT) != "\n".join(wanted):
+            obj[_SENT] = "\n".join(wanted)
     elif _SENT in obj:
         del obj[_SENT]
 
@@ -43,15 +46,16 @@ def set_visibility(obj, item):
     "volume_scatter", "holdout", "shadow_catcher"}, and "pass_index", what the Object Index pass
     shows for it."""
     visibility = item.get("visibility", {})
-    obj.visible_camera = visibility.get("camera", True)
-    obj.visible_shadow = visibility.get("shadow", True)
-    obj.visible_diffuse = visibility.get("diffuse", True)
-    obj.visible_glossy = visibility.get("glossy", True)
-    obj.visible_transmission = visibility.get("transmission", True)
-    obj.visible_volume_scatter = visibility.get("volume_scatter", True)
-    obj.is_holdout = visibility.get("holdout", False)
-    obj.is_shadow_catcher = visibility.get("shadow_catcher", False)
-    obj.pass_index = int(visibility.get("pass_index", 0))
+    # Only what differs is set: an item sent again for a new place alone (the plugin's updates while an
+    # object is being moved) then tells Blender of a moved object and of nothing else to look at.
+    for name, value in (("visible_camera", visibility.get("camera", True)), ("visible_shadow", visibility.get("shadow", True)),
+                        ("visible_diffuse", visibility.get("diffuse", True)), ("visible_glossy", visibility.get("glossy", True)),
+                        ("visible_transmission", visibility.get("transmission", True)),
+                        ("visible_volume_scatter", visibility.get("volume_scatter", True)),
+                        ("is_holdout", visibility.get("holdout", False)), ("is_shadow_catcher", visibility.get("shadow_catcher", False)),
+                        ("pass_index", int(visibility.get("pass_index", 0)))):
+        if getattr(obj, name) != value:
+            setattr(obj, name, value)
 
 
 def assign_materials(scene, obj, item):
@@ -64,5 +68,7 @@ def assign_materials(scene, obj, item):
             raise RequestError("bad_request",
                                f"{item['kind']} {item['id']!r} refers to unknown material {material_id!r}")
         slot = obj.material_slots[index]
-        slot.link = 'OBJECT'
-        slot.material = material
+        if slot.link != 'OBJECT':
+            slot.link = 'OBJECT'
+        if slot.material != material:
+            slot.material = material

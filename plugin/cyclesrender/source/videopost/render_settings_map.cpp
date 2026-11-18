@@ -155,7 +155,10 @@ static maxon::Float64 GetValue(const cinema::BaseContainer& data, maxon::Int32 i
 void InitRenderSettings(cinema::BaseContainer& data)
 {
 	data.SetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
-	data.SetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU);	// Blender's own default
+	// Not Blender's default (the CPU): new render settings render on the GPU when Blender has one, else
+	// on the CPU, which the bridge then names (0.2.0, B11, the maintainer's decision). A scene saved with
+	// CPU or GPU keeps that: the device was stored from the first version on.
+	data.SetInt32(CYCLES_DEVICE, CYCLES_DEVICE_AUTOMATIC);
 	data.SetInt32(CYCLES_LAYOUT, CYCLES_LAYOUT_SIMPLE);
 	data.SetVector(CYCLES_WORLD_COLOR, DEFAULT_WORLD_COLOR);
 	for (const Setting& setting : SETTINGS)
@@ -290,11 +293,28 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	request.BeginObject();
 	request.String("op", "settings"_s);
 	request.String("engine", engine == CYCLES_ENGINE_EEVEE ? "EEVEE"_s : "CYCLES"_s);
-	const maxon::Bool gpu = data.GetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU) == CYCLES_DEVICE_GPU;
-	request.String("device", gpu ? "GPU"_s : "CPU"_s);
-	// Which back end and devices "GPU" means: the Preferences page (prefs/devices.h).
-	if (gpu)
+	const maxon::Int32 device = data.GetInt32(CYCLES_DEVICE, CYCLES_DEVICE_CPU);
+	request.String("device", device == CYCLES_DEVICE_GPU ? "GPU"_s : device == CYCLES_DEVICE_AUTOMATIC ? "AUTO"_s : "CPU"_s);
+	// Which back end and devices "GPU" (and "Automatic") means: the Preferences page (prefs/devices.h).
+	if (device == CYCLES_DEVICE_GPU || device == CYCLES_DEVICE_AUTOMATIC)
+	{
 		WriteDeviceSettings(request);
+	}
+	else if (engine == CYCLES_ENGINE_CYCLES)
+	{
+		// A GPU type chosen in the Preferences does nothing while the Render Settings say CPU, which looked like
+		// a GPU render that was none (found with B11): said, so that the choice is not silently dropped.
+		iferr (const DeviceSettings devices = GetDeviceSettings())
+		{
+		}
+		else if (devices.type != DEVICETYPE::AUTOMATIC && devices.type != DEVICETYPE::NONE)
+		{
+			iferr (warnings.Append(FormatString("Cycles renders on the CPU: the Render Settings' Device is \"CPU Compute\". The device type @ of the "
+				"Preferences applies to \"GPU Compute\" and \"Automatic\".", BackendLabel(DeviceTypeName(devices.type)))))
+			{
+			}
+		}
+	}
 	const maxon::String workingSpace = doc ? BlenderWorkingSpace(doc, warnings) : maxon::String();
 	if (!workingSpace.IsEmpty())
 		request.String("working_space", workingSpace);

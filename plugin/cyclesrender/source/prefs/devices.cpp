@@ -52,6 +52,17 @@ maxon::String DeviceTypeName(DEVICETYPE type)
 	return maxon::String();
 }
 
+maxon::String BackendLabel(const maxon::String& name)
+{
+	static const maxon::Char* const LABELS[] = { "OptiX", "CUDA", "HIP", "oneAPI", "Metal" };
+	for (maxon::Int i = 0; i < 5; ++i)
+	{
+		if (name == maxon::String(BACKENDS[i]))
+			return maxon::String(LABELS[i]);
+	}
+	return name;
+}
+
 static DEVICETYPE TypeOfName(const maxon::String& name)
 {
 	for (maxon::Int i = 0; i < 5; ++i)

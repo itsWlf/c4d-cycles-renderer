@@ -14,6 +14,35 @@ namespace cyclesrender
 // Without a signal (or should one be missed) the block is looked at this often anyway.
 static const int POLL_MILLISECONDS = 20;
 
+static maxon::Float64 Now()
+{
+	return maxon::TimeValue::GetTime().GetSeconds();
+}
+
+// A hash of the frame's size and every pixel value, in four lanes so that it runs at memory speed
+// (about 2 ms for 1920 x 1080 on the frame thread). Equal frames have equal hashes; a frame that
+// differs in any value has another hash, short of a collision of 64-bit hashes.
+static maxon::UInt64 HashFrame(const Frame& frame)
+{
+	const maxon::Int count = frame.pixels.GetCount() / 2;	// 64-bit words: two values each
+	const maxon::UInt64* const words = reinterpret_cast<const maxon::UInt64*>(frame.pixels.GetFirst());
+	maxon::UInt64 lane[4] = { 0x9E3779B97F4A7C15ull, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull };
+	maxon::Int i = 0;
+	for (; i + 3 < count; i += 4)
+	{
+		lane[0] = (lane[0] ^ words[i + 0]) * 0x100000001B3ull;
+		lane[1] = (lane[1] ^ words[i + 1]) * 0x100000001B3ull;
+		lane[2] = (lane[2] ^ words[i + 2]) * 0x100000001B3ull;
+		lane[3] = (lane[3] ^ words[i + 3]) * 0x100000001B3ull;
+	}
+	for (; i < count; ++i)
+		lane[0] = (lane[0] ^ words[i]) * 0x100000001B3ull;
+	maxon::UInt64 hash = maxon::UInt64(frame.width) * 0x9E3779B97F4A7C15ull ^ maxon::UInt64(frame.height);
+	for (const maxon::UInt64 value : lane)
+		hash = (hash ^ value ^ (value >> 29)) * 0xBF58476D1CE4E5B9ull;
+	return hash | 1;	// never 0, which means "not known"
+}
+
 FrameWatcher::~FrameWatcher()
 {
 	End(true);
@@ -31,12 +60,22 @@ void FrameWatcher::Watch(const maxon::String& token)
 	_fresh = false;
 }
 
-maxon::Bool FrameWatcher::Take(Frame& frame, maxon::Float64& arrivalTime)
+maxon::Bool FrameWatcher::Take(Frame& frame, maxon::Float64& arrivalTime, maxon::Float64 minSeconds)
 {
+	const maxon::Float64 now = Now();
 	maxon::ScopedLock guard(_lock);
 	if (!_fresh)
 		return false;
+	if (minSeconds > 0.0 && now - _lastTake < minSeconds)
+	{
+		// Too soon after the last one: Main() announces it again when it may be shown.
+		_held = true;
+		_heldUntil = _lastTake + minSeconds;
+		return false;
+	}
 	_fresh = false;
+	_held = false;
+	_lastTake = now;
 	// Swapping hands the caller's old pixel buffer back for reuse.
 	std::swap(frame, _latest);
 	arrivalTime = _arrival;
@@ -79,8 +118,35 @@ void FrameWatcher::Main()
 			}
 		}
 
-		// Returns at once when a frame was published, and after the poll time otherwise.
-		platform::SignalWait(_signal, POLL_MILLISECONDS);
+		// Returns at once when a frame was published, and after the poll time otherwise; sooner when a
+		// frame the window held back may be shown.
+		int wait = POLL_MILLISECONDS;
+		{
+			maxon::ScopedLock guard(_lock);
+			if (_held)
+				wait = maxon::ClampValue(int((_heldUntil - Now()) * 1000.0) + 1, 1, POLL_MILLISECONDS);
+		}
+		platform::SignalWait(_signal, wait);
+
+		// The last frame of a burst must reach the screen even when nothing comes after it: a frame
+		// Take() held back is announced again once its time has come (the trailing frame).
+		maxon::Bool due = false;
+		{
+			maxon::ScopedLock guard(_lock);
+			if (_held && Now() >= _heldUntil)
+			{
+				_held = false;
+				due = _fresh;
+			}
+		}
+		if (due)
+		{
+			TraceIpr("frame_due");
+			cinema::SpecialEventAdd(ID_CORE_MESSAGE);
+			if (_onArrival)
+				_onArrival();
+		}
+
 		if (!_reader.IsOpen())
 			continue;
 
@@ -88,6 +154,7 @@ void FrameWatcher::Main()
 			continue;
 		if (!got)
 			continue;
+		_work.contentHash = HashFrame(_work);
 
 		maxon::Bool notify = false;
 		{

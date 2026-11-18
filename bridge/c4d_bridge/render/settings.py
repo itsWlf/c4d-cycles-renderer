@@ -69,9 +69,14 @@ def apply(header):
     if device is not None:
         used, backend, names, device_warnings = devices.use_cycles_device(scene, device, header.get("device_type"), header.get("devices"))
         warnings.extend(device_warnings)
-        if used != device and not device_warnings:
-            warnings.append(f"Cycles has no {device} device here; rendering on the {used}.")
         reply = {"device_type": backend, "devices": names}
+    # What renders, as Blender has it now: the device and its back end, the CPU threads Cycles uses
+    # (the render setting's count, or every logical processor), and the graphics card Blender draws
+    # with (Eevee's, and the viewport's), where Blender has one.
+    reply["threads"] = scene.render.threads
+    display = devices.display_gpu()
+    if display:
+        reply["display_gpu"] = display
     return {"warnings": warnings, "engine": scene.render.engine, "device": scene.cycles.device, **reply}, ()
 
 

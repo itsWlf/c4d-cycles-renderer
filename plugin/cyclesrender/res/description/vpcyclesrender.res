@@ -27,6 +27,7 @@ CONTAINER VPcyclesrender
 				ANIM OFF;
 				CYCLE
 				{
+					CYCLES_DEVICE_AUTOMATIC;
 					CYCLES_DEVICE_CPU;
 					CYCLES_DEVICE_GPU;
 				}

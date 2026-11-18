@@ -62,8 +62,9 @@ run one after another in a fixed order, which is printed; each starts from a kno
 (tests\c4d\lib\crrun.py) and has its own result and time. A capture or dump file is one per
 start and is emptied before every script. When c4dpy ends before every test of a start has
 reported, the test that was running fails and the ones not yet run are run again, each alone.
-The last seven tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window,
-baked_files_window, blender_missing_window and default_engine_window, need windows and start the
+The last tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window,
+ipr_live_window, ipr_optimized_window, new_light_window, baked_files_window, blender_missing_window and default_engine_window,
+need windows and start the
 regular Cinema 4D for about half a minute each, with a preferences folder of their own so that the
 user's preferences and layout stay untouched (and, field PrefsFiles, files put into it before the start).
 ipr_navigate_window posts mouse and key messages to that Cinema 4D's IPR window from a process of its
@@ -146,6 +147,8 @@ $bridgeTests = @(
   @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") },
   @{ Name = "test_lights"; Covers = @("${B}scene/lights.py") },
   @{ Name = "test_devices"; Covers = @("${B}render/devices.py", "${B}render/settings.py") },
+  # 0.2.0, B11: frames published at most about 30 a second, progress still right; the device reported.
+  @{ Name = "test_frame_rate"; Covers = @("${B}viewport/*", "${B}render/devices.py", "${B}render/settings.py", "tests/bridge/frames.py") },
   @{ Name = "test_versions"; Covers = @("${B}render/settings.py", "${B}scene/materials.py", "${P}videopost/render_settings_table.h", "tools/make_settings.py",
                                         "tools/make_nodes.py") }
 )
@@ -177,7 +180,7 @@ $c4dTests = @(
   @{ Name = "geometry"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/mesh_export.*", "${P}scene/scene_exporter.*", "${P}materials/shader_translate.*", "${P}scene/document_colors.*", "${B}scene/instancers.py", "${B}scene/meshes.py") },
   @{ Name = "motion_blur"; Covers = @("${P}scene/mesh_export.*", "${P}scene/camera_export.*", "${P}videopost/*", "${B}render/settings.py", "${B}scene/objects.py") },
-  @{ Name = "passes"; Covers = @("${P}videopost/*", "${B}final/__init__.py", "${B}render/settings.py", "${B}scene/objects.py", "tools/make_settings.py", "${R}description/vpcyclesrender.*") },
+  @{ Name = "passes"; Covers = @("${P}scene/light_export.*", "${P}videopost/*","${B}final/__init__.py", "${B}render/settings.py", "${B}scene/objects.py", "tools/make_settings.py", "${R}description/vpcyclesrender.*") },
   @{ Name = "region"; Covers = @("${P}videopost/cycles_videopost.*", "${B}final/__init__.py") },
   @{ Name = "volumes"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
@@ -211,6 +214,13 @@ $c4dTests = @(
   @{ Name = "ipr_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/light_export.*",
                 "${P}lights/*", "${B}scene/lights.py") },
+  # 0.2.0, B11 step 3: what a step of a change in progress sends alone and what it exports whole, the gate
+  # on redraws, the settle export, a heavy generator judged without a pass over its data. It runs the
+  # kinds of change of ipr_reuse.py as well (it reads that script).
+  @{ Name = "ipr_optimized"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*",
+                "${P}scene/light_export.*", "${P}scene/camera_export.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
+                "${R}strings_en-US/description/prefscyclesrender.str", "${B}scene/objects.py", "${B}scene/__init__.py", "tests/c4d/ipr_reuse.py") },
   @{ Name = "ipr_navigate"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/camera_export.*", "${P}scene/scene_exporter.*",
                 "${P}tags/camera_tag.*", "${P}prefs/settings.*", "${B}viewport/*", "${B}scene/cameras.py") },
@@ -227,9 +237,17 @@ $c4dTests = @(
   @{ Name = "light_enable"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/light_export.*", "${P}scene/scene_exporter.*", "${P}lights/*", "${P}ipr/ipr_controller.*", "${B}scene/lights.py", "tests/scenes/old/*") },
   @{ Name = "light_shadows"; Covers = @("${P}scene/light_export.*", "${P}lights/*", "${B}scene/lights.py") },
+  @{ Name = "editor_camera"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}scene/camera_export.*", "${P}ipr/ipr_controller.*", "${B}scene/cameras.py", "${B}viewport/*") },
   @{ Name = "devices"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}prefs/devices.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
                 "${P}videopost/render_settings_map.*", "${B}render/devices.py", "${B}render/settings.py", "${P}ipr/ipr_testhook.*") },
+  # 0.2.0, B11: the device really used (final frames and the IPR), the threads left free, the priority rule.
+  @{ Name = "ipr_device"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}prefs/devices.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
+                "${R}strings_en-US/description/prefscyclesrender.str", "${P}videopost/render_settings_*", "${R}description/vpcyclesrender.*",
+                "${R}strings_en-US/description/vpcyclesrender.str", "tools/make_settings.py", "${P}platform/process_stats*",
+                "${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${B}render/*", "${B}viewport/*") },
   @{ Name = "default_engine"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
                 "${P}videopost/cycles_videopost.*", "${P}videopost/render_settings_map.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "tools/make_settings.py") },
@@ -251,6 +269,26 @@ $c4dTests = @(
      Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*",
                 "${P}ipr/ipr_scenehook.*", "${P}prefs/prefs_page.*", "${P}prefs/settings.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "${P}session/frame_watcher.*", "tests/c4d/lib/post_input.ps1", "tests/c4d/harness/*") },
+  # The Preferences' live updates (F22) off and on in one running IPR: it sets them through the page, in
+  # its own preferences folder.
+  @{ Name = "ipr_live_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_testhook.*",
+                "${P}session/frame_watcher.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
+                "${R}strings_en-US/description/prefscyclesrender.str", "tests/c4d/harness/*") },
+  # 0.2.0, B11 step 3: "Optimized Live Updates" on (the default) and off in one running IPR, with emulated
+  # drags, view navigation and playback: what is sent during each and that Blender is in sync after.
+  @{ Name = "ipr_optimized_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_testhook.*",
+                "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*", "${P}session/frame_watcher.*", "${P}prefs/settings.*",
+                "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
+                "${B}scene/objects.py", "tests/c4d/harness/*") },
+  # 0.2.0, B11: at most about 30 frames a second shown, the last one always; the status line's device.
+  @{ Name = "ipr_frames_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*",
+                "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}session/frame_watcher.*", "${P}session/frame_reader.*",
+                "${P}platform/process_stats*", "${B}viewport/*", "${B}render/*", "tests/bridge/frames.py", "tests/c4d/harness/*") },
+  @{ Name = "new_light_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_add.*", "${P}lights/light_object.*", "tests/c4d/harness/*") },
   @{ Name = "baked_files_window"; Window = $true; CleanPrefs = $true; GoneAfter = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}materials/baked_files.*", "${P}materials/material_preview.*", "tests/c4d/harness/*") },
   # No g_cyclesRenderBlender: the Blender is the one the Preferences page holds; detection looks in an
