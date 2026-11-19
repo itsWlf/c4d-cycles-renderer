@@ -112,7 +112,9 @@ private:
 			return;
 		const Coords coords = Coords::FromDocument(doc);
 		BlenderLight values;
-		if (!TranslateLight(light, coords, DocumentColors(nullptr), 1.0, values, nullptr))
+		// The colour as Cinema 4D stores it (a Redshift light's temperature made a colour of the
+		// document's render space), the size with the light's scale, as the export takes them.
+		if (!TranslateLight(light, coords, DocumentColors::Stored(doc), 1.0, light->GetMg(), values, nullptr))
 			return;
 		if (doc)
 		{

@@ -23,7 +23,7 @@ from . import window
 from .frame_block import DONE, PAUSED, RENDERING, STOPPED, FrameBlock
 
 _SAMPLE = re.compile(r"Sample (\d+)(?:/(\d+))?")
-_STATUS_OFFSET = 64   # RenderEngine.text inside Blender's struct; found on 5.0 and 5.2.3
+_STATUS_OFFSET = 64   # RenderEngine.text inside Blender's struct; the same in 5.0 to 5.3 (docs/reference/blender.md)
 _CAMERA_ZOOM_FILLING_THE_REGION = 50.0 * (2.0 - math.sqrt(2.0))
 # After a change Cycles keeps saying "Rendering Done" about the previous render until its
 # render thread has picked the change up (a resize alone is held back 0.2 s). So "done" is
@@ -34,7 +34,7 @@ _SETTLE_SECONDS = 0.6
 # Viewport._after_resize.
 _RESIZE_NUDGE_SECONDS = 0.25
 
-# Frames are published at most this often (0.2.0, B11): Cycles redraws after every piece of work, 50 to
+# Frames are published at most this often: Cycles redraws after every piece of work, 50 to
 # 230 times a second while something moves, and every frame costs a read-back from the GPU here and a
 # conversion and a draw on the client's interface thread. A redraw in between only updates the progress;
 # the newest picture follows when the time has come, by a redraw this driver asks for if Blender makes
@@ -58,6 +58,13 @@ FREE_VIEW_LENS_RANGE = (1.0, 250.0)
 
 
 class Viewport:
+    """Blender's one window as the IPR's live renderer: its 3D viewport, the frame block it fills, and
+    the state of the render for the progress the plugin reads.
+
+    Commands come from the `view_*` requests (server.py) and each answers with describe(). Draw
+    callbacks run on every redraw of the viewport and publish its pixels and progress.
+    """
+
     def __init__(self, token):
         self.block = FrameBlock(token)
         self.window = self.area = self.region = self.space = None
@@ -99,6 +106,7 @@ class Viewport:
     # --- set-up: two steps, because the screen is swapped between them -----------------
 
     def setup_begin(self):
+        """Quiet Blender's start-up dialogs and make the 3D viewport fill the window."""
         preferences = bpy.context.preferences.view
         preferences.show_splash = False
         preferences.use_save_prompt = False
@@ -109,6 +117,8 @@ class Viewport:
             bpy.ops.screen.screen_full_area(use_hide_panels=True)
 
     def setup_finish(self, show_window):
+        """On the swapped screen: hide or show the window, strip the viewport bare, install the draw
+        callbacks. The viewport is ready for commands afterwards."""
         self._refresh_area()
         self.hwnd = window.find()
         window.show(self.hwnd, show_window)
@@ -143,6 +153,7 @@ class Viewport:
     # --- commands ---------------------------------------------------------------------
 
     def start(self, width, height):
+        """Render live at this size: Rendered shading once the window has the size."""
         self.resize(width, height)
         if not self._free_view:
             self._look_through_camera()
@@ -158,6 +169,7 @@ class Viewport:
         return self.describe()
 
     def _begin_rendering(self):
+        """Timer: switch to Rendered shading once the region has the size start() asked for."""
         if not self._starting:
             return None     # stopped again in the meantime
         if (self.region.width, self.region.height) != self._start_size and time.time() < self._start_deadline:
@@ -183,6 +195,7 @@ class Viewport:
         return self.describe()
 
     def pause(self, paused):
+        """Hold or resume the render; its buffers are kept, and the clock leaves out the pause."""
         paused = bool(paused)
         with self._override():   # the property's update callback needs an area
             region_3d = self.space.region_3d
@@ -208,6 +221,7 @@ class Viewport:
         return self.describe()
 
     def resize(self, width, height):
+        """Give the window's client area, and with it the region and the render resolution, this size."""
         if width < 16 or height < 16 or width > 16384 or height > 16384:
             raise RequestError("bad_request", f"unusable viewport size {width} x {height}")
         window.set_client_size(self.hwnd, width, height)
@@ -253,6 +267,7 @@ class Viewport:
         return None
 
     def _look_through_camera(self):
+        """Look through the scene's camera object, its frame filling the region."""
         view = self.space.region_3d
         view.view_perspective = 'CAMERA'
         view.view_camera_zoom = _CAMERA_ZOOM_FILLING_THE_REGION
@@ -318,10 +333,12 @@ class Viewport:
         return self.describe()
 
     def show_window(self, visible):
+        """Show Blender's window to the user, or hide it again (it keeps drawing either way)."""
         window.show(self.hwnd, visible)
         return self.describe()
 
     def test_pattern(self, width, height):
+        """For tests of the frame block: publish a known picture without rendering."""
         self.block.write_test_pattern(width, height)
         return self.describe()
 
@@ -342,6 +359,7 @@ class Viewport:
             self.area.tag_redraw()
 
     def _settle(self):
+        """Do not believe "done" for _SETTLE_SECONDS, and redraw once after that."""
         self._settle_until = time.time() + _SETTLE_SECONDS
         self._done_since = 0.0
         # The render may be finished again before then, and nothing would redraw to say so.
@@ -359,6 +377,7 @@ class Viewport:
         return None
 
     def describe(self):
+        """The reply fields of every `view_*` request (protocol/protocol.md)."""
         fields = {"state_block": self.block.state_name, "rendering": self.rendering or self._starting, "paused": self.paused,
                   "width": self.region.width if self.region else 0, "height": self.region.height if self.region else 0,
                   "redrawn": self.redrawn, "published": self.published, "pending": self._publish_pending}
@@ -377,12 +396,14 @@ class Viewport:
             self._timer = None
 
     def _samples_wanted(self):
+        """The viewport samples the active engine renders to."""
         scene = bpy.context.scene
         return scene.cycles.preview_samples if scene.render.engine == 'CYCLES' else scene.eevee.taa_samples
 
     # --- draw callbacks: read scene data, never write it ---------------------------------
 
     def _wrap_cycles(self):
+        """Wrap Cycles' view_draw to read its progress text after every draw (_cycles_status)."""
         import cycles
         original = cycles.CyclesRender.view_draw
         viewport = self
@@ -397,9 +418,11 @@ class Viewport:
         cycles.CyclesRender.view_draw = view_draw
 
     def _pre_view(self):
+        """Draw callback: keep the framebuffer the render is drawn into."""
         self._framebuffer = gpu.state.active_framebuffer_get()
 
     def _post_view(self):
+        """Draw callback: update the progress, and publish the pixels when a frame is due."""
         framebuffer = self._framebuffer
         if framebuffer is None or not self.rendering:
             return
@@ -449,6 +472,8 @@ class Viewport:
         return None
 
     def _update_progress(self):
+        """Work out the sample, the state and the render's times from this redraw and write them into
+        the frame block's state; returns the state."""
         scene = bpy.context.scene
         wanted = self._samples_wanted()
         if scene.render.engine == 'CYCLES':

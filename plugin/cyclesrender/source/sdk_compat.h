@@ -97,6 +97,13 @@ inline cinema::Int32 NgonCount(const cinema::PolygonObject* op)
 	return const_cast<cinema::PolygonObject*>(op)->GetNgonCount();
 }
 
+/// The first video post of render data that is only read. RenderData::GetFirstVideoPost() has a
+/// const form from the 2026 SDK on, not before.
+inline const cinema::BaseVideoPost* FirstVideoPost(const cinema::RenderData* renderData)
+{
+	return const_cast<cinema::RenderData*>(renderData)->GetFirstVideoPost();
+}
+
 /// The value of a Result<Opt<T>>, or T's default when the optional is empty: GetOrDefault() from
 /// the 2025 SDK on, GetValueOrDefault() in 2024.
 template <typename RESULT> MAXON_ATTRIBUTE_FORCE_INLINE auto OptOrDefault(RESULT&& result)

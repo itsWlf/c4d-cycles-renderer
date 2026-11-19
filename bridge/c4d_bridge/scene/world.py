@@ -7,6 +7,7 @@ from .materials import build_nodes
 
 
 def build_world(scene, item, blobs):
+    """A `world` item: the scene's world, its node tree built from the item's nodes and links."""
     world = bpy.context.scene.world
     if world is None:
         world = bpy.data.worlds.new("World")

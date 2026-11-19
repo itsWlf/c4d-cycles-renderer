@@ -22,6 +22,7 @@ _VISIBILITY = {"camera": "visible_camera", "diffuse": "visible_diffuse", "glossy
 
 
 def _set(scene, owner, name, value, what):
+    """Set one property of the light, or warn when this Blender lacks it or refuses the value."""
     if not hasattr(owner, name):
         scene.warn(f"Light {what}: Blender's {owner.bl_rna.identifier} has no property \"{name}\"; it was left out.")
         return
@@ -32,6 +33,7 @@ def _set(scene, owner, name, value, what):
 
 
 def build_light(scene, item, blobs):
+    """A `light` item: a new light datablock and its object; the light linking follows in apply_links()."""
     light = bpy.data.lights.new(item["id"], item.get("type", "POINT"))
     light.energy = item.get("energy", 1000.0)
     light.color = item.get("color", (1.0, 1.0, 1.0))

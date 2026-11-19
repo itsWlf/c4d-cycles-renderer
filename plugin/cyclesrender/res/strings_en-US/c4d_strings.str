@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 STRINGTABLE
 {
 	IDS_CYCLESRENDER_NAME "Cycles Render";

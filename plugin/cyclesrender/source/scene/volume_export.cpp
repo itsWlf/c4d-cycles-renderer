@@ -46,14 +46,6 @@ void FreeVolumeFiles()
 	g_written.Reset();
 }
 
-static maxon::String JsonText(const maxon::String& text)
-{
-	maxon::String escaped = text;
-	escaped.Replace("\\"_s, "\\\\"_s) iferr_ignore("An odd grid name only fails to match.");
-	escaped.Replace("\""_s, "\\\""_s) iferr_ignore("An odd grid name only fails to match.");
-	return "\""_s + escaped + "\""_s;
-}
-
 // The .vdb file a Volume Loader read these grids from, or an empty name.
 static cinema::Filename FindLoadedFile(const VolumeSource& source)
 {
@@ -182,7 +174,7 @@ static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const 
 	maxon::ScopedLock lock(g_writtenLock);
 	const auto* const known = g_written.Find(id);
 	if (known && known->GetValue().file != file)
-		cinema::GeFKill(known->GetValue().file);   // fails harmlessly while Blender still reads it
+		cinema::GeFKill(known->GetValue().file);   // may fail while Blender reads it; the file is then left behind
 	WrittenVolume written;
 	written.source = sourceKey;
 	written.file = file;
@@ -273,8 +265,8 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 	NodeGraph graph;
 	const maxon::Int shader = graph.Add("ShaderNodeVolumePrincipled") iferr_return;
 	const maxon::Int output = graph.Add("ShaderNodeOutputMaterial") iferr_return;
-	graph.SetInputJson(shader, "Density Attribute", JsonText(densityGrid));
-	graph.SetInputJson(shader, "Color Attribute", JsonText(colorGrid));
+	graph.SetInputJson(shader, "Density Attribute", JsonQuoted(densityGrid));
+	graph.SetInputJson(shader, "Color Attribute", JsonQuoted(colorGrid));
 	graph.SetInput(shader, "Density", GetFloatParameter(tag, CYCLESOBJECT_VOLUME_DENSITY, 1.0));
 	graph.SetInput(shader, "Color", colors.Input(GetVectorParameter(tag, CYCLESOBJECT_VOLUME_COLOR, cinema::Vector(0.5))));
 	graph.SetInput(shader, "Anisotropy", GetFloatParameter(tag, CYCLESOBJECT_VOLUME_ANISOTROPY, 0.0));
@@ -292,7 +284,7 @@ maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coord
 	if (fireMode == CYCLESOBJECT_VOLUME_FIRE_MODE_AUTO)
 		fireMode = temperatureGrid == "temperature"_s ? CYCLESOBJECT_VOLUME_FIRE_MODE_TEMPERATURE : CYCLESOBJECT_VOLUME_FIRE_MODE_BRIGHTNESS;
 	const maxon::Bool brightness = temperatureGrid.IsPopulated() && fire > 0.0 && fireMode == CYCLESOBJECT_VOLUME_FIRE_MODE_BRIGHTNESS;
-	graph.SetInputJson(shader, "Temperature Attribute", JsonText(brightness ? maxon::String() : temperatureGrid));
+	graph.SetInputJson(shader, "Temperature Attribute", JsonQuoted(brightness ? maxon::String() : temperatureGrid));
 	if (brightness)
 	{
 		const maxon::Int attribute = graph.Add("ShaderNodeAttribute") iferr_return;

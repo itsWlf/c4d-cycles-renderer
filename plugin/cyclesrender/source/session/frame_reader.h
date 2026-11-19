@@ -21,6 +21,7 @@ enum class VIEWSTATE
 	DONE = 3
 } MAXON_ENUM_LIST(VIEWSTATE);
 
+/// The progress the frame block reports (FrameReader::GetStatus).
 struct FrameStatus
 {
 	maxon::UInt64 frameId = 0;        ///< counts published frames; 0 while there is none

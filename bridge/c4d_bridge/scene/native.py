@@ -44,6 +44,8 @@ MAX_REDO_TRIES = 16             # steps forward after an undo that took an open 
 
 
 class _Entry:
+    """One native material this Blender holds, by its item id, and its editor window while one is open."""
+
     def __init__(self, item_id, material, digest):
         self.item_id = item_id
         self.material = material

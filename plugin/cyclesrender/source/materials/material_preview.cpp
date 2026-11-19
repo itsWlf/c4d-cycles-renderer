@@ -58,7 +58,7 @@ maxon::Result<void> MaterialPreview::Render(maxon::Int size, maxon::BaseArray<ma
 	if (!g_client)
 	{
 		const maxon::Float64 now = maxon::TimeValue::GetTime().GetSeconds();
-		// No Blender that can be started as chosen (0.2.0, B7): said at once and in those words,
+		// No Blender that can be started as chosen: said at once and in those words,
 		// and looked at again for every preview, so that a Blender chosen meanwhile is used at once.
 		const maxon::String problem = GetBlenderProblem();
 		if (problem.IsPopulated())

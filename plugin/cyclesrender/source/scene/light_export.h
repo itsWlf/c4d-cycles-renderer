@@ -44,7 +44,7 @@ enum class BLENDERAREA
 /// angles in radians, colours in Blender's working space. The defaults are those of a point
 /// light Blender 5.2.3 adds. Translated lights fill only the first block; the plugin's own light
 /// and the Cycles Light tag also the others, and only then are those fields sent (a light
-/// without them gets Blender's defaults, as before they existed).
+/// without them gets Blender's defaults).
 //----------------------------------------------------------------------------------------
 struct BlenderLight
 {
@@ -59,16 +59,21 @@ struct BlenderLight
 	maxon::Float64 size = 1.0;                   ///< area; the width for a rectangle or ellipse
 	maxon::Float64 sizeY = 1.0;
 	maxon::Float64 angle = 0.0;                  ///< sun: the angular diameter
+	/// Area: Blender's spread (full angle). Sent when blenderSettings is set or it is narrower than
+	/// Blender's default (a Redshift area light's "Spread").
+	maxon::Float64 spread = maxon::PI;
+	/// Area: the light shines to both sides (a Redshift area light's "Bi-Directional"). Blender's area
+	/// light shines to one, so a second item, BackLightId(), shines the other way.
+	maxon::Bool twoSided = false;
 
 	/// Blender's Light panel beyond what a translated light has: exposure, normalize,
-	/// temperature, soft falloff (point, spot) and spread (area).
+	/// temperature and soft falloff (point, spot).
 	maxon::Bool blenderSettings = false;
 	maxon::Float64 exposure = 0.0;
 	maxon::Bool normalize = true;
 	maxon::Bool useTemperature = false;
 	maxon::Float64 temperature = 6500.0;         ///< kelvin
-	maxon::Bool softFalloff = true;
-	maxon::Float64 spread = maxon::PI;
+	maxon::Bool softFalloff = true;              ///< point, spot; also sent off for a translated sphere
 
 	/// Cycles' Settings panel (`light.cycles`).
 	maxon::Bool cyclesSettings = false;
@@ -111,10 +116,17 @@ struct BlenderLight
 /// "Radius/Decay" value (500 cm by default), whether its falloff is switched on or not.
 /// With "Inverse Square" falloff the two then agree at every distance. The constants are
 /// derived in docs/reference/c4d-sdk.md, section "Light conversion". A Redshift light
-/// (Orslight) is physical and converts exactly: infinite, point, spot and area lights in the
-/// unit "Image".
+/// (Orslight) is physical and converts exactly where Blender has the same light (measured with
+/// Redshift 2027.0.0, docs/reference/c4d-sdk.md, "Redshift lights"): infinite, point, spot and
+/// area lights (rectangle, disc or ellipse, sphere) in every intensity unit, with exposure,
+/// "Normalize Intensity", the object's scale on its size, its colour temperature as Redshift
+/// computes it in the render space, its camera visibility and "Bi-Directional" (twoSided).
+/// Approximated, each named in the console: "Spread" (Blender's profile fitted to Redshift's;
+/// Blender's edge is soft), the decays "None" and "Linear" (matched at one distance) and a
+/// cylinder (a sphere as bright from its side); not translated, named: a mesh shape, a texture,
+/// the spot's falloff curve, the sun's sky, portals and IES profiles.
 ///
-/// Shadows (0.2.0, F20): a standard light always casts them, whatever its "Shadow" type, also
+/// Shadows: a standard light always casts them, whatever its "Shadow" type, also
 /// "None", Cinema 4D's default (the Standard renderer casts none then); a Cycles Light tag's
 /// Settings tab turns them off. The type sets their softness through the light's size (radius,
 /// a sun's angle): None and Raytraced sharp; Area from the area shape or the Infinite Angle, as
@@ -123,16 +135,23 @@ struct BlenderLight
 /// A Redshift light follows its own "Shadow" switch.
 ///
 /// @param[in] colors      The document's colour settings: a standard light's colour is a colour
-///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored.
+///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored;
+///                        its colour temperature is made a colour of the render space.
 /// @param[in] multiplier  The "Light Multiplier" render setting.
+/// @param[in] mg          The light's global matrix: a Redshift area light's size counts with its
+///                        scale (measured), as the light's direction is sent without it.
 /// @return  False when the light emits nothing.
 //----------------------------------------------------------------------------------------
 maxon::Bool TranslateLight(const cinema::BaseObject* light, const Coords& coords, const DocumentColors& colors, maxon::Float64 multiplier,
-	BlenderLight& out, SceneWriter* writer);
+	const cinema::Matrix& mg, BlenderLight& out, SceneWriter* writer);
+
+/// The id of the item that shines a two-sided light's other way (BlenderLight::twoSided), for the
+/// light item @p id.
+maxon::String BackLightId(const maxon::String& id);
 
 //----------------------------------------------------------------------------------------
 /// Whether @p light is switched on by its green check in the Object Manager (the object's deform
-/// mode, `ID_BASEOBJECT_GENERATOR_FLAG`): Cinema 4D's light, a Redshift light and, since 0.2.0, the
+/// mode, `ID_BASEOBJECT_GENERATOR_FLAG`): Cinema 4D's light, a Redshift light and the
 /// Cycles Light object have it. Measured with the Standard renderer and Redshift (2024.5, 2026.3,
 /// 2027.0): a light whose check is off emits nothing, and the check counts for that light only, not
 /// for lights below it (docs/reference/c4d-sdk.md, "Lights switched off").
@@ -143,7 +162,9 @@ maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light);
 /// Exports the light @p light, whose global matrix is @p mg, under the id @p id: a standard
 /// light, a Redshift light (both through TranslateLight, and changed by a Cycles Light tag on
 /// them: lights/light_tag.h) or the plugin's Cycles Light object (its values as they are).
-/// A light switched off by its check (IsLightSwitchedOn) is skipped.
+/// A light switched off by its check (IsLightSwitchedOn) is skipped. A two-sided light writes its
+/// other side as a second item (BackLightId); otherwise that item is named for removal, so that a
+/// light written alone (the IPR during a drag) takes it out of a partial request too.
 ///
 /// @param[in] multiplier  The "Light Multiplier" render setting, applied to every light.
 /// @param[in] eeveeHidesLights  The frame is rendered by an Eevee that shows no light to the camera

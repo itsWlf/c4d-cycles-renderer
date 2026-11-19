@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef TCYCLESLIGHT_H__
 #define TCYCLESLIGHT_H__
 

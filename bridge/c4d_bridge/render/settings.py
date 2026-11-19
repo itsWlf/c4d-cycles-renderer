@@ -96,6 +96,7 @@ def read(header):
 
 
 def _set_working_space(name, warnings):
+    """Switch Blender's working colour space without converting colours; a warning if it cannot."""
     current = bpy.data.colorspace.working_space
     if current == name:
         return

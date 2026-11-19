@@ -226,7 +226,7 @@ cinema::Bool RegisterLightObject()
 	if (icon && icon->Init(cinema::GeGetPluginResourcePath() + cinema::Filename("icons"_s) + cinema::Filename("light_object.png"_s)) != cinema::IMAGERESULT::OK)
 		cinema::BaseBitmap::Free(icon);
 	// OBJECT_HASDEFORMMODE gives the object the green "enabled" check in the Object Manager, as
-	// Cinema 4D's own light has, without making it a generator (no cache is built; 0.2.0, B9). The
+	// Cinema 4D's own light has, without making it a generator (no cache is built). The
 	// check is the object's deform mode, which every object keeps and which is on for an object
 	// saved before the flag (measured; the exporter reads it: scene/light_export.h, IsLightSwitchedOn).
 	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_LIGHT_OBJECT, cinema::GeLoadString(IDS_LIGHT_OBJECT_NAME), OBJECT_HASDEFORMMODE, LightObject::Alloc,

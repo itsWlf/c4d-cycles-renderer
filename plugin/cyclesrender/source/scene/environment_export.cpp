@@ -11,6 +11,7 @@
 
 #include "environment_export.h"
 #include "parameters.h"
+#include "redshift_ids.h"
 
 namespace cyclesrender
 {
@@ -49,9 +50,10 @@ static maxon::Result<void> WritePlainWorld(SceneWriter& writer, const cinema::Ve
 }
 
 // A panorama image as the environment, turned with the object that carries it.
-// @param[in] tint    Multiplies the image (a strength and a colour).
-// @param[in] mirror  True for the other handedness: the image runs the other way round.
-static maxon::Result<void> WritePanoramaWorld(SceneWriter& writer, const maxon::String& image, const cinema::Matrix& skyMg, const cinema::Vector& tint, maxon::Bool mirror)
+// @param[in] tint       Multiplies the image (a strength and a colour).
+// @param[in] asBlender  False for a Sky object's panorama (mirrored in X against Blender's); true for a map that runs as
+//                       Blender's does (a Redshift dome without Flip Horizontal).
+static maxon::Result<void> WritePanoramaWorld(SceneWriter& writer, const maxon::String& image, const cinema::Matrix& skyMg, const cinema::Vector& tint, maxon::Bool asBlender)
 {
 	iferr_scope;
 
@@ -68,7 +70,7 @@ static maxon::Result<void> WritePanoramaWorld(SceneWriter& writer, const maxon::
 	const cinema::Vector rz = cinema::Vector(skyMg.sqmat.v2.x, skyMg.sqmat.v2.z, skyMg.sqmat.v2.y).GetNormalized();
 	// Columns of R^-1 are the rows of R; K negates the first row and the first column.
 	// (Without the mirror, for a Redshift dome map, K is the identity and Rotation = R^-1.)
-	const maxon::Float64 k = mirror ? 1.0 : -1.0;
+	const maxon::Float64 k = asBlender ? 1.0 : -1.0;
 	const cinema::Vector column0(rx.x, k * ry.x, k * rz.x);
 	const cinema::Vector column1(k * rx.y, ry.y, rz.y);
 	const cinema::Vector column2(k * rx.z, ry.z, rz.z);
@@ -81,7 +83,7 @@ static maxon::Result<void> WritePanoramaWorld(SceneWriter& writer, const maxon::
 	const maxon::Int background = graph.Add("ShaderNodeBackground") iferr_return;
 	const maxon::Int output = graph.Add("ShaderNodeOutputWorld") iferr_return;
 	graph.SetProperty(mapping, "vector_type", "POINT"_s);
-	graph.SetInput(mapping, "Scale", cinema::Vector(mirror ? 1.0 : -1.0, 1.0, 1.0));
+	graph.SetInput(mapping, "Scale", cinema::Vector(asBlender ? 1.0 : -1.0, 1.0, 1.0));
 	graph.SetInput(mapping, "Rotation", rotation);
 	graph.SetProperty(environment, "image", image);
 	graph.SetProperty(environment, "projection", "EQUIRECTANGULAR"_s);
@@ -162,9 +164,8 @@ maxon::Result<void> ExportDomeWorld(MaterialExporter& materials, const cinema::B
 	const maxon::Float64 strength = maxon::Pow(2.0, GetFloatParameter(dome, REDSHIFT_LIGHT_DOME_EXPOSURE0, 0.0));
 	const cinema::Vector color = GetVectorParameter(dome, REDSHIFT_LIGHT_DOME_COLOR, cinema::Vector(1.0));
 
-	// The texture is a parameter of Redshift's own file type (1036765), and the path one of its
-	// parts: both levels of the id must name their type, or nothing comes back. The path is a URL.
-	static const maxon::Int32 REDSHIFT_FILE_TYPE = 1036765;
+	// The texture is a parameter of Redshift's own file type (REDSHIFT_FILE_TYPE), and the path one of
+	// its parts: both levels of the id must name their type, or nothing comes back. The path is a URL.
 	maxon::String path;
 	cinema::GeData data;
 	if (dome->GetParameter(CreateDescID(cinema::DescLevel(REDSHIFT_LIGHT_DOME_TEX0, REDSHIFT_FILE_TYPE, 0), cinema::DescLevel(REDSHIFT_FILE_PATH, cinema::DTYPE_STRING, 0)),

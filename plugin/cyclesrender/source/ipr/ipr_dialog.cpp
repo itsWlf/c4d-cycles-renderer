@@ -38,7 +38,7 @@ static const cinema::Int32 COMMAND_EDIT_RENDER_SETTINGS = 12161;
 static const cinema::Int32 TIMER_MILLISECONDS = 15;
 
 // While frames keep coming the window shows at most one per this time, always the newest, and the
-// last one in any case (0.2.0, B11; FrameWatcher::Take holds a frame back and announces it again when
+// last one in any case (FrameWatcher::Take holds a frame back and announces it again when
 // its time has come). Every path that shows frames goes through ShowNewFrame(). The bridge publishes at
 // most as often (bridge/c4d_bridge/viewport/__init__.py, PUBLISH_SECONDS).
 static const maxon::Float64 FRAME_SECONDS = 1.0 / 30.0;
@@ -211,8 +211,9 @@ public:
 	virtual cinema::Bool CoreMessage(cinema::Int32 id, const cinema::BaseContainer& msg) override;
 	virtual void Timer(const cinema::BaseContainer& msg) override;
 	virtual cinema::Bool AskClose() override;
+	virtual void DestroyWindow() override;
 
-	// Navigating from the picture (0.2.0, F17; ipr_navigation.h).
+	// Navigating from the picture (ipr_navigation.h).
 	virtual maxon::Bool BeginNavigation(IPRNAV mode, maxon::Float64 imageX, maxon::Float64 imageY, maxon::Float64 zoom, maxon::Int32 qualifier) override;
 	virtual void Navigate(maxon::Float64 dx, maxon::Float64 dy) override;
 	virtual void NavigationIdle() override;
@@ -237,8 +238,8 @@ public:
 		Command(ID_COMBO_CAMERA, cinema::BaseContainer());
 	}
 	void ShowNewFrame();
-	/// The document was evaluated (FollowIprEvaluation).
-	void FollowEvaluation();
+	/// The document was evaluated, or a frame arrived (FollowIprEvaluation).
+	void FollowEvaluation(maxon::Bool evaluated);
 
 private:
 	cinema::BitmapButtonCustomGui* AddIconButton(cinema::Int32 id, ICON icon, const maxon::String& tooltip, maxon::Bool toggle = false);
@@ -284,6 +285,7 @@ static IprDialog* g_dialog = nullptr;
 // live updates are on (set by the timer, which stops only in a modal loop; so a switch of the
 // preference counts from the next tick), and when the timer last ran (GeGetMilliSeconds, whole ms).
 static maxon::AtomicBool g_following;
+static maxon::AtomicBool g_optimized;	// the Preferences' "Optimized Live Updates" at the last timer tick
 static maxon::AtomicInt64 g_lastTimerMs;
 
 // The window's timer has not run for this long: Cinema 4D is in a modal loop (CoreMessage()).
@@ -384,7 +386,7 @@ cinema::Bool IprDialog::CreateLayout()
 		AddStaticText(ID_TEXT_TIME, cinema::BFH_LEFT, 170, 0, "Time:  00:00:00"_s, 0);
 		AddStaticText(ID_TEXT_RAM, cinema::BFH_LEFT, 190, 0, "RAM:  0.0 GB"_s, 0);
 		AddStaticText(ID_TEXT_VRAM, cinema::BFH_LEFT, 190, 0, "VRAM:  0.0 GB"_s, 0);
-		// What renders, as Blender reports it (0.2.0, B11): takes the room up to the samples bar.
+		// What renders, as Blender reports it: takes the room up to the samples bar.
 		AddStaticText(ID_TEXT_DEVICE, cinema::BFH_SCALEFIT, 0, 0, maxon::String(), 0);
 		AddUserArea(ID_AREA_PROGRESS, cinema::BFH_RIGHT, 290, 0);
 		AttachUserArea(_progress, ID_AREA_PROGRESS);
@@ -511,7 +513,7 @@ void IprDialog::RefreshControls(maxon::Bool force)
 	{
 		case IPRSTATE::STARTING: _image.SetMessage("Starting Blender..."_s); break;
 		case IPRSTATE::FAILED:
-			// No usable Blender (0.2.0, B7): the click opens the page where one is chosen.
+			// No usable Blender: the click opens the page where one is chosen.
 			_image.SetMessage(ipr.GetMessage() + (ipr.IsBlenderMissing() ? "\nClick here to open the Preferences, or press Start to try again."_s
 				: "  Click here or press Start to start again."_s));
 			break;
@@ -589,7 +591,7 @@ void IprDialog::ShowNewFrame()
 	if (ipr.GetState() == IPRSTATE::STOPPED)
 		return;
 	// A frame equal to the one on screen (Blender drew again without anything new) is not converted and
-	// drawn again (0.2.0, B11).
+	// drawn again.
 	const Frame& onScreen = _image.GetFrame();
 	if (_incoming.contentHash != 0 && _incoming.contentHash == onScreen.contentHash && _incoming.width == onScreen.width &&
 		_incoming.height == onScreen.height)
@@ -618,6 +620,7 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 	_image.SetFill(ipr.IsFitWindow());
 	ipr.Tick();
 	g_following.Set(ipr.GetState() == IPRSTATE::RUNNING && GetIprLiveUpdates());
+	g_optimized.Set(GetIprOptimizedUpdates());
 	ShowNewFrame();	// normally the frame thread's message got here first
 
 	RefreshControls(false);
@@ -631,20 +634,24 @@ void IprDialog::Timer(const cinema::BaseContainer& msg)
 		RefreshCameras(false);
 }
 
-void IprDialog::FollowEvaluation()
+void IprDialog::FollowEvaluation(maxon::Bool evaluated)
 {
 	// Only in a modal loop, as in CoreMessage(): otherwise the change event and the timer do it. And
-	// only with live updates (0.2.0, F22): a call handed over before the preference went off is dropped.
+	// only with live updates: a call handed over before the preference went off is dropped.
 	if (cinema::GeGetMilliSeconds() - _lastTimer <= STARVED_MILLISECONDS || !GetIprLiveUpdates())
 		return;
 	const maxon::TimeValue started = maxon::TimeValue::GetTime();
 	finally { TraceIpr("follow_ms", MillisecondsSince(started)); };
 	TraceIpr("evaluated");
+	// For measurements: whether Cinema 4D says a view is being drawn (another thread at work on the document).
+	if (IsIprTracing())
+		TraceIpr("view_drawing", (evaluated ? 2.0 : 0.0) + (cinema::CheckIsRunning(cinema::CHECKISRUNNING::VIEWDRAWING) ? 1.0 : 0.0));
 	// With "Optimized Live Updates" whatever can be sent alone follows (the camera's values, the lights,
-	// the place of an object typed or dragged in the Coordinates tab); without it the lights, as since
-	// F18. Never the whole scene: this is inside an evaluation of the document.
+	// the place of an object typed or dragged in the Coordinates tab, and at the end of an evaluation the
+	// meshes of generators and deformed objects that changed); without it the lights alone. Never
+	// the whole scene: this is inside an evaluation of the document.
 	if (GetIprOptimizedUpdates())
-		IprController::Get().FollowStep(false);
+		IprController::Get().FollowStep(false, evaluated);
 	else
 		IprController::Get().FollowLights();
 	ShowNewFrame();
@@ -749,16 +756,16 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 	// not run (measured: not once during an emulated drag, so the IPR followed a drag only at its
 	// end), but a tool tells the managers about every step at once (EVMSG_ASYNCEDITORMOVE, sent with
 	// GeSyncMessage). Then the IPR does here what the timer would: it sends what changed while
-	// Blender is idle and shows the newest frame. Any other message in such a loop moves the camera.
-	// With the Preferences' live updates off (0.2.0, F22) none of this: the loop's change is sent when
-	// it has ended, by the change event and the timer, as before 0.2.0.
+	// Blender is idle and shows the newest frame. Any other message in such a loop sends what can be
+	// sent without a whole export (below). With the Preferences' live updates off none of this: the
+	// loop's change is sent when it has ended, by the change event and the timer.
 	//
-	// With "Optimized Live Updates" (0.2.0, B11) a step sends only what moves (IprController::FollowStep),
+	// With "Optimized Live Updates" a step sends only what moves (IprController::FollowStep),
 	// and a tool's message is taken as it says: its first parameter tells the first, a further and the
 	// last step of a drag, so every step is followed at once whether or not the timer runs (a step that
 	// was followed here costs the timer nothing more: no counter of the document has moved since), and
 	// the last one brings the whole export. Without the switch the whole scene is exported at every step
-	// of a loop, as since F15.
+	// of a tool's drag while the timer starves, and any other message sends the camera and the lights.
 	const maxon::Bool starved = cinema::GeGetMilliSeconds() - _lastTimer > STARVED_MILLISECONDS;
 	const maxon::Bool live = GetIprLiveUpdates();
 	const maxon::Bool optimized = live && GetIprOptimizedUpdates();
@@ -797,7 +804,8 @@ cinema::Bool IprDialog::CoreMessage(cinema::Int32 id, const cinema::BaseContaine
 	{
 		if (optimized)
 		{
-			ipr.FollowStep(false);
+			// (Whatever the message is, another thread may be evaluating the document: no cache is read.)
+			ipr.FollowStep(false, false);
 		}
 		else
 		{
@@ -954,7 +962,7 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 			{
 				// Choosing the engine of the Render Settings means "follow the Render Settings" again. A
 				// document without Cycles Render's settings has those of the Preferences' Default Engine
-				// (0.2.0, F21; GetDocumentRenderSettings).
+				// (GetDocumentRenderSettings).
 				cinema::BaseDocument* const doc = cinema::GetActiveDocument();
 				const cinema::Int32 fromSettings = GetDocumentRenderSettings(doc).GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
 				ipr.SetEngineOverride(engine == fromSettings ? NOTOK : engine);
@@ -1028,6 +1036,14 @@ cinema::Bool IprDialog::AskClose()
 	return false;
 }
 
+void IprDialog::DestroyWindow()
+{
+	// The window goes, whether or not AskClose() was asked first: its timer stops, and a timer that
+	// stands still must not read as a modal loop to the scene hook and the frame thread
+	// (IsIprInModalLoop). If the window is made again, its timer says so at its first tick.
+	g_following.Set(false);
+}
+
 // --- the command ----------------------------------------------------------------------------
 
 class IprCommand : public cinema::CommandData
@@ -1073,10 +1089,15 @@ maxon::Bool IsIprInModalLoop()
 	return g_following.LoadRelaxed() && cinema::GeGetMilliSeconds() - maxon::Float64(g_lastTimerMs.LoadRelaxed()) > STARVED_MILLISECONDS;
 }
 
-void FollowIprEvaluation()
+maxon::Bool IsIprOptimizedInLoop()
+{
+	return g_optimized.LoadRelaxed();
+}
+
+void FollowIprEvaluation(maxon::Bool evaluated)
 {
 	if (g_dialog && g_dialog->IsOpen())
-		g_dialog->FollowEvaluation();
+		g_dialog->FollowEvaluation(evaluated);
 }
 
 maxon::Int GetIprDialogCameraCount()

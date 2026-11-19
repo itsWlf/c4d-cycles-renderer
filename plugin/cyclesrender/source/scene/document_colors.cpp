@@ -49,6 +49,58 @@ DocumentColors::DocumentColors(const cinema::BaseDocument* doc)
 	_linearWorkflow = linearWorkflow.GetType() != cinema::DA_LONG || linearWorkflow.GetInt32() != 0;
 	const cinema::GeData profile = GetDocumentParameter(doc, cinema::DOCUMENT_COLORPROFILE);
 	_inputProfile = profile.GetType() == cinema::DA_LONG ? profile.GetInt32() : maxon::Int32(cinema::DOCUMENT_COLORPROFILE_SRGB);
+
+	// The render space by its name, as BlenderWorkingSpace (render_settings_map.cpp) tells Blender.
+	_space = RENDERSPACE::REC709;
+	if (_ocio)
+	{
+		maxon::CString render;
+		maxon::CString display;
+		maxon::CString view;
+		maxon::CString thumbnails;
+		doc->GetActiveOcioColorSpacesNames(render, display, view, thumbnails);
+		const maxon::String name(render);
+		maxon::Int position = 0;
+		if (name.Find("ACEScg"_s, &position))
+			_space = RENDERSPACE::ACESCG;
+		else if (name.Find("Rec.2020"_s, &position))
+			_space = RENDERSPACE::REC2020;
+	}
+}
+
+DocumentColors DocumentColors::Stored(const cinema::BaseDocument* doc)
+{
+	DocumentColors colors(doc);
+	colors._ocio = true;
+	colors._linearWorkflow = true;
+	return colors;
+}
+
+cinema::Vector DocumentColors::FromXyz(const cinema::Vector& xyz) const
+{
+	// CIE XYZ to linear Rec.709 (D65), IEC 61966-2-1.
+	const cinema::Vector rec709(
+		3.2409699419 * xyz.x - 1.5373831776 * xyz.y - 0.4986107603 * xyz.z,
+		-0.9692436363 * xyz.x + 1.8759675015 * xyz.y + 0.0415550574 * xyz.z,
+		0.0556300797 * xyz.x - 0.2039769589 * xyz.y + 1.0569715142 * xyz.z);
+	switch (_space)
+	{
+		case RENDERSPACE::ACESCG:
+			// "Linear Rec.709 (sRGB)" to ACEScg in OCIO's ACES configurations (Bradford, D65 to ACES' white).
+			return cinema::Vector(
+				0.6130974024 * rec709.x + 0.3395231462 * rec709.y + 0.0473794514 * rec709.z,
+				0.0701937225 * rec709.x + 0.9163538791 * rec709.y + 0.0134523985 * rec709.z,
+				0.0206155929 * rec709.x + 0.1095697729 * rec709.y + 0.8698146342 * rec709.z);
+		case RENDERSPACE::REC2020:
+			// ITU-R BT.2087, linear Rec.709 to linear Rec.2020 (the same white).
+			return cinema::Vector(
+				0.6274038959 * rec709.x + 0.3292830384 * rec709.y + 0.0433130657 * rec709.z,
+				0.0690972894 * rec709.x + 0.9195403951 * rec709.y + 0.0113623156 * rec709.z,
+				0.0163914389 * rec709.x + 0.0880133079 * rec709.y + 0.8955952532 * rec709.z);
+		case RENDERSPACE::REC709:
+			break;
+	}
+	return rec709;
 }
 
 cinema::Vector DocumentColors::Input(const cinema::Vector& color) const

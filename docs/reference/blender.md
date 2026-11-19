@@ -88,7 +88,7 @@ blender -b --factory-startup --offline-mode -Y --python-exit-code 1 --log-file <
 
 ## The viewport driver
 
-`bridge/c4d_bridge/viewport/` is the live render of the IPR: `__init__.py` (the `Viewport` class: set-up, the `view_` operations, the draw callbacks), `frame_block.py` (shared-memory writer, no `bpy`), `window.py` (hide, resize, process priority through Win32). Tested by `tests\bridge\test_viewport.py`. What building it taught, all [T] on 5.2.3:
+`bridge/c4d_bridge/viewport/` is the live render of the IPR: `__init__.py` (the `Viewport` class: set-up, the `view_` operations, the draw callbacks), `frame_block.py` (shared-memory writer, no `bpy`), `window.py` (find, hide, show and resize Blender's window through Win32; the process's priority is the plugin's to set). Tested by `tests\bridge\test_viewport.py`. What building it taught, all [T] on 5.2.3:
 
 - **A property set from Python does not restart the viewport render.** After a `settings` request the bridge calls `scene.update_tag()`; without it a changed `cycles.preview_samples` is ignored until something else changes.
 - **Cycles' "Rendering Done" is not trustworthy right after a change.** The text belongs to the render thread, which picks a change up a moment later (a resize is also held back 0.2 s), so for a while the viewport still says "done" about the previous render, with a black picture after a resize. The driver therefore reports "done" only when 0.6 s have passed since the last change (`_SETTLE_SECONDS`), and asks for one more redraw at that time in case the change restarted nothing.

@@ -13,8 +13,7 @@
 namespace cyclesrender
 {
 
-// Keys inside the plugin's container in Cinema 4D's preferences (settings.cpp has the others,
-// 1000 and 1001). Never renumber.
+// Keys inside the plugin's container in Cinema 4D's preferences (settings.cpp lists the others and which numbers are free). Never renumber.
 enum
 {
 	SETTING_DEVICE_TYPE = 1010,

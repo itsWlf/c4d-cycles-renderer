@@ -69,6 +69,7 @@ public:
 	/// Opens an item of the given kind and id and returns the writer for its other fields.
 	/// The reference is valid until EndItem().
 	JsonWriter& BeginItem(const maxon::Char* kind, const maxon::String& id);
+	/// Closes the item BeginItem() opened.
 	void EndItem();
 	/// For the open item: whenever delta sync sends the item @p id (written earlier), this one
 	/// is sent too, changed or not. For data that the bridge loses when it rebuilds the other.

@@ -14,6 +14,7 @@ _GPU_BACKENDS = ('OPTIX', 'CUDA', 'HIP', 'ONEAPI', 'METAL')
 
 
 def _preferences():
+    """The Cycles add-on's preferences, where the devices are."""
     return bpy.context.preferences.addons["cycles"].preferences
 
 

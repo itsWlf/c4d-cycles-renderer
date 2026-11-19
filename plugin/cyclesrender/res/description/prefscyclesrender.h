@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef PREFSCYCLESRENDER_H__
 #define PREFSCYCLESRENDER_H__
 
@@ -10,7 +11,7 @@ enum
 	PREF_CYCLES_BLENDER_STATUS = 1001,
 	PREF_CYCLES_DETECT = 1002,
 
-	// Settings made new (0.2.0, F21): prefs/settings.h, GetDefaultEngine.
+	// Settings that new render settings start with: prefs/settings.h, GetDefaultEngine.
 	PREF_CYCLES_NEW_GROUP = 996,
 	PREF_CYCLES_DEFAULT_ENGINE = 1009,
 		PREF_CYCLES_DEFAULT_ENGINE_CYCLES = 0,   // the same numbers as CYCLES_ENGINE_CYCLES and _EEVEE (vpcyclesrender.h)
@@ -38,9 +39,9 @@ enum
 	PREF_CYCLES_IPR_GROUP = 997,
 	PREF_CYCLES_IPR_SKIP_UNCHANGED = 1007,
 	PREF_CYCLES_IPR_NAVIGATE = 1008,
-	PREF_CYCLES_IPR_LIVE_UPDATES = 1010,	// 0.2.0, F22 (1009 is F21's Default Engine)
-	PREF_CYCLES_IPR_THREADS_FREE = 1011,	// 0.2.0, B11
-	PREF_CYCLES_IPR_OPTIMIZED_UPDATES = 1012	// 0.2.0, B11 (1013 to 1099 have never been used)
+	PREF_CYCLES_IPR_LIVE_UPDATES = 1010,	// GetIprLiveUpdates (1009 is the Default Engine)
+	PREF_CYCLES_IPR_THREADS_FREE = 1011,	// GetIprThreadsFree
+	PREF_CYCLES_IPR_OPTIMIZED_UPDATES = 1012	// GetIprOptimizedUpdates (1013 to 1099 have never been used)
 };
 
 #endif // PREFSCYCLESRENDER_H__

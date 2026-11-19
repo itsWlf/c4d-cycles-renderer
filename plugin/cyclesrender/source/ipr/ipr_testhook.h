@@ -51,34 +51,34 @@ namespace cyclesrender
 /// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render
 /// Devices (prefs/devices.h; "find" starts a Blender as the page's button does) and answers with
 /// them (DescribeDeviceSettings).
-/// Measuring and checking the sync (0.2.0, F15 and F16): trace on|off switches the IPR's timeline
+/// Measuring and checking the sync: trace on|off switches the IPR's timeline
 /// (ipr_trace.h) and trace hands it over {"trace": [[time, name, value], ...], "now"}; verify exports
 /// the active document whole and compares it with what Blender holds (IprController::VerifySync:
 /// {"items", "differences"}); sources lists what each mesh leaf is made from
 /// (SceneExporter::GetSourceListing). The status also has meshes_exported, meshes_kept, export_ms
 /// and mesh_ms of the last export.
-/// Blender versions (0.2.0, F8): versioned <code> exports the active document as for a Blender of
+/// Blender versions: versioned <code> exports the active document as for a Blender of
 /// that version (BlenderVersionCode(), 502 for 5.2), whatever Blender is installed, and answers
 /// {"materials": the material items as they would be sent, "warnings"}: what that version lacks
 /// is left out (materials/cycles_node_material.cpp).
-/// Light values in a modal loop (0.2.0, F18): lights runs IprController::FollowLights(), what the
+/// Light values in a modal loop: lights runs IprController::FollowLights(), what the
 /// scene hook has the window do while Cinema 4D is in a modal loop (only the lights, without a walk
 /// of the document); the status's changes then counts the light items sent or removed, lights_ms
 /// says how long writing and comparing them took, and lights_followed how many lights it writes.
-/// Navigating from the picture (0.2.0, F17): navigate orbit|pan|dolly <x> <y> <dx> <dy> [steps] [ctrl]
+/// Navigating from the picture: navigate orbit|pan|dolly <x> <y> <dx> <dy> [steps] [ctrl]
 /// [cancel] runs a navigating drag as the window's picture does (ipr_navigation.h: the same checks,
 /// Begin, a Step per step and End or, with "cancel", Cancel as on Escape), without the window: it
 /// begins at the image point (x, y) of the size the IPR renders at, with the picture at 100 %, and
 /// the mouse goes (dx, dy) screen pixels, right and down positive; the camera is sent after each
 /// step. It answers {"refused" (empty when it navigated, else the status bar's text), "camera",
 /// "editor_camera", "picked", "pivot", "pick_ms", "prefs" (the navigation preferences it followed)}.
-/// The Preferences (0.2.0, B7 and F21): blender [<path>|none|detect] stores the Blender as the page's
+/// The Preferences: blender [<path>|none|detect] stores the Blender as the page's
 /// field does (none: empty; detect: the Detect button) and answers {"path", "in_use" (the path
 /// detection gives while none is stored), "status" (the page's line), "problem" (GetBlenderProblem:
 /// why none can be started; empty when one can), "detected"}; defaultengine [<0|1>] sets the
 /// page's Default Engine and answers {"default_engine"}. The status has blender_missing
 /// (IprController::IsBlenderMissing) and window_message (the text on the window's picture).
-/// What renders, and what is left to Cinema 4D (0.2.0, B11): the status has device, device_engine,
+/// What renders, and what is left to Cinema 4D: the status has device, device_engine,
 /// device_type, device_names, device_threads, display_gpu (Blender's reply to the last `settings`
 /// request, IprWorker::GetDeviceInfo), device_text (the status line's words for it) and
 /// window_device_text (what the window's line shows), threads_free (the preference) and
@@ -87,7 +87,7 @@ namespace cyclesrender
 /// the frame block's state block, for a test that reads the newest published frame itself) and shown_frame (the id of
 /// the frame the window shows; 0 without a window); threadsfree [<n>] sets
 /// the page's "CPU Threads Left Free" and answers {"threads_free"}.
-/// A change in progress (0.2.0, B11): redrawn tells the controller of a redraw (IprController::NoteRedraw,
+/// A change in progress: redrawn tells the controller of a redraw (IprController::NoteRedraw,
 /// what EVMSG_DOCUMENTRECALCULATED does: the next tick exports only if the document's change counters
 /// moved), step runs IprController::FollowStep(true) (a tool's step: what moved is sent alone, or the
 /// scene whole), evaluated runs FollowStep(false) (a step inside an evaluation, as the scene hook's:
@@ -97,6 +97,14 @@ namespace cyclesrender
 /// alone_objects (of the last step: its time, the `object` items it wrote), objects_followed and
 /// nodes_followed (what a step can write and what it compares), and meshes_by_data_hash (meshes of the
 /// last export judged by Cinema 4D's data hashes, scene/mesh_export.h).
+/// Meshes in a change in progress: unevaluated runs FollowStep(false, false) (a step as a
+/// frame's call makes it in a modal loop: no cache of the document is read, so nothing is collected
+/// again), quiet <seconds> sets the time until a step may collect objects again (the guard after a step
+/// that took long; 0: at once). The status has alone_owners, alone_meshes and alone_kept (of the last
+/// step: the objects of the document collected again, the meshes exported for them and the meshes kept)
+/// postponed (steps left out since the IPR started, by that guard or for want of readable caches),
+/// whole_reason (why the last step could not go alone: IprController::WHOLE, 0 when it could) and
+/// mesh_quiet_ms (for how long from now the guard leaves out steps that collect).
 /// With the window open the status also has image_rect (where the picture is on the screen: left,
 /// top, width, height) and image_center (the image point in its middle), for tests that post mouse
 /// messages to it.

@@ -67,20 +67,30 @@ maxon::Result<maxon::Bool> ExportHair(SceneWriter& writer, const Coords& coords,
 	cinema::Vector tipColor(0.4, 0.26, 0.13);
 	if (material)
 	{
+		writer.Warn(FormatString("Hair \"@\": of its hair material \"@\" only the thickness and the colours at root and tip are translated; "
+			"its other settings (specular, frizz, kink, clumping and the rest) are not.", op->GetName(), material->GetName()));
 		const cinema::GeData gradientData = GetParameterData(material, HAIRMATERIAL_COLOR_GRADIENT);
 		const cinema::Gradient* const gradient = static_cast<const cinema::Gradient*>(gradientData.GetCustomDataTypeI(CUSTOMDATATYPE_GRADIENT));
 		const maxon::Int32 knots = gradient ? gradient->GetKnotCount() : 0;
 		const DocumentColors colors(doc);
+		maxon::Float64 rootPos = 0.0;
+		maxon::Float64 tipPos = 0.0;
 		for (maxon::Int32 i = 0; i < knots; ++i)
 		{
 			const maxon::GradientKnot knot = gradient->GetKnot(i);
 			// A knot is a colour parameter (DocumentColors::Input; measured for the Gradient shader's).
 			const cinema::Vector color = colors.Input(cinema::Vector(knot.col.r, knot.col.g, knot.col.b) * knot.brightness);
-			// The knots are not sorted: take the ones nearest to the two ends.
-			if (i == 0 || knot.pos <= gradient->GetKnot(0).pos)
+			// The knots are not sorted: take the ones nearest to the two ends found so far.
+			if (i == 0 || knot.pos <= rootPos)
+			{
+				rootPos = knot.pos;
 				rootColor = color;
-			if (i == 0 || knot.pos >= gradient->GetKnot(0).pos)
+			}
+			if (i == 0 || knot.pos >= tipPos)
+			{
+				tipPos = knot.pos;
 				tipColor = color;
+			}
 		}
 	}
 

@@ -13,6 +13,14 @@ namespace cyclesrender
 {
 
 //----------------------------------------------------------------------------------------
+/// @p value as a JSON string: in quotes, with quotes and backslashes escaped, line breaks and
+/// tabs written as \n, \r and \t, and any other control character replaced by a space. For JSON
+/// text put together outside a JsonWriter (JsonWriter::String uses it too), such as the values
+/// NodeGraph::SetInputJson and SetPropertyJson take.
+//----------------------------------------------------------------------------------------
+maxon::String JsonQuoted(const maxon::String& value);
+
+//----------------------------------------------------------------------------------------
 /// Appends JSON text in document order. The caller is responsible for balanced Begin/End
 /// calls; commas and string escaping are handled here.
 ///

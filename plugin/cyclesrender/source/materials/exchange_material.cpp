@@ -138,6 +138,23 @@ maxon::Result<maxon::Bool> BuildExchangeSurface(MaterialExporter& exporter, Node
 	const Entry<maxon::Color> emissionColor = reader.Read(surface::EMISSION_COLOR, maxon::Color(1.0), true) iferr_return;
 	const Entry<maxon::Color> opacity = reader.Read(surface::OPACITY, maxon::Color(1.0), false) iferr_return;
 
+	// The inputs below take a value only: a texture Cinema 4D hands over for one of them is left out.
+	struct ValueOnly
+	{
+		const NodeOutput& texture;
+		const maxon::Char* name;
+	};
+	const ValueOnly valuesOnly[] = { { base.texture, "base weight" }, { specular.texture, "specular" }, { ior.texture, "IOR" },
+		{ coatIor.texture, "coat IOR" }, { emission.texture, "emission strength" } };
+	maxon::String untextured;
+	for (const ValueOnly& input : valuesOnly)
+	{
+		if (input.texture.IsValid())
+			untextured += (untextured.IsEmpty() ? ""_s : ", "_s) + maxon::String(input.name);
+	}
+	if (untextured.IsPopulated())
+		exporter.Warn(FormatString("Material \"@\": the texture on @ is not translated; the plain value is used.", material->GetName(), untextured));
+
 	const maxon::Int bsdf = graph.Add("ShaderNodeBsdfPrincipled") iferr_return;
 	auto number = [&graph, bsdf](const maxon::Char* socket, const Entry<maxon::Float>& entry, maxon::Float64 scale) -> maxon::Result<void>
 	{

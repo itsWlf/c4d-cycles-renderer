@@ -98,9 +98,9 @@ SKIP_SOCKETS = {"LightIndex"}
 PATH_COMMANDS = [("com.wolfnimations.cyclesrender.command.path.relative", "Make Relative"),
                  ("com.wolfnimations.cyclesrender.command.path.absolute", "Make Absolute")]
 # Properties that are no simple value. An image is replaced by a file and a colour space (below).
-# ("mode" was left out up to 0.2.0, which hid the Mode of Combine Color and Separate Color, RGB,
-# HSV or HSL; Light Evaluation of 5.3 has one too. The only other nodes with a "mode", Script and
-# IES Texture, are left out as a whole.)
+# "mode" is a simple value: the Mode of Combine Color and Separate Color (RGB, HSV, HSL) and of
+# Light Evaluation (5.3). Script and IES Texture, the only other nodes with a "mode", are left out
+# as a whole.
 SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash"}
 
 # The settings Blender keeps on a material next to its node tree. Cinema 4D lets only its own

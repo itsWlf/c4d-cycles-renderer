@@ -33,6 +33,7 @@ public:
 	/// has published its port. Fails with a message for the user when it does not come up.
 	maxon::Result<void> Start(BRIDGEMODE mode);
 
+	/// True while the started Blender runs.
 	maxon::Bool IsRunning() const;
 
 	/// The port the bridge listens on and the secret it expects. Valid after Start().

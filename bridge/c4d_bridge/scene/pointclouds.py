@@ -22,6 +22,7 @@ _RADIUS_ATTRIBUTE = "radius"
 
 
 def build_pointcloud(scene, item, blobs):
+    """A `pointcloud` item: points with a radius and a colour each, made anew every time."""
     points = array_from(blobs, item["points"], np.float32)
     count = len(points) // 3
     if "radii" in item:

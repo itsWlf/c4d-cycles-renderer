@@ -25,6 +25,7 @@ EXIT_REFUSED = 4
 
 
 def parse_arguments():
+    """The bridge's own arguments: those after "--" on Blender's command line."""
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parser = argparse.ArgumentParser(prog="c4d_bridge")
     parser.add_argument("--handshake", required=True, help="file the bridge writes its port to")
@@ -34,6 +35,7 @@ def parse_arguments():
 
 
 def main():
+    """Refuse an unsupported Blender (in the handshake file), else listen and serve."""
     arguments = parse_arguments()
 
     if tuple(bpy.app.version[:2]) not in SUPPORTED_BLENDER:

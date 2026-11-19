@@ -51,6 +51,19 @@ struct MaterialLayer
 };
 
 //----------------------------------------------------------------------------------------
+/// The material ids one export handed out, by what each material item was made from (the materials of
+/// a stack and their mappings): for writing some objects again later without writing a material
+/// (MaterialExporter::SetKnownIds; the IPR's update of single objects). The ids count up in
+/// the order materials are first asked for, so only the export that made them can name them.
+//----------------------------------------------------------------------------------------
+struct MaterialIdTable
+{
+	maxon::HashMap<maxon::String, maxon::String> ids;      ///< what a material item was made from -> its id
+	maxon::HashMap<maxon::String, maxon::Bool> keyed;      ///< ids of materials that read the object keys
+	maxon::Bool hasDefault = false;                        ///< the default material was written
+};
+
+//----------------------------------------------------------------------------------------
 /// Hands out the Blender material id for a Cinema 4D material, writing the `material` item
 /// (and the `image` items it needs) the first time a material is asked for. Ask for the id
 /// before opening the item that refers to it: items are built by the bridge in the order
@@ -144,6 +157,7 @@ public:
 	/// Number of shaders baked by this process so far; for tests.
 	static maxon::Int GetBakeCount();
 
+	/// A warning for the console, through the writer.
 	void Warn(const maxon::String& message);
 	SceneWriter& GetWriter() { return _writer; }
 
@@ -151,7 +165,20 @@ public:
 	/// material it belongs to is written; ReadsObjectKeys then answers true for that material's id,
 	/// and the objects wearing it are sent with their keys.
 	void UseObjectKeys() { ++_objectKeyUses; }
-	maxon::Bool ReadsObjectKeys(const maxon::String& materialId) const { return _keyedMaterials.Find(materialId) != nullptr; }
+	maxon::Bool ReadsObjectKeys(const maxon::String& materialId) const { return (_known ? _known->keyed : _keyedMaterials).Find(materialId) != nullptr; }
+
+	//----------------------------------------------------------------------------------------
+	/// After the materials were asked for: hands over which id each got (MaterialIdTable).
+	//----------------------------------------------------------------------------------------
+	maxon::Result<void> TakeIds(MaterialIdTable& table);
+	//----------------------------------------------------------------------------------------
+	/// From now on nothing is written: GetMaterialId() answers from @p known, the ids of an earlier
+	/// export of the same document, and for a material that export did not write it answers an empty id
+	/// and HasUnknown() turns true (the caller then gives up what it was writing). @p known must
+	/// outlive this.
+	//----------------------------------------------------------------------------------------
+	void SetKnownIds(const MaterialIdTable* known) { _known = known; }
+	maxon::Bool HasUnknown() const { return _unknown; }
 
 	/// The Blender that will render what is written, as BlenderVersionCode() (503 for 5.3) and as
 	/// Blender writes it ("5.2.3 LTS"). A node, socket, setting or option of the Cycles node space
@@ -180,6 +207,8 @@ private:
 	maxon::String _defaultId;
 	maxon::Int _objectKeyUses = 0;
 	maxon::HashMap<maxon::String, maxon::Bool> _keyedMaterials;   ///< ids of materials that read the object keys
+	const MaterialIdTable* _known = nullptr;   ///< SetKnownIds()
+	maxon::Bool _unknown = false;
 };
 
 } // namespace cyclesrender

@@ -10,6 +10,16 @@
 namespace cyclesrender
 {
 
+/// The colour space Blender calculates in for a document (its working space): the document's OCIO
+/// render space, linear Rec.709 for "Basic" colour management and for an OCIO render space Blender
+/// has no working space for (render_settings_map.cpp, BlenderWorkingSpace, leaves Blender's own then).
+enum class RENDERSPACE
+{
+	REC709,
+	ACESCG,
+	REC2020
+} MAXON_ENUM_LIST(RENDERSPACE);
+
 //----------------------------------------------------------------------------------------
 /// The colour settings of a document, read once, and what they mean for the export, so that
 /// Blender calculates with the numbers Cinema 4D's own renderers calculate with. Every rule
@@ -30,12 +40,24 @@ namespace cyclesrender
 class DocumentColors
 {
 public:
-	/// OCIO, as a document that says nothing else.
+	/// OCIO in ACEScg, as a document that says nothing else.
 	DocumentColors() = default;
 	/// The settings of @p doc; OCIO for nullptr (a material preview has no document).
 	explicit DocumentColors(const cinema::BaseDocument* doc);
 
+	/// The render space of @p doc, with Input() converting nothing: for values that are to be
+	/// stored back into Cinema 4D as it stores colours (the Cycles Light tag's "Take Values").
+	static DocumentColors Stored(const cinema::BaseDocument* doc);
+
+	/// True for OCIO colour management, false for "Basic".
 	maxon::Bool IsOcio() const { return _ocio; }
+
+	//----------------------------------------------------------------------------------------
+	/// A colour given in CIE XYZ (D65 white) in the space Blender calculates in: through the
+	/// Rec.709 primaries (IEC 61966-2-1), and for ACEScg on with the matrix OCIO's configurations
+	/// use (Bradford adaptation from D65 to ACES' white), for Rec.2020 with ITU-R BT.2087's.
+	//----------------------------------------------------------------------------------------
+	cinema::Vector FromXyz(const cinema::Vector& xyz) const;
 	/// True when Cinema 4D calculates with linear values: always with OCIO, with "Basic" when
 	/// Linear Workflow is on.
 	maxon::Bool IsLinear() const { return _ocio || _linearWorkflow; }
@@ -54,7 +76,7 @@ public:
 	//----------------------------------------------------------------------------------------
 	/// Blender's colour space for an image file of colours: the one that gives Blender the
 	/// values Cinema 4D calculates with. With OCIO "sRGB", or "Linear Rec.709" for a file of
-	/// linear values, as before. With "Basic" the file's values are brought from their own
+	/// linear values. With "Basic" the file's values are brought from their own
 	/// space into the space of the calculation: their own space is the bitmap shader's "Color
 	/// Profile" when that is sRGB or Linear, and otherwise linear for .exr and .hdr and sRGB
 	/// for every other file (an embedded profile changed nothing, measured); with the input
@@ -82,6 +104,7 @@ public:
 
 private:
 	maxon::Bool _ocio = true;
+	RENDERSPACE _space = RENDERSPACE::ACESCG;
 	maxon::Bool _linearWorkflow = true;
 	maxon::Int32 _inputProfile = 0;   ///< DOCUMENT_COLORPROFILE_...
 };

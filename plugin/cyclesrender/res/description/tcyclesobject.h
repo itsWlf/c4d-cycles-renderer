@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef TCYCLESOBJECT_H__
 #define TCYCLESOBJECT_H__
 

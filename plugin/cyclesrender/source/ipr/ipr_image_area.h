@@ -22,7 +22,7 @@ enum
 };
 
 //----------------------------------------------------------------------------------------
-/// What a navigating drag in the picture asks of its window (0.2.0, F17; ipr_navigation.h). The
+/// What a navigating drag in the picture asks of its window (ipr_navigation.h). The
 /// drag is a modal loop of the picture's own (MouseDrag), in which the window's timer does not run,
 /// so the window moves the camera, sends it and shows the frames that come back from inside it.
 //----------------------------------------------------------------------------------------

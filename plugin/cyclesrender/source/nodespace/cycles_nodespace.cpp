@@ -52,7 +52,7 @@ class CyclesNodeSystemClass : public maxon::Component<CyclesNodeSystemClass, max
 public:
 	MAXON_METHOD maxon::Result<maxon::Bool> SupportsImpl(const maxon::nodes::NodeTemplate& templ) const
 	{
-		// Only the nodes below; none of Cinema 4D's own, which Blender would not know.
+		// The space's own nodes admit it (CyclesNodeTemplate::SupportsImpl); what else may join is the base class's rule.
 		return super.SupportsImpl(templ);
 	}
 };
@@ -246,7 +246,7 @@ private:
 };
 
 //----------------------------------------------------------------------------------------
-// The version card: the preview of a node that not every supported Blender has (0.2.0, F8).
+// The version card: the preview of a node that not every supported Blender has.
 //
 // Whether a node shows a preview is decided by its description, which is a file read once and
 // cannot depend on the Preferences (measured: the port description provider is not asked about a

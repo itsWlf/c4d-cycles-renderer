@@ -107,7 +107,7 @@ maxon::Result<void> BlenderProcess::Start(BRIDGEMODE mode)
 	iferr_scope;
 
 	// None selected or found, a file that is gone, a version that is not supported: said in words
-	// that name where to choose another (0.2.0, B7).
+	// that name where to choose another.
 	const maxon::String problem = GetBlenderProblem();
 	if (problem.IsPopulated())
 		return maxon::IllegalStateError(MAXON_SOURCE_LOCATION, problem);

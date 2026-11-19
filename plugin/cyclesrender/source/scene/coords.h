@@ -31,6 +31,7 @@ public:
 	/// Reads the unit scale from the document's project settings.
 	static Coords FromDocument(const cinema::BaseDocument* doc);
 
+	/// Metres per document unit.
 	maxon::Float64 GetScale() const { return _scale; }
 
 	/// A length in document units, in metres.

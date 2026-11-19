@@ -158,9 +158,9 @@ maxon::Result<void> IprWorker::Run(IprTask& task)
 			_client = NewObj(BridgeClient) iferr_return;
 			iferr (_client->Open(BRIDGEMODE::VIEWPORT))
 			{
-				// Without this the failure looked like a Blender that had stopped (Main() reads a client
-				// that is not alive so), and the IPR said "Blender has stopped unexpectedly." whatever
-				// the reason was: no Blender selected, none at that path, not supported (0.2.0, B7).
+				// Without this the failure would look like a Blender that had stopped (Main() reads a client
+				// that is not alive so), and the IPR would say "Blender has stopped unexpectedly." whatever
+				// the reason was: no Blender selected, none at that path, not supported.
 				DeleteObj(_client);
 				return err;
 			}
@@ -188,8 +188,8 @@ maxon::Result<void> IprWorker::Run(IprTask& task)
 			const BridgeMessage reply = _client->Request(task.request, BlobViews(), Get()) iferr_return;
 			_requestsSent.SwapIncrement();
 			// What Blender could not honour (a `settings` request: a GPU it does not have, an option it lacks)
-			// is said in the console like a scene's warnings; before 0.2.0 (B11) it was dropped here, so a GPU
-			// render that fell back to the CPU said nothing in the IPR.
+			// is said in the console like a scene's warnings, so that a GPU render that fell back to the CPU
+			// says so in the IPR too.
 			const maxon::BaseArray<maxon::String> warnings = GetJsonStrings(reply.header, "warnings"_s);
 			maxon::ScopedLock guard(_lock);
 			for (const maxon::String& warning : warnings)

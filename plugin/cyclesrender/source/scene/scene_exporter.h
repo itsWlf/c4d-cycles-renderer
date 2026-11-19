@@ -8,6 +8,7 @@
 #include "maxon/delegate.h"
 #include "maxon/hashmap.h"
 
+#include "../materials/material_export.h"
 #include "coords.h"
 #include "document_colors.h"
 #include "light_export.h"
@@ -46,8 +47,10 @@ struct ExportSettings
 	/// next export can skip what did not change. Implied by reuse.
 	maxon::Bool noteSources = false;
 	/// Note what can be written again by itself when only its place changes (TakeWrittenObjects and what
-	/// goes with it): for the IPR's updates of a change in progress (0.2.0, B11).
+	/// goes with it): for the IPR's updates of a change in progress.
 	maxon::Bool noteFollowed = false;
+	/// For SceneExporter::CollectOwners(): the material ids of the last whole export (TakeMaterialIds).
+	const MaterialIdTable* materials = nullptr;
 	/// Judge every mesh that is not judged by its identity by a pass over its data, as before Cinema 4D's
 	/// data hashes were used (MESHHASH::BYTES): for comparisons (prefs/settings.h, IsIprUnoptimized).
 	maxon::Bool hashBytes = false;
@@ -80,7 +83,7 @@ struct ObjectVisibility
 
 //----------------------------------------------------------------------------------------
 /// An `object` item Write() made that can be written again by itself when only its place changed
-/// (SceneExporter::WriteObjectAlone; 0.2.0, B11): everything of the item but its matrix, and how the
+/// (SceneExporter::WriteObjectAlone): everything of the item but its matrix, and how the
 /// matrix follows from the object of the document it belongs to. The walk forms a matrix as a product
 /// from the top of the document down; @p tail is the part below @p owner (the generator's cache and
 /// the objects inside it), so that the product can be formed again in the same order and the item
@@ -97,6 +100,22 @@ struct WrittenObject
 	maxon::Float64 nameKey = 0.0;
 	maxon::Int32 objectId = 0;
 	maxon::BaseArray<cinema::Matrix> tail;          ///< local matrices below the owner, outermost first
+};
+
+/// An item Write() made for what an object of the document shows (a mesh and its points, an `object`,
+/// an `instancer`), with ExportSettings::noteFollowed: what goes when that object shows it no longer.
+struct OwnedItem
+{
+	const cinema::BaseObject* owner = nullptr;
+	maxon::String id;
+};
+
+/// An object of the document (@p referrer) that shows another one (@p root) and everything below it at
+/// a place of its own: an Instance object in any mode, a Cycles Object tag that instances objects.
+struct ObjectReference
+{
+	const cinema::BaseObject* referrer = nullptr;
+	const cinema::BaseObject* root = nullptr;
 };
 
 /// A light Write() went through that is an object of the document itself (not made by a generator
@@ -158,6 +177,27 @@ public:
 	/// Walks the document and remembers what renders. Call once, before the other two.
 	maxon::Result<void> Collect();
 
+	//----------------------------------------------------------------------------------------
+	/// Instead of Collect(): remembers only what the objects of the document in @p owners show
+	/// themselves (not what the objects below them show, unless those are listed too), each with what it
+	/// inherits from the objects above it, exactly as Collect() finds it. Write() then writes only their
+	/// meshes, `object` and `instancer` items, the same, byte for byte, as a whole export gives for them
+	/// as long as the conditions below hold, and no material, light, camera or world: the IPR's update of
+	/// single objects whose generated or deformed meshes changed. ExportSettings::materials
+	/// must name the ids of the last whole export.
+	///
+	/// What the caller has to make sure of, because items depend on more than their own object:
+	/// - Objects that can show one polygon object are listed together (an object and every Instance
+	///   object or Cycles Object tag that shows it or an object above it: GetReferences()): the first of
+	///   them in the document names the mesh. They are given in the document's order.
+	/// - None of them was noted by GetFixedOwners() in the last whole export.
+	/// After Write(), IsRefused() says that something turned up that only a whole export writes right (a
+	/// light, a volume, hair or particles of a generator, the sky, a material the last whole export did
+	/// not write): what was written is then to be thrown away.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<void> CollectOwners(const maxon::BaseArray<const cinema::BaseObject*>& owners);
+	maxon::Bool IsRefused() const { return _refused; }
+
 	/// Fills @p sample with where the collected things are now.
 	maxon::Result<void> GetMotionSample(MotionSample& sample) const;
 
@@ -177,7 +217,7 @@ public:
 
 	//----------------------------------------------------------------------------------------
 	/// After Write() with ExportSettings::noteFollowed: what the IPR needs to send a change of place by
-	/// itself (0.2.0, B11), and to know when it must not.
+	/// itself, and to know when it must not.
 	/// - TakeWrittenObjects(): the `object` items that follow their owner's place and nothing else. Hands
 	///   them over.
 	/// - GetUnfollowedOwners(): objects of the document that own something whose place cannot be written
@@ -185,34 +225,54 @@ public:
 	///   particles, a light made by a generator, the sky or a dome light (the world), and everything shown
 	///   through a render instance or a Cycles Object tag's instances. When one of them, or an object above
 	///   it, moves, the scene is exported whole.
-	/// - GetReferenceRoots(): the objects that an Instance object (in any mode) or a Cycles Object tag
-	///   shows. What lies below such an object shows at the instance's place as well, so when it moves the
-	///   scene is exported whole (measured: an Instance object's copy follows without any counter of the
-	///   Instance object changing).
-	//----------------------------------------------------------------------------------------
+	/// - GetReferences(): the objects that an Instance object (in any mode) or a Cycles Object tag shows,
+	///   each with the object that shows it. What lies below such an object shows at the instance's place
+	///   as well (measured: an Instance object's copy follows without any counter of the Instance object
+	///   changing), so when it changes, what shows it is written again with it.
 	/// - GetDeformedOwners(): objects of the document with a deformed mesh among what they show. Their
 	///   own cache counter does not say when that mesh is deformed anew (measured in Cinema 4D 2024: only
 	///   the counter of the object inside that carries the deformed copy moves), so the IPR looks into
 	///   their caches.
+	/// - GetFixedOwners(): objects of the document whose items only a whole export writes right (they are
+	///   among the unfollowed ones): those that show a volume, hair, particles, a light made by a
+	///   generator, the sky or a dome light, and those whose mesh is shared with another object's because
+	///   the two have the same content (the copies of generators that make many).
+	/// - TakeOwnedItems(): the mesh, points, `object` and `instancer` items by the object of the document
+	///   they were written for. Hands them over.
+	/// - TakeMaterialIds(): the id each material got (MaterialIdTable). Hands them over.
+	//----------------------------------------------------------------------------------------
 	maxon::BaseArray<WrittenObject> TakeWrittenObjects() { return std::move(_writtenObjects); }
 	const maxon::BaseArray<const cinema::BaseObject*>& GetUnfollowedOwners() const { return _unfollowedOwners; }
 	const maxon::BaseArray<const cinema::BaseObject*>& GetDeformedOwners() const { return _deformedOwners; }
-	const maxon::BaseArray<const cinema::BaseObject*>& GetReferenceRoots() const { return _referenceRoots; }
+	const maxon::BaseArray<const cinema::BaseObject*>& GetFixedOwners() const { return _fixedOwners; }
+	const maxon::BaseArray<ObjectReference>& GetReferences() const { return _references; }
+	const maxon::BaseArray<OwnedItem>& GetOwnedItems() const { return _ownedItems; }
+	maxon::BaseArray<OwnedItem> TakeOwnedItems() { return std::move(_ownedItems); }
+	MaterialIdTable TakeMaterialIds() { return std::move(_materialIds); }
+	/// After a whole Write(): a light was written with an include or exclude list, which names items.
+	maxon::Bool HasLightLinking() const { return _lightLinking; }
+
+	//----------------------------------------------------------------------------------------
+	/// The global matrix of an object of the document as the walk forms it (Collect, CollectOwners): the
+	/// top object's local matrix times each child's, from the top down, in that order. Not GetMg(), which
+	/// may round differently in the last bit: an item written alone (WriteObjectAlone, WriteLightAlone)
+	/// has to equal a whole export's to the last bit, so everything that places one uses this function,
+	/// or continues its product one object further down (`WalkMatrix(parent) * child->GetMl()`).
+	//----------------------------------------------------------------------------------------
+	static cinema::Matrix WalkMatrix(const cinema::BaseObject* op);
 
 	//----------------------------------------------------------------------------------------
 	/// Writes one `object` item of the last Write() again for a new place of its owner, without walking
-	/// the document: the IPR's update of an object that is being moved (0.2.0, B11). The item is the
+	/// the document: the IPR's update of an object that is being moved. The item is the
 	/// same, byte for byte, as Write() gives once the owner stands at @p ownerMg, as long as nothing but
 	/// places changed, so that the full export afterwards finds it unchanged.
-	/// @param[in] ownerMg  The owner's global matrix, formed as the walk forms it: the top object's local
-	///                     matrix times each child's, from the top down (not GetMg(), which may round
-	///                     differently).
+	/// @param[in] ownerMg  The owner's global matrix, formed as the walk forms it (WalkMatrix).
 	//----------------------------------------------------------------------------------------
 	static void WriteObjectAlone(SceneWriter& writer, const Coords& coords, const WrittenObject& object, const cinema::Matrix& ownerMg);
 
 	//----------------------------------------------------------------------------------------
 	/// Writes one light of @p doc as Write() would, without walking the document: the IPR's light-only
-	/// update (0.2.0, F18), for a change of a light's values while Cinema 4D is in a modal loop. The item
+	/// update, for a change of a light's values while Cinema 4D is in a modal loop. The item
 	/// is the same, byte for byte, as Write() gives with the same @p settings and the light's
 	/// @p linking (its global matrix is formed from the local ones as the walk forms it), so that the
 	/// full export afterwards finds it unchanged.
@@ -235,7 +295,7 @@ public:
 	//----------------------------------------------------------------------------------------
 	/// After Collect(): where a ray first meets a mesh that renders and that the camera sees (its
 	/// Compositing or Cycles Object tag lets the camera see it), every copy of a multi-instance
-	/// included; hair, volumes and particles are not looked at. For the IPR's navigation (0.2.0, F17):
+	/// included; hair, volumes and particles are not looked at. For the IPR's navigation:
 	/// the point under the mouse. Both sides of a polygon count.
 	/// @param[in] origin     Where the ray starts, in document coordinates.
 	/// @param[in] direction  Its direction, normalised.
@@ -396,6 +456,12 @@ private:
 	maxon::Result<maxon::Int> ExtendTail(maxon::Int parent, const cinema::Matrix& ml);
 	/// Notes that the place of what @p owner owns cannot be written alone.
 	maxon::Result<void> NoteUnfollowed(const cinema::BaseObject* owner);
+	/// Notes that only a whole export writes what @p owner owns (GetFixedOwners); it is unfollowed too.
+	maxon::Result<void> NoteFixed(const cinema::BaseObject* owner);
+	/// Notes an item written for what @p owner shows (TakeOwnedItems).
+	maxon::Result<void> NoteOwned(const cinema::BaseObject* owner, const maxon::String& id);
+	/// Notes that @p referrer shows @p root (GetReferences).
+	maxon::Result<void> NoteReference(const cinema::BaseObject* referrer, const cinema::BaseObject* root);
 	/// The light's include or exclude list as item ids. @p itemIds: the item written for each leaf, or empty.
 	/// @return  False when the light has no such list.
 	maxon::Result<maxon::Bool> GetLightLinking(const Leaf& light, const maxon::BaseArray<maxon::String>& itemIds, struct LightLinking& linking) const;
@@ -431,7 +497,16 @@ private:
 	maxon::BaseArray<WrittenObject> _writtenObjects;
 	maxon::BaseArray<const cinema::BaseObject*> _unfollowedOwners;
 	maxon::BaseArray<const cinema::BaseObject*> _deformedOwners;
-	maxon::BaseArray<const cinema::BaseObject*> _referenceRoots;
+	maxon::BaseArray<const cinema::BaseObject*> _fixedOwners;
+	maxon::BaseArray<ObjectReference> _references;
+	maxon::BaseArray<OwnedItem> _ownedItems;
+	MaterialIdTable _materialIds;
+	/// CollectOwners(): the objects of the document to look at, and the objects above them.
+	maxon::Bool _partial = false;
+	maxon::HashSet<const cinema::BaseObject*> _only;
+	maxon::HashSet<const cinema::BaseObject*> _onlyAbove;
+	maxon::Bool _refused = false;
+	maxon::Bool _lightLinking = false;
 
 public:
 	/// Copies of one mesh inside one generator are sent as one instancer from this number on.

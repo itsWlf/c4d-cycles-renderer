@@ -62,8 +62,11 @@ auto cinema::PluginStart() -> cinema::Bool
 			cyclesrender::ID_NATIVE_MATERIAL_EDITS);
 	if (!cyclesrender::RegisterIprCommand())
 		ApplicationOutput("Cycles Render: could not register the IPR command.");
+	// Without the hook no evaluation inside a modal loop is followed (ipr/ipr_scenehook.h): the meshes of
+	// parametric objects and deformers arrive when the drag has ended, lights and the camera when a frame
+	// happens to arrive during it (the frame thread's call still sends those) or at its end.
 	if (!cyclesrender::RegisterIprSceneHook())
-		ApplicationOutput("Cycles Render: could not register the IPR's scene hook (id @); light values follow in the IPR when a drag ends.", cyclesrender::ID_IPR_SCENE_HOOK);
+		ApplicationOutput("Cycles Render: could not register the IPR's scene hook (id @); values dragged in the Attribute Manager are not followed step by step in the IPR and may arrive only when the drag ends.", cyclesrender::ID_IPR_SCENE_HOOK);
 	if (!cyclesrender::RegisterBakedFilesWatch())
 		ApplicationOutput("Cycles Render: could not register the watch over closed documents; baked textures stay until Cinema 4D quits.");
 	// Names the Cinema 4D version this build is for: several builds can sit side by side in one
@@ -75,13 +78,16 @@ auto cinema::PluginStart() -> cinema::Bool
 
 // Ends everything that runs on its own: windows, threads and the Blender processes the plugin
 // started. The order matters: the window and the material editor use the workers freed after them.
+// For the IPR's scene hook, which may run on a thread that evaluates a document at this very moment:
+// with the window gone it finds no modal loop to follow (IsIprInModalLoop), so no new call enters the
+// controller; one that entered before is waited for by IprController::Free(), which deletes last.
 void cinema::PluginEnd()
 {
 	cyclesrender::FreeIprDialog();
 	cyclesrender::FreeAddedCameraSwitches();
 	cyclesrender::FreeNativeMaterialEditing();
 	cyclesrender::FreeMaterialPreviews();
-	// Ends the IPR's worker thread and its Blender.
+	// Ends the IPR's worker thread, its frame thread and its Blender.
 	cyclesrender::IprController::Free();
 	// Last, once no Blender the plugin started runs any more.
 	cyclesrender::FreeBakedFiles();

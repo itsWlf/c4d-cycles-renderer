@@ -7,6 +7,7 @@
 #include "maxon/derived_nodeattributes.h"
 #include "maxon/graph.h"
 #include "maxon/graph_basics.h"
+#include "maxon/graph_helper.h"
 #include "maxon/hashmap.h"
 #include "maxon/nodesgraph.h"
 #include "maxon/url.h"
@@ -101,6 +102,24 @@ static maxon::Result<maxon::GraphNode> WiredOutput(const maxon::GraphNode& port)
 	return output;
 }
 
+// Whether a wire leads into or out of @p node.
+static maxon::Result<maxon::Bool> IsWired(const maxon::GraphNode& node)
+{
+	iferr_scope;
+	maxon::Bool wired = false;
+	auto found = [&wired](const maxon::GraphNode&) -> maxon::Result<maxon::Bool>
+	{
+		wired = true;
+		return false;
+	};
+	maxon::GraphModelHelper::GetDirectPredecessors(node, maxon::NODE_KIND::NODE, found) iferr_return;
+	if (!wired)
+	{
+		maxon::GraphModelHelper::GetDirectSuccessors(node, maxon::NODE_KIND::NODE, found) iferr_return;
+	}
+	return wired;
+}
+
 // The value of a setting on a node, as JSON text.
 static maxon::Result<maxon::String> PropertyJson(const maxon::GraphNode& port, const CyclesProperty& property)
 {
@@ -144,8 +163,9 @@ static maxon::Result<maxon::String> PropertyJson(const maxon::GraphNode& port, c
 		}
 		default:
 		{
+			// Text the user typed (an attribute or UV map name): it may hold quotes and backslashes.
 			const maxon::String value = port.GetEffectivePortValue<maxon::String>().GetValueOr(maxon::String(property.text)) iferr_return;
-			return "\""_s + value + "\""_s;
+			return JsonQuoted(value);
 		}
 	}
 }
@@ -354,7 +374,18 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 			entry.node = node;
 			entry.definition = DefinitionOf(node) iferr_return;
 			if (!entry.definition)
+			{
+				// Not a node of the table (a reroute, a group, one of Cinema 4D's own): left out with
+				// its wires. One without wires changes nothing (a scaffold has none) and is not named.
+				const maxon::Bool wired = IsWired(node) iferr_return;
+				if (wired)
+				{
+					const maxon::String name = OptOrDefault(node.GetValue<decltype(maxon::EffectiveName)>()) iferr_return;
+					exporter.Warn(FormatString("Material \"@\": the \"@\" node is not a Cycles node and is not translated; what it is wired into takes its own value.",
+						materialName, name));
+				}
 				return true;
+			}
 			if (maxon::CString(entry.definition->asset) != maxon::CString(CYCLES_OUTPUT_NODE_ID))
 			{
 				if (Lacks(exporter, entry.definition->since))
@@ -524,7 +555,7 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 				case 't':
 				{
 					const maxon::String value = port.GetEffectivePortValue<maxon::String>().GetValueOr(maxon::String(socket.text)) iferr_return;
-					graph.SetInputJson(entry.index, socket.identifier, "\""_s + value + "\""_s);
+					graph.SetInputJson(entry.index, socket.identifier, JsonQuoted(value));
 					break;
 				}
 				default: break;   // a shader input with nothing wired in

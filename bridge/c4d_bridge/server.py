@@ -105,6 +105,7 @@ class Bridge:
             self.inbox.put(("closed", EXIT_CONNECTION_LOST))
 
     def send(self, header, blobs=()):
+        """Send one message to the client (any thread)."""
         with self.send_lock:
             protocol.send_message(self.sock, header, blobs)
 
@@ -179,15 +180,18 @@ class Bridge:
         bpy.app.timers.register(setup_begin, first_interval=0.0, persistent=True)
 
     def _viewport(self):
+        """The viewport driver, or a RequestError when this Blender has none (yet)."""
         if self.viewport is None or not self.viewport.ready:
             raise RequestError("bad_request", "this operation needs a windowed Blender (viewport mode)")
         return self.viewport
 
     def _scene_changed(self):
+        """A request changed the scene: the live render restarts its clock and its sample count."""
         if self.viewport is not None and self.viewport.ready:
             self.viewport.touch()
 
     # --- handlers: return (reply fields, reply blobs) -------------------------
+    # Each answers the operation of its name; what it takes and answers is in protocol/protocol.md.
 
     def handle_hello(self, header, blobs):
         if header.get("protocol") != protocol.VERSION:

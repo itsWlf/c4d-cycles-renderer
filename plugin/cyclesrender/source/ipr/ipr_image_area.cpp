@@ -442,7 +442,7 @@ void IprImageArea::DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2,
 	if (!_message.IsEmpty())
 	{
 		// On a dark plate, so the text reads on any picture. Lines as long as the area allows: a
-		// message that says where to choose a Blender is longer than a small window (0.2.0, B7).
+		// message that says where to choose a Blender is longer than a small window.
 		maxon::BaseArray<maxon::String> lines;
 		iferr (WrapMessage(areaWidth - 60, lines))
 			lines.Reset();
@@ -524,7 +524,7 @@ cinema::Bool IprImageArea::InputEvent(const cinema::BaseContainer& msg)
 
 	if (channel == cinema::BFM_INPUT_MOUSELEFT || channel == cinema::BFM_INPUT_MOUSEMIDDLE || channel == cinema::BFM_INPUT_MOUSERIGHT)
 	{
-		// Cinema 4D's navigation keys with a drag move the camera (0.2.0, F17; the scheme is
+		// Cinema 4D's navigation keys with a drag move the camera (the scheme is
 		// NavigationForDrag in ipr_navigation.cpp, the switch in the Preferences).
 		const cinema::Int32 qualifier = msg.GetInt32(cinema::BFM_INPUT_QUALIFIER);
 		const IPRNAV mode = _navigation && GetIprNavigate()

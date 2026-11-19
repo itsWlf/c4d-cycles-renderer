@@ -44,7 +44,7 @@ cinema::Bool CyclesVideoPost::Init(cinema::GeListNode* node, cinema::Bool isClon
 
 	if (!isCloneInit)
 	{
-		// Blender's defaults, with the engine of the Preferences' "Default Engine" (0.2.0, F21). A
+		// Blender's defaults, with the engine of the Preferences' "Default Engine". A
 		// renderer that is loaded or copied gets its stored settings over these right after, so only
 		// one that is added to render settings anew starts with it (docs/reference/c4d-sdk.md, "The
 		// default engine of new render settings").
@@ -546,7 +546,7 @@ cinema::RENDERRESULT CyclesVideoPost::Execute(cinema::BaseVideoPost* node, cinem
 	if (!rgba)
 		return cinema::RENDERRESULT::FAILED;
 
-	// No Blender that can be started (0.2.0, B7): said in the words that name where to choose one,
+	// No Blender that can be started: said in the words that name where to choose one,
 	// without the place in the source that a failure further on is printed with.
 	if (!_client)
 	{

@@ -13,6 +13,8 @@ _VELOCITY = "velocity"
 
 
 def build_mesh(scene, item, blobs):
+    """A `mesh` item: faces, UV sets, attributes, material slots and indices, and with `points` the
+    positions and normals too. A mesh that exists is rebuilt in place."""
     corner_verts = array_from(blobs, item["corner_verts"], np.int32)
     face_sizes = array_from(blobs, item["face_sizes"], np.int32)
     corner_count = len(corner_verts)
@@ -109,6 +111,7 @@ def _set_motion(mesh, item, motion):
 
 
 def _set_points(mesh, item, points, normals):
+    """Positions of the vertices, and the shading normal of each corner (or none)."""
     if len(points) != len(mesh.vertices) * 3:
         raise RequestError("bad_request", f"{item['kind']} {item['id']!r}: {len(points) // 3} points for a mesh of {len(mesh.vertices)}")
     mesh.vertices.foreach_set("co", points)
@@ -127,6 +130,7 @@ def _set_points(mesh, item, points, normals):
 
 
 def _attribute(mesh, item, spec, blobs, data_type, field, width, lengths):
+    """One colour or float attribute of the item (`colors`, `floats`) on its domain."""
     domain = spec.get("domain", "POINT")
     if domain not in lengths:
         raise RequestError("bad_request", f"mesh {item['id']!r}: attribute {spec['name']!r} has the unknown domain {domain!r}")

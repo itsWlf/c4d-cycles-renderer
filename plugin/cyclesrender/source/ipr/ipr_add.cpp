@@ -68,9 +68,8 @@ static const cinema::BaseObject* RenderViewCamera(cinema::BaseDocument* doc, cin
 // A Cycles Light (lights/light_object.h, Blender's defaults: a point light of 10 W) as Cinema 4D's
 // own Create menu makes it: through the object's command (its plugin id), so that it lands where
 // Cinema 4D's light lands, at the workplane's origin and turned as the workplane, with Cinema 4D's
-// preferences for new objects, selected, in one undo step (0.2.0, B12; measured in 2024 and 2027:
-// Cinema 4D's light and the Cycles Light from their commands land alike). Before B12 this entry put
-// the light where the render view looks from, which nobody had asked for. The command works on the
+// preferences for new objects, selected, in one undo step (measured in 2024 and 2027:
+// Cinema 4D's light and the Cycles Light from their commands land alike). The command works on the
 // active document; for another one (not seen: the IPR shows the active document) the light is
 // inserted at the world's origin.
 static maxon::Int AddCyclesLight(cinema::BaseDocument* doc, maxon::String& message)

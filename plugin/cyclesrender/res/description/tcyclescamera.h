@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef TCYCLESCAMERA_H__
 #define TCYCLESCAMERA_H__
 

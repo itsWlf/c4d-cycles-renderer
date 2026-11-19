@@ -14,6 +14,7 @@ from . import native
 
 
 def build_image(scene, item, blobs):
+    """An `image` item: the file loaded with its colour space and alpha mode, for materials to name."""
     path = item["path"]
     if not os.path.isfile(path):
         scene.warn(f"Texture file not found: {path}")
@@ -43,6 +44,7 @@ def build_image(scene, item, blobs):
 
 
 def build_material(scene, item, blobs):
+    """A `material` item: its node graph built anew and its properties set, or a native material."""
     if item.get("native"):
         # A Blender material stored as it is: nothing to build.
         native.build(scene, item, blobs)
@@ -173,6 +175,7 @@ def _set_mapping(node, value, owner):
 
 
 def _set_property(target, name, value, owner):
+    """Set a property by its path ("cycles.emission_sampling"), or answer with a RequestError."""
     try:
         # "cycles.emission_sampling": a property of a part of the target.
         while "." in name:
@@ -184,6 +187,7 @@ def _set_property(target, name, value, owner):
 
 
 def _find_socket(sockets, key, owner):
+    """A socket by its index, its identifier, or the name of an enabled one, in that order."""
     if isinstance(key, int):
         if 0 <= key < len(sockets):
             return sockets[key]
@@ -198,6 +202,7 @@ def _find_socket(sockets, key, owner):
 
 
 def _set_default(socket, value):
+    """A socket's own value, the sent value fitted to the socket's type and length."""
     if not hasattr(socket, "default_value"):
         return      # a shader socket: it has no value of its own
     current = socket.default_value

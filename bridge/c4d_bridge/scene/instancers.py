@@ -21,6 +21,8 @@ COLOR = "mograph_color"
 
 
 def build_instancer(scene, item, blobs):
+    """An `instancer` item: its three datablocks made once, then the copies' matrices, colours and
+    numbers written into the points."""
     mesh = scene.meshes.get(item["mesh"])
     if mesh is None:
         raise RequestError("bad_request", f"instancer {item['id']!r} refers to unknown mesh {item['mesh']!r}")
@@ -70,6 +72,7 @@ def build_instancer(scene, item, blobs):
 
 
 def remove_instancer(scene, item_id):
+    """Remove everything an instancer made, if `item_id` is one."""
     parts = scene.instancers.pop(item_id, None)
     if parts is None:
         return
@@ -81,6 +84,7 @@ def remove_instancer(scene, item_id):
 
 
 def _attribute(mesh, name, data_type):
+    """The point attribute of that name, made when missing."""
     attribute = mesh.attributes.get(name)
     if attribute is None:
         attribute = mesh.attributes.new(name, data_type, 'POINT')
@@ -88,6 +92,8 @@ def _attribute(mesh, name, data_type):
 
 
 def _create(scene, item_id, mesh):
+    """The prototype, the points, the object that shows them and its Geometry Nodes group
+    (Instance on Points, then Set Instance Transform from the matrix attribute)."""
     prototype = bpy.data.objects.new(item_id + ".prototype", mesh)
     points = bpy.data.meshes.new(item_id + ".points")
     holder = scene.link(item_id, points)

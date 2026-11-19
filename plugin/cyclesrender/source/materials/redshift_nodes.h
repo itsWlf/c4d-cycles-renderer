@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Redshift's shading nodes wired into a Redshift material, as Blender nodes: the Texture node, the
-// math, colour, utility and texture nodes with a counterpart in Blender (from 0.2.0 also the
+// math, colour, utility and texture nodes with a counterpart in Blender (among them the
 // inverse trigonometry, bias and gain, the vector and colour math, Color Composite and Color Layer,
 // Fresnel, State, Ramp and Scalar Ramp, TriPlanar, UV Projection, MatCap, Camera Map and others),
 // each measured against Redshift's own render. The list, with what each becomes, is in
@@ -69,13 +69,17 @@ public:
 	};
 
 private:
+	/// A node whose output is wired into a port, and which of its outputs it is.
 	struct Source
 	{
 		maxon::GraphNode node;
 		maxon::String output;        ///< the id of its output port, without the node's id
 	};
 
+	/// What is wired into @p port; an invalid node when nothing is.
 	static maxon::Result<Source> Find(const maxon::GraphNode& port);
+	/// The Blender output for @p source, or invalid (named in a warning) when it cannot be translated.
+	/// @p depth counts the nodes on the way from the material, against graphs that loop.
 	maxon::Result<NodeOutput> Translate(const Source& source, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
 	/// A Texture node as an Image Texture, on its UV map or on @p vector (Blender UV coordinates a
 	/// projection node computes), with the node's own tiling and offset.
@@ -86,9 +90,10 @@ private:
 		const Term& vector, const maxon::Char* label);
 	/// The position along a Ramp or Scalar Ramp (0 to 1): its source, mapping and adjustments.
 	maxon::Result<Term> RampPosition(const maxon::GraphNode& rsNode, const maxon::String& asset, const maxon::Char* what, maxon::Int depth);
+	/// Color Correct: gamma, contrast, hue and saturation, level (redshift_nodes.cpp has the formulas).
 	maxon::Result<NodeOutput> ColorCorrection(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
 
-	// The groups of nodes added in 0.2.0 (F19); each answers false in @p handled for a node it does not know.
+	// The groups of nodes Translate hands on; each answers false in @p handled for a node it does not know.
 	maxon::Result<NodeOutput> MoreMath(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
 	maxon::Result<NodeOutput> ColorNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
 	maxon::Result<NodeOutput> UtilityNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);

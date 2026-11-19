@@ -35,6 +35,7 @@ def send_message(sock, header, blobs=()):
 
 
 def _receive_exactly(sock, count):
+    """Block until `count` bytes have arrived; ConnectionClosed when the peer closes first."""
     buffer = bytearray(count)
     view = memoryview(buffer)
     received = 0

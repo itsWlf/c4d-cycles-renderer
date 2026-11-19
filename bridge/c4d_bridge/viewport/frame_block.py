@@ -22,12 +22,15 @@ STOPPED, RENDERING, PAUSED, DONE = 0, 1, 2, 3
 _HEADER_SEQ = 8
 _GEOMETRY = struct.Struct("<IIII")       # at 16: generation, width, height, latest
 _BUFFER_SEQ = (32, 40)
-_PROGRESS = struct.Struct("<QIIII")      # at 48: frame id, state, sample, samples, reserved
+# At 48 the frame id (Q, end()), at 56 state, sample, samples and a reserved field (IIII, set_progress()).
 _TIMES = struct.Struct("<dd")            # at 72: start time, end time (Unix seconds)
 _STATUS_OFFSET, _STATUS_SIZE = 128, 128
 
 
 class FrameBlock:
+    """The state block and the pixel block of one Blender, named after its token, and the event that
+    is raised after every frame. Two pixel buffers: one is written while the reader may copy the other."""
+
     def __init__(self, token):
         self.prefix = f"cyclesrender_{token}"
         self.state_name = self.prefix + "_state"
@@ -54,6 +57,7 @@ class FrameBlock:
             self._set_event = kernel32.SetEvent
 
     def _resize(self, width, height):
+        """A new pixel block for this size, announced in the state block under a new generation."""
         self.generation += 1
         values = width * height * 4
         mapping = mmap.mmap(-1, values * 4 * 2, tagname=f"{self.prefix}_px{self.generation}")
@@ -92,11 +96,13 @@ class FrameBlock:
             self._set_event(self._signal)
 
     def set_progress(self, state, sample, samples, status):
+        """The render's state (STOPPED, RENDERING, PAUSED, DONE), its samples and its status text."""
         struct.pack_into("<IIII", self.state, 56, state, sample, samples, 0)
         text = status.encode("utf-8")[:_STATUS_SIZE - 1]
         self.state[_STATUS_OFFSET:_STATUS_OFFSET + _STATUS_SIZE] = text.ljust(_STATUS_SIZE, b"\0")
 
     def set_times(self, start, end):
+        """When the current render started and ended (Unix seconds; 0: still running)."""
         _TIMES.pack_into(self.state, 72, start, end)
 
     def write_test_pattern(self, width, height):

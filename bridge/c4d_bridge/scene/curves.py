@@ -10,6 +10,7 @@ from .objects import assign_materials
 
 
 def build_curves(scene, item, blobs):
+    """A `curves` item: hair curves of equal length with a radius per point, and their object."""
     points = array_from(blobs, item["points"], np.float32)
     per_curve = int(item["points_per_curve"])
     if per_curve < 2 or len(points) % (per_curve * 3) != 0:

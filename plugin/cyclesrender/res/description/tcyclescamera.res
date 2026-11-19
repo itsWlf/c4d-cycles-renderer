@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 CONTAINER Tcyclescamera
 {
 	NAME Tcyclescamera;
@@ -28,7 +29,7 @@ CONTAINER Tcyclescamera
 	}
 
 	// Only the first tab is open at first: with DEFAULT 1 on both, the Attribute Manager shows both
-	// tabs at once and the panorama settings fall below its lower edge (screenshots, 0.2.0).
+	// tabs at once and the panorama settings fall below its lower edge (seen on screen).
 	GROUP CYCLESCAMERA_GROUP_LENS
 	{
 		LONG CYCLESCAMERA_LENS_TYPE

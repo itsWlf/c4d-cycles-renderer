@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef MCYCLESNATIVE_H__
 #define MCYCLESNATIVE_H__
 

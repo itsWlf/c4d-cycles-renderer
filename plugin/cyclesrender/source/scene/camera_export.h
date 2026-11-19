@@ -146,7 +146,7 @@ maxon::Result<void> ExportCamera(SceneWriter& writer, const Coords& coords, cons
 	maxon::Bool depthOfField, maxon::Bool eevee, const CameraFraming& framing, const cinema::Matrix* motion = nullptr);
 
 //----------------------------------------------------------------------------------------
-/// The way back from the picture to the scene, for navigating from the IPR's picture (0.2.0, F17):
+/// The way back from the picture to the scene, for navigating from the IPR's picture:
 /// the ray that renders the point (@p x, @p y) of the image (pixels from its top left corner, the
 /// image framed by @p framing), as ExportCamera and WriteFreeView frame it: the camera's sensor (or
 /// parallel width) spans the camera's picture, which is centred in the image, and the film offset

@@ -23,6 +23,7 @@ _stage = None
 
 
 def _build_stage():
+    """The preview's own scene: the ball, its camera and its world (kept by _get_stage())."""
     scene = bpy.data.scenes.new("Material Preview")
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"

@@ -63,7 +63,8 @@ run one after another in a fixed order, which is printed; each starts from a kno
 start and is emptied before every script. When c4dpy ends before every test of a start has
 reported, the test that was running fails and the ones not yet run are run again, each alone.
 The last tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window,
-ipr_live_window, ipr_optimized_window, new_light_window, baked_files_window, blender_missing_window and default_engine_window,
+ipr_live_window, ipr_optimized_window, ipr_values_window, ipr_threads_window, ipr_frames_window, new_light_window, baked_files_window,
+blender_missing_window and default_engine_window,
 need windows and start the
 regular Cinema 4D for about half a minute each, with a preferences folder of their own so that the
 user's preferences and layout stay untouched (and, field PrefsFiles, files put into it before the start).
@@ -147,7 +148,7 @@ $bridgeTests = @(
   @{ Name = "measure_lights"; Covers = @("${B}scene/lights.py") },
   @{ Name = "test_lights"; Covers = @("${B}scene/lights.py") },
   @{ Name = "test_devices"; Covers = @("${B}render/devices.py", "${B}render/settings.py") },
-  # 0.2.0, B11: frames published at most about 30 a second, progress still right; the device reported.
+  # Frames published at most about 30 a second, progress still right; the device reported.
   @{ Name = "test_frame_rate"; Covers = @("${B}viewport/*", "${B}render/devices.py", "${B}render/settings.py", "tests/bridge/frames.py") },
   @{ Name = "test_versions"; Covers = @("${B}render/settings.py", "${B}scene/materials.py", "${P}videopost/render_settings_table.h", "tools/make_settings.py",
                                         "tools/make_nodes.py") }
@@ -196,8 +197,12 @@ $c4dTests = @(
   @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py") },
   @{ Name = "redshift_lookalikes"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_lookalikes.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/material_export.*",
-                "${P}scene/scene_exporter.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/materials.py") },
-  @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${B}scene/world.py") },
+                "${P}scene/scene_exporter.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/materials.py", "${P}scene/redshift_ids.h") },
+  @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${B}scene/world.py") },
+  # Every Redshift light case against Redshift's own render (units, shapes, scale, spread,
+  # decay, temperature in two render spaces), Eevee beside it, the IPR's light-only update, "Take Values".
+  @{ Name = "redshift_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${P}scene/document_colors.*", "${P}lights/light_tag.*", "${P}lights/light_settings.*", "${B}scene/lights.py") },
   @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}nodespace/*", "${P}materials/cycles_*", "${R}nodes/*", "tools/make_nodes.py", "tools/dump_blender_nodes.py", "${B}scene/materials.py", "${P}ipr/ipr_testhook.*") },
   @{ Name = "native_material"; OnHold = "the Cycles Native Material is on hold"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" }
@@ -210,17 +215,25 @@ $c4dTests = @(
   @{ Name = "ipr_reuse"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/scene_writer.*", "${P}scene/scene_exporter.*", "${P}scene/mesh_export.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*",
                 "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
-                "${P}session/protocol.*", "${B}protocol.py", "${B}scene/__init__.py") },
+                "${P}session/protocol.*", "${B}protocol.py", "${B}scene/__init__.py", "${P}materials/material_export.*") },
   @{ Name = "ipr_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/light_export.*",
                 "${P}lights/*", "${B}scene/lights.py") },
-  # 0.2.0, B11 step 3: what a step of a change in progress sends alone and what it exports whole, the gate
+  # What a step of a change in progress sends alone and what it exports whole, the gate
   # on redraws, the settle export, a heavy generator judged without a pass over its data. It runs the
   # kinds of change of ipr_reuse.py as well (it reads that script).
   @{ Name = "ipr_optimized"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*",
                 "${P}scene/light_export.*", "${P}scene/camera_export.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
-                "${R}strings_en-US/description/prefscyclesrender.str", "${B}scene/objects.py", "${B}scene/__init__.py", "tests/c4d/ipr_reuse.py") },
+                "${R}strings_en-US/description/prefscyclesrender.str", "${B}scene/objects.py", "${B}scene/__init__.py", "tests/c4d/ipr_reuse.py",
+                "${P}materials/material_export.*") },
+  # The values that follow inside an evaluation of the document (an Attribute Manager drag): a
+  # camera's, the parameters of primitives and generators, deformers; single objects collected again and
+  # their meshes sent alone, what still waits for the end, the guard after a heavy mesh.
+  @{ Name = "ipr_values"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*",
+                "${P}scene/light_export.*", "${P}scene/camera_export.*", "${P}tags/camera_tag.*", "${P}materials/material_export.*",
+                "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/meshes.py", "${B}scene/__init__.py") },
   @{ Name = "ipr_navigate"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${P}scene/camera_export.*", "${P}scene/scene_exporter.*",
                 "${P}tags/camera_tag.*", "${P}prefs/settings.*", "${B}viewport/*", "${B}scene/cameras.py") },
@@ -242,7 +255,7 @@ $c4dTests = @(
   @{ Name = "devices"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}prefs/devices.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
                 "${P}videopost/render_settings_map.*", "${B}render/devices.py", "${B}render/settings.py", "${P}ipr/ipr_testhook.*") },
-  # 0.2.0, B11: the device really used (final frames and the IPR), the threads left free, the priority rule.
+  # The device really used (final frames and the IPR), the threads left free, the priority rule.
   @{ Name = "ipr_device"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}prefs/devices.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "${P}videopost/render_settings_*", "${R}description/vpcyclesrender.*",
@@ -269,20 +282,35 @@ $c4dTests = @(
      Covers = @("${P}ipr/ipr_navigation.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_trace.*",
                 "${P}ipr/ipr_scenehook.*", "${P}prefs/prefs_page.*", "${P}prefs/settings.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "${P}session/frame_watcher.*", "tests/c4d/lib/post_input.ps1", "tests/c4d/harness/*") },
-  # The Preferences' live updates (F22) off and on in one running IPR: it sets them through the page, in
+  # The Preferences' live updates off and on in one running IPR: it sets them through the page, in
   # its own preferences folder.
   @{ Name = "ipr_live_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_testhook.*",
                 "${P}session/frame_watcher.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "tests/c4d/harness/*") },
-  # 0.2.0, B11 step 3: "Optimized Live Updates" on (the default) and off in one running IPR, with emulated
+  # "Optimized Live Updates" on (the default) and off in one running IPR, with emulated
   # drags, view navigation and playback: what is sent during each and that Blender is in sync after.
   @{ Name = "ipr_optimized_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_testhook.*",
                 "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*", "${P}session/frame_watcher.*", "${P}prefs/settings.*",
                 "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*", "${R}strings_en-US/description/prefscyclesrender.str",
-                "${B}scene/objects.py", "tests/c4d/harness/*") },
-  # 0.2.0, B11: at most about 30 frames a second shown, the last one always; the status line's device.
+                "${B}scene/objects.py", "${P}materials/material_export.*", "tests/c4d/harness/*") },
+  # Emulated Attribute Manager drags of camera values, parametric objects and deformers (also
+  # with the evaluation on Cinema 4D's drawing thread, as a real slider's), a deformer dragged as a tool
+  # does, a heavy mesh and the guard; with "Optimized Live Updates" off, as before.
+  @{ Name = "ipr_values_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*", "${P}ipr/ipr_testhook.*",
+                "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}scene/mesh_export.*", "${P}scene/camera_export.*",
+                "${P}materials/material_export.*", "${P}session/frame_watcher.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/meshes.py",
+                "tests/c4d/harness/*") },
+  # The controller entered from two threads: during emulated drags with the evaluations on Cinema 4D's
+  # drawing thread the IPR is stopped and the controller freed (timed into a step of that thread), the
+  # camera it renders through is deleted or another one chosen, the document closed; Cinema 4D quits
+  # with the IPR rendering.
+  @{ Name = "ipr_threads_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
+     Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_trace.*",
+                "${P}ipr/ipr_testhook.*", "${P}session/frame_watcher.*", "${P}scene/camera_export.*", "${P}main.cpp", "tests/c4d/harness/*") },
+  # At most about 30 frames a second shown, the last one always; the status line's device.
   @{ Name = "ipr_frames_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*",
                 "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}session/frame_watcher.*", "${P}session/frame_reader.*",

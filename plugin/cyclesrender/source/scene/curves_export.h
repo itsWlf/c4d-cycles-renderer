@@ -17,7 +17,8 @@ namespace cyclesrender
 /// with a radius per point, and a material for them: a Principled Hair BSDF coloured from
 /// root to tip by the hair material's colour gradient. Thickness at root and tip comes from
 /// the hair material too. Every other property of the hair material (frizz, kink, clumping
-/// and so on) changes the shape Cinema 4D renders and is not applied.
+/// and so on) changes the shape Cinema 4D renders and is not applied; the console says so
+/// once for each Hair object with a hair material.
 ///
 /// @param[in] op  A Hair object (Ohair). It is locked while its hairs are generated.
 /// @return        False when the object has no hairs and nothing was written.

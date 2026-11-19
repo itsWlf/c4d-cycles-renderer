@@ -19,14 +19,14 @@ MAXON_CONFIGURATION_STRING(g_cyclesRenderBlender, "", maxon::CONFIGURATION_CATEG
 	"Cycles Render: path of the Blender executable. Empty: use the one set in the Preferences.");
 
 MAXON_CONFIGURATION_BOOL(g_cyclesRenderIprUnoptimized, false, maxon::CONFIGURATION_CATEGORY::DEVELOPMENT,
-	"Cycles Render: the IPR exports as before 0.2.0's B11 (every redraw exports the scene, generated meshes are hashed byte by byte, nothing but lights is sent alone), for comparing.");
+	"Cycles Render: the IPR exports without the optimizations of its live updates (every redraw exports the scene, generated meshes are hashed byte by byte, nothing but lights is sent alone), for comparing.");
 
 namespace cyclesrender
 {
 
 // Keys inside the plugin's container in Cinema 4D's preferences. Never renumber, never reuse.
 // (prefs/devices.cpp uses 1010 to 1012, the IPR's test hook 9000 and 9001. 1006 to 1009 and 1013
-// to 1019 have never been used; 1025 on is kept for further switches of the IPR, 1031 on for
+// to 1019 have never been used; 1025 to 1029 are kept for further switches of the IPR, 1031 on for
 // further defaults of new render settings.)
 enum
 {
@@ -38,10 +38,10 @@ enum
 	SETTING_BLENDER_VERSION_TEXT = 1005,
 	SETTING_IPR_SKIP_UNCHANGED = 1020,
 	SETTING_IPR_NAVIGATE = 1021,
-	SETTING_IPR_LIVE_UPDATES = 1022,	///< 0.2.0 (F22): GetIprLiveUpdates()
-	SETTING_IPR_THREADS_FREE = 1023,	///< 0.2.0 (B11): GetIprThreadsFree()
-	SETTING_IPR_OPTIMIZED_UPDATES = 1024,	///< 0.2.0 (B11): GetIprOptimizedUpdates()
-	SETTING_DEFAULT_ENGINE = 1030		///< 0.2.0 (F21): GetDefaultEngine()
+	SETTING_IPR_LIVE_UPDATES = 1022,	///< GetIprLiveUpdates()
+	SETTING_IPR_THREADS_FREE = 1023,	///< GetIprThreadsFree()
+	SETTING_IPR_OPTIMIZED_UPDATES = 1024,	///< GetIprOptimizedUpdates()
+	SETTING_DEFAULT_ENGINE = 1030		///< GetDefaultEngine()
 };
 
 // The container is keyed by the renderer's issued plugin ID so it survives ID changes elsewhere.
@@ -127,7 +127,7 @@ BlenderInstall GetBlenderInUse()
 			return g_inUse;
 	}
 
-	// The version stored with the path in the preferences (since 0.2.0), else ask the executable.
+	// The version stored with the path in the preferences (preferences of 0.1 have none), else ask the executable.
 	const cinema::BaseContainer settings = ReadSettings();
 	install.executable = cinema::MaxonConvert(path, cinema::MAXONCONVERTMODE::NONE);
 	if (g_cyclesRenderBlender.IsEmpty() && settings.GetFilename(SETTING_BLENDER_PATH) == path && settings.GetInt32(SETTING_BLENDER_MAJOR) > 0)

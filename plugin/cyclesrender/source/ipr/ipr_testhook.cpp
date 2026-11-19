@@ -445,7 +445,7 @@ static maxon::Result<maxon::String> ImageNodeCommand(const maxon::String& comman
 	return json.GetText();
 }
 
-// The status's fields of what renders, as Blender reported it (0.2.0, B11), and the status line's words for it.
+// The status's fields of what renders, as Blender reported it, and the status line's words for it.
 static void WriteDeviceStatus(JsonWriter& json, IprController& ipr, const Frame* shown)
 {
 	const IprDeviceInfo device = ipr.GetDeviceInfo();
@@ -469,24 +469,45 @@ static void WriteDeviceStatus(JsonWriter& json, IprController& ipr, const Frame*
 	json.Int("shown_frame", shown ? maxon::Int64(shown->frameId) : 0);
 }
 
-// What the window tells the controller while a change is in progress (0.2.0, B11), without the window:
+// What the window tells the controller while a change is in progress, without the window:
 // "redrawn" is EVMSG_DOCUMENTRECALCULATED (the next tick looks at the document's change counters),
 // "step" a tool's step (IprController::FollowStep, a whole export allowed), "evaluated" a step inside an
-// evaluation of the document, as the scene hook's (no whole export). False for any other command.
-static maxon::Bool RunFollowCommand(const maxon::String& command, IprController& ipr)
+// evaluation of the document, as the scene hook's (no whole export), "unevaluated" the same as a frame's
+// call makes it in a modal loop (no whole export, and no cache of the document is read),
+// "quiet <seconds>" sets the time until a step may collect objects again (the guard of heavy meshes; 0:
+// at once). False for any other command.
+static maxon::Bool RunFollowCommand(const maxon::String& command, const maxon::String& argument, IprController& ipr)
 {
 	if (command == "redrawn"_s)
+	{
 		ipr.NoteRedraw();
+	}
 	else if (command == "step"_s)
+	{
 		ipr.FollowStep(true);
+	}
 	else if (command == "evaluated"_s)
+	{
 		ipr.FollowStep(false);
+	}
+	else if (command == "unevaluated"_s)
+	{
+		ipr.FollowStep(false, false);
+	}
+	else if (command == "quiet"_s)
+	{
+		iferr (const maxon::Float64 seconds = argument.ToFloat64())
+			return false;
+		ipr.SetMeshQuietForTest(seconds);
+	}
 	else
+	{
 		return false;
+	}
 	return true;
 }
 
-// The status's fields of what the IPR did with the last changes (0.2.0, B11).
+// The status's fields of what the IPR did with the last changes.
 static void WriteFollowStatus(JsonWriter& json, IprController& ipr)
 {
 	json.Bool("optimized_updates", GetIprOptimizedUpdates());
@@ -497,6 +518,12 @@ static void WriteFollowStatus(JsonWriter& json, IprController& ipr)
 	json.Bool("whole_needed", ipr.WasWholeNeeded());
 	json.Float("alone_ms", ipr.GetLastAloneMilliseconds());
 	json.Int("alone_objects", ipr.GetLastAloneObjects());
+	json.Int("alone_owners", ipr.GetLastAloneOwners());
+	json.Int("alone_meshes", ipr.GetLastAloneMeshes());
+	json.Int("alone_kept", ipr.GetLastAloneKept());
+	json.Int("postponed", ipr.GetPostponedCount());
+	json.Int("whole_reason", maxon::Int(ipr.GetLastWholeReason()));
+	json.Float("mesh_quiet_ms", ipr.GetMeshQuietMilliseconds());
 	json.Int("objects_followed", ipr.GetFollowedObjectCount());
 	json.Int("nodes_followed", ipr.GetFollowedNodeCount());
 	json.Int("meshes_by_data_hash", ipr.GetLastExportStats().meshesByDataHash);
@@ -641,7 +668,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 		// What the scene hook has done in a modal loop (FollowIprEvaluation): the lights alone.
 		ipr.FollowLights();
 	}
-	else if (RunFollowCommand(command, ipr))
+	else if (RunFollowCommand(command, argument, ipr))
 	{
 		// A change in progress, as the window reports it to the controller.
 	}
@@ -877,7 +904,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 	}
 	else if (command == "blender"_s)
 	{
-		// The Preferences page's Blender (0.2.0, B7): "blender <path>" stores a path as the page's field
+		// The Preferences page's Blender: "blender <path>" stores a path as the page's field
 		// does, "blender none" empties it, "blender detect" is the Detect button; then what the plugin
 		// makes of it: the path, the page's status line, and why no Blender can be started (empty when
 		// one can, GetBlenderProblem).
@@ -900,7 +927,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 	}
 	else if (command == "defaultengine"_s)
 	{
-		// The Preferences page's Default Engine (0.2.0, F21): "defaultengine <0|1>" sets it as the page
+		// The Preferences page's Default Engine: "defaultengine <0|1>" sets it as the page
 		// does; then {"default_engine"}.
 		if (argument.IsPopulated())
 			SetDefaultEngine(number);
@@ -908,7 +935,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 	}
 	else if (command == "threadsfree"_s)
 	{
-		// The Preferences page's "CPU Threads Left Free" (0.2.0, B11): "threadsfree <n>" sets it as the page
+		// The Preferences page's "CPU Threads Left Free": "threadsfree <n>" sets it as the page
 		// does; then {"threads_free"}.
 		if (argument.IsPopulated())
 			SetIprThreadsFree(number);

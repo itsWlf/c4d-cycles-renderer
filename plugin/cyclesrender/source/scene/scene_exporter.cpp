@@ -34,6 +34,7 @@
 #include "light_export.h"
 #include "mesh_export.h"
 #include "parameters.h"
+#include "redshift_ids.h"
 #include "scene_exporter.h"
 #include "volume_export.h"
 
@@ -60,12 +61,6 @@ static maxon::String KeyId(const maxon::Char* prefix, maxon::UInt64 key)
 {
 	return maxon::String(prefix) + maxon::String::HexToString(key, false);
 }
-
-// Redshift's Object tag (Redshift's own plugin id, Trsobject in its res/description; not in the
-// SDK): its Object ID and the switch that makes it count (trsobject.h, the same in 2024 to 2027).
-static const cinema::Int32 REDSHIFT_OBJECT_TAG = 1036222;
-static const cinema::Int32 REDSHIFT_OBJECT_OBJECTID_ID = 1000;
-static const cinema::Int32 REDSHIFT_OBJECT_OBJECTID_OVERRIDE = 1999;
 
 // A path of names joined by "/" ("Cloner/Null/Cube 0").
 static maxon::String JoinPath(const maxon::String& parent, const maxon::String& name)
@@ -147,23 +142,20 @@ static maxon::Bool EeveeHidesLights(const ExportSettings& settings)
 maxon::Result<maxon::Bool> SceneExporter::WriteLightAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
 	const cinema::BaseObject* light, const maxon::String& id, const LightLinking* linking)
 {
-	iferr_scope;
 	if (!doc || !light)
 		return maxon::NullptrError(MAXON_SOURCE_LOCATION);
 
-	// The global matrix as Walk() forms it: the root's local matrix times each child's, from the top
-	// down, in that order, so that the numbers agree to the last bit (GetMg() may round differently).
-	maxon::BaseArray<const cinema::BaseObject*> chain;
-	for (const cinema::BaseObject* op = light; op; op = op->GetUp())
-	{
-		chain.Append(op) iferr_return;
-	}
-	cinema::Matrix mg = chain[chain.GetCount() - 1]->GetMl();
-	for (maxon::Int i = chain.GetCount() - 2; i >= 0; --i)
-		mg = mg * chain[i]->GetMl();
-
+	// Its place as the walk forms it, so that the numbers agree to the last bit.
 	const DocumentColors colors(doc);
-	return ExportLight(writer, Coords::FromDocument(doc), colors, light, mg, id, settings.lightMultiplier, linking, EeveeHidesLights(settings));
+	return ExportLight(writer, Coords::FromDocument(doc), colors, light, WalkMatrix(light), id, settings.lightMultiplier, linking, EeveeHidesLights(settings));
+}
+
+cinema::Matrix SceneExporter::WalkMatrix(const cinema::BaseObject* op)
+{
+	// The same product, in the same order, as Collect() and Walk() form on the way down: Collect() starts
+	// each top object with its GetMl(), and Walk() hands every child `mg * child->GetMl()`.
+	const cinema::BaseObject* const up = op->GetUp();
+	return up ? WalkMatrix(up) * op->GetMl() : op->GetMl();
 }
 
 SceneExporter::SceneExporter(cinema::BaseDocument* doc, const ExportSettings& settings)
@@ -191,6 +183,32 @@ maxon::Result<void> SceneExporter::Collect()
 		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, op->GetGUID(), false) iferr_return;
 	}
 	_camera = _settings.camera ? _settings.camera : FindRenderCamera(_doc);
+	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::CollectOwners(const maxon::BaseArray<const cinema::BaseObject*>& owners)
+{
+	iferr_scope;
+
+	if (!_doc || !_settings.materials)
+		return maxon::NullptrError(MAXON_SOURCE_LOCATION);
+	_partial = true;
+	for (const cinema::BaseObject* const owner : owners)
+	{
+		_only.Insert(owner) iferr_return;
+		for (const cinema::BaseObject* up = owner->GetUp(); up; up = up->GetUp())
+		{
+			_onlyAbove.Insert(up) iferr_return;
+		}
+	}
+	// The same walk from the top, so that every object gets what it inherits, and its matrix as the
+	// product a whole export forms; Walk() leaves out what the other objects show.
+	for (cinema::BaseObject* op = _doc->GetFirstObject(); op; op = op->GetNext())
+	{
+		if (!_only.Contains(op) && !_onlyAbove.Contains(op))
+			continue;
+		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, op->GetGUID(), false) iferr_return;
+	}
 	return maxon::OK;
 }
 
@@ -323,6 +341,40 @@ maxon::Result<void> SceneExporter::NoteUnfollowed(const cinema::BaseObject* owne
 	return maxon::OK;
 }
 
+maxon::Result<void> SceneExporter::NoteFixed(const cinema::BaseObject* owner)
+{
+	iferr_scope;
+	NoteUnfollowed(owner) iferr_return;
+	if (!_settings.noteFollowed || !owner || (!_fixedOwners.IsEmpty() && _fixedOwners[_fixedOwners.GetCount() - 1] == owner))
+		return maxon::OK;
+	_fixedOwners.Append(owner) iferr_return;
+	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::NoteOwned(const cinema::BaseObject* owner, const maxon::String& id)
+{
+	iferr_scope;
+	if (!_settings.noteFollowed || !owner)
+		return maxon::OK;
+	OwnedItem item;
+	item.owner = owner;
+	item.id = id;
+	_ownedItems.Append(std::move(item)) iferr_return;
+	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::NoteReference(const cinema::BaseObject* referrer, const cinema::BaseObject* root)
+{
+	iferr_scope;
+	if (!_settings.noteFollowed || !referrer || !root)
+		return maxon::OK;
+	ObjectReference reference;
+	reference.referrer = referrer;
+	reference.root = root;
+	_references.Append(reference) iferr_return;
+	return maxon::OK;
+}
+
 // The rotation a unit quaternion stands for, as the axes of a matrix.
 static void SetRotation(cinema::Matrix& m, const maxon::Quaternion<maxon::Float32>& rotation)
 {
@@ -436,10 +488,7 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 		Inherited forObject = inherited;
 		forObject.instanceSet = _instanceSets.GetCount() - 1;
 		forObject.followable = false;
-		if (_settings.noteFollowed)
-		{
-			_referenceRoots.Append(objects[k]) iferr_return;
-		}
+		NoteReference(inherited.ownerObject, objects[k]) iferr_return;
 		forObject.hasColor = false;
 		forObject.clones = nullptr;
 		forObject.forceVisible = true;   // listed objects are usually hidden themselves
@@ -473,6 +522,10 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		inherited.owner = key;
 		inherited.ownerObject = op;
 	}
+
+	// CollectOwners(): an object of the document that was not asked for is only passed through, for what
+	// the objects below it inherit from it.
+	const maxon::Bool passing = _partial && !inCache && !_only.Contains(op);
 
 	const maxon::Int32 mode = op->GetRenderMode();
 	if (inherited.forceVisible)
@@ -562,12 +615,9 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	const maxon::Int32 type = op->GetType();
 	// What an Instance object shows, in any of its modes, also follows the objects below the one it
 	// refers to (GetReferenceRoots).
-	if (_settings.noteFollowed && type == Oinstance)
+	if (_settings.noteFollowed && type == Oinstance && !passing)
 	{
-		if (const cinema::BaseObject* const referred = static_cast<const cinema::InstanceObject*>(op)->GetReferenceObject(_doc))
-		{
-			_referenceRoots.Append(referred) iferr_return;
-		}
+		NoteReference(inherited.ownerObject, static_cast<const cinema::InstanceObject*>(op)->GetReferenceObject(_doc)) iferr_return;
 	}
 
 	// What an object generates lives in its cache; a deformed copy, if any, replaces that.
@@ -577,12 +627,18 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	// A particle group or Matrix object whose Cycles Object tag instances objects on it.
 	maxon::Bool instanced = false;
 	// (A Matrix object carries the "used by a generator" mark itself, as a Hair object does.)
-	if ((type == Ofpgroup || type == Omgmatrix) && (type == Omgmatrix ? (inherited.visible && layerVisible) : renders) && inherited.instanceSet == NOTOK)
+	if (!passing && (type == Ofpgroup || type == Omgmatrix) && (type == Omgmatrix ? (inherited.visible && layerVisible) : renders) && inherited.instanceSet == NOTOK)
 	{
 		instanced = WalkTagInstances(op, mg, inherited, path, key) iferr_return;
 	}
 
-	if (instanced)
+	if (passing)
+	{
+		// Only what the objects below inherit.
+		if (type == Ovolumeset)
+			inherited.volumeSet = op;
+	}
+	else if (instanced)
 	{
 		// Nothing else of it renders: the particles themselves are replaced by the objects.
 	}
@@ -600,7 +656,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 				_dome = op;
 				_domeMg = mg;
 			}
-			NoteUnfollowed(inherited.ownerObject) iferr_return;
+			NoteFixed(inherited.ownerObject) iferr_return;
 		}
 		else if (shines && inherited.instanceSet == NOTOK)
 		{
@@ -666,7 +722,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		}
 		if (renders)
 		{
-			NoteUnfollowed(inherited.ownerObject) iferr_return;
+			NoteFixed(inherited.ownerObject) iferr_return;
 		}
 	}
 	else if (type == Oinstance && GetIntParameter(op, INSTANCEOBJECT_RENDERINSTANCE_MODE, INSTANCEOBJECT_RENDERINSTANCE_MODE_NONE) != INSTANCEOBJECT_RENDERINSTANCE_MODE_NONE)
@@ -777,6 +833,9 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	maxon::Int position = 0;
 	for (cinema::BaseObject* child = op->GetDown(); child; child = child->GetNext(), ++position)
 	{
+		// CollectOwners(): among the objects of the document only the way down to the ones asked for.
+		if (_partial && !inCache && !_only.Contains(child) && !_onlyAbove.Contains(child))
+			continue;
 		Inherited forChild = forChildren;
 		if (clones)
 		{
@@ -810,6 +869,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		{
 			forChild.tail = ExtendTail(inherited.tail, child->GetMl()) iferr_return;
 		}
+		// (This product, from the top object's GetMl() down, is the one WalkMatrix() forms again.)
 		Walk(child, mg * child->GetMl(), forChild, path, false, inCache ? MixKeys(key, childIndex++) : child->GetGUID(), inCache) iferr_return;
 	}
 	return maxon::OK;
@@ -827,6 +887,8 @@ public:
 	MaterialExporter materials;
 	/// Meshes written so far, by what they were made from (object or content, and the materials' layout).
 	maxon::HashMap<maxon::UInt64, maxon::String> meshIds;
+	/// The object of the document whose leaf was the first with each of those (it names the mesh).
+	maxon::HashMap<maxon::UInt64, const cinema::BaseObject*> meshOwners;
 	/// Number of mesh leaves each generator of the document produced.
 	maxon::HashMap<maxon::UInt64, maxon::Int> ownerCounts;
 };
@@ -965,6 +1027,14 @@ maxon::Result<void> SceneExporter::Resolve(const Leaf& leaf, WriteState& state, 
 	if (const auto* const known = state.meshIds.Find(meshKey))
 	{
 		resolved.meshId = known->GetValue();
+		// A mesh shared because two objects of the document made the same content: which of them names it
+		// follows from the whole walk, so neither can be written again by itself.
+		const auto* const first = state.meshOwners.Find(meshKey);
+		if (compareContent && first && first->GetValue() != leaf.ownerObject)
+		{
+			NoteFixed(first->GetValue()) iferr_return;
+			NoteFixed(leaf.ownerObject) iferr_return;
+		}
 	}
 	else
 	{
@@ -1002,6 +1072,12 @@ maxon::Result<void> SceneExporter::Resolve(const Leaf& leaf, WriteState& state, 
 		if (!hasGeometry)
 			resolved.meshId = maxon::String();
 		state.meshIds.Insert(meshKey, resolved.meshId) iferr_return;
+		state.meshOwners.Insert(meshKey, leaf.ownerObject) iferr_return;
+		if (hasGeometry)
+		{
+			NoteOwned(leaf.ownerObject, resolved.meshId) iferr_return;
+			NoteOwned(leaf.ownerObject, resolved.meshId + ".points"_s) iferr_return;
+		}
 		_stats.meshMilliseconds += cinema::GeGetMilliSeconds() - started;
 	}
 	if (resolved.meshId.IsEmpty())
@@ -1251,6 +1327,7 @@ maxon::Result<void> SceneExporter::WriteObject(SceneWriter& writer, const Leaf& 
 
 	if (!_settings.noteFollowed)
 		return maxon::OK;
+	NoteOwned(leaf.ownerObject, id) iferr_return;
 	if (!leaf.followable || !leaf.ownerObject || moves)
 		return NoteUnfollowed(leaf.ownerObject);
 	WrittenObject written;
@@ -1396,6 +1473,17 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 
 	WriteState state(writer, _doc, _settings.bakeResolution);
 	state.materials.SetBlenderVersion(_settings.blenderVersion, _settings.blenderVersionText);
+	if (_partial)
+	{
+		// Only meshes and the items that show them, with the materials the last whole export wrote. A light
+		// that is an object of the document is the caller's (WriteLightAlone); anything else is refused.
+		state.materials.SetKnownIds(_settings.materials);
+		_refused = _sky || _dome;
+		for (const Leaf& leaf : _leaves)
+			_refused = _refused || (leaf.kind != LEAF::MESH && !(leaf.kind == LEAF::LIGHT && leaf.key == leaf.object->GetGUID()));
+		if (_refused)
+			return maxon::OK;
+	}
 	for (const Leaf& leaf : _leaves)
 	{
 		if (leaf.kind != LEAF::MESH || !leaf.generated)
@@ -1434,7 +1522,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		if (leaf.kind == LEAF::HAIR)
 		{
 			ExportHair(writer, _coords, _doc, leaf.object, KeyId("hair_", leaf.key)) iferr_return;
-			NoteUnfollowed(leaf.ownerObject) iferr_return;
+			NoteFixed(leaf.ownerObject) iferr_return;
 			continue;
 		}
 		if (leaf.kind == LEAF::PARTICLES)
@@ -1445,7 +1533,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				materialId = state.materials.GetMaterialId(material) iferr_return;
 			}
 			ExportParticles(writer, _coords, leaf.object, leaf.mg, KeyId("particles_", leaf.key), materialId) iferr_return;
-			NoteUnfollowed(leaf.ownerObject) iferr_return;
+			NoteFixed(leaf.ownerObject) iferr_return;
 			continue;
 		}
 		if (leaf.kind == LEAF::VOLUME)
@@ -1467,12 +1555,18 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				position = volumes.GetCount() - 1;
 			}
 			volumes[position].grids.Append(static_cast<const cinema::VolumeObject*>(leaf.object)) iferr_return;
-			NoteUnfollowed(leaf.ownerObject) iferr_return;
+			NoteFixed(leaf.ownerObject) iferr_return;
 			continue;
 		}
 
 		Resolved resolved;
 		Resolve(leaf, state, resolved) iferr_return;
+		if (state.materials.HasUnknown())
+		{
+			// CollectOwners(): a material the last whole export did not write.
+			_refused = true;
+			return maxon::OK;
+		}
 		if (resolved.meshId.IsEmpty())
 			continue;
 
@@ -1557,12 +1651,15 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		const maxon::String instancerId = KeyId("instancer_", _leaves[group.leaves[0]].key);
 		WriteInstancer(writer, instancerId, group.resolved, matrices, group.hasColor ? &colors : nullptr, group.resolved.objectKeys ? &keys : nullptr,
 			_leaves[group.leaves[0]].visibility) iferr_return;
+		NoteOwned(_leaves[group.leaves[0]].ownerObject, instancerId) iferr_return;
 		for (maxon::Int index : group.leaves)
 		{
 			itemIds[index] = instancerId;
 			NoteUnfollowed(_leaves[index].ownerObject) iferr_return;
 		}
 	}
+	if (_partial)
+		return maxon::OK;
 
 	_writtenLights.Reset();
 	for (const Leaf& leaf : _leaves)
@@ -1571,6 +1668,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			continue;
 		LightLinking linking;
 		const maxon::Bool linked = GetLightLinking(leaf, itemIds, linking) iferr_return;
+		_lightLinking = _lightLinking || linked;
 		const maxon::String id = KeyId("light_", leaf.key);
 		ExportLight(writer, _coords, _colors, leaf.object, leaf.mg, id, _settings.lightMultiplier, linked ? &linking : nullptr,
 			EeveeHidesLights(_settings)) iferr_return;
@@ -1588,7 +1686,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		else
 		{
 			// A light a generator made (a Cloner's): written with the whole scene only.
-			NoteUnfollowed(leaf.ownerObject) iferr_return;
+			NoteFixed(leaf.ownerObject) iferr_return;
 		}
 	}
 
@@ -1619,6 +1717,10 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	else
 	{
 		ExportWorld(state.materials, _sky, _skyMg, _skyMaterial, _settings.worldColor, _settings.worldStrength) iferr_return;
+	}
+	if (_settings.noteFollowed)
+	{
+		state.materials.TakeIds(_materialIds) iferr_return;
 	}
 	return maxon::OK;
 }

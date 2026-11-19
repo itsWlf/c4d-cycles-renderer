@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # What Blender needs to know to install the bridge as an extension
 # (Edit > Preferences > Get Extensions > Install from Disk).
 #
@@ -10,7 +11,7 @@
 schema_version = "1.0.0"
 
 id = "cycles_render_bridge"
-version = "0.2.1"
+version = "0.2.2"
 name = "Cycles Render Bridge"
 tagline = "Lets the Cycles Render plugin of Cinema 4D render with Blender"
 maintainer = "Wolfnimations"

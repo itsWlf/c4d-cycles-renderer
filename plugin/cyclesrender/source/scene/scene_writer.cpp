@@ -346,9 +346,9 @@ maxon::Result<void> SceneWriter::Send(BridgeClient& client, cinema::BaseThread* 
 		request.EndArray();
 	}
 
-	// Only the blobs of the items sent travel; each item says where its own begin. (Before 0.2.0 the
-	// blobs of items left out travelled empty, which put every blob of the scene into every request:
-	// a scene of 900 meshes, 4500 blobs, broke the protocol's limit even for a change of one.)
+	// Only the blobs of the items sent travel; each item says where its own begin. (Sending the blobs of
+	// items left out empty would put every blob of the scene into every request: a scene of 900 meshes,
+	// 4500 blobs, would break the protocol's limit even for a change of one.)
 	maxon::BaseArray<maxon::Block<const maxon::Char>> views;
 	request.BeginArray("items");
 	for (const Item& item : _items)

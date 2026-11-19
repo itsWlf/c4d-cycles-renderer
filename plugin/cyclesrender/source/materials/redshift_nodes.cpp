@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Redshift's shading nodes as Blender nodes (redshift_nodes.h). Reading order: finding what is
 // wired into a port, the tables of nodes that become one Blender node, then Translate, which
-// handles the nodes of F10 itself and hands the others to the groups of F19; Color Correct and
+// handles the constants, the basic math, mixing, colour math, makers and splitters itself and hands
+// the others to the groups below; Color Correct and
 // the Texture node; then the terms (expressions of Blender nodes) the groups build with, and the
 // groups: more math, colour, utility, textures. Every formula was measured against Redshift's
 // render (docs/reference/c4d-sdk.md, "Redshift Standard Material").
@@ -507,7 +508,7 @@ maxon::Result<NodeOutput> RedshiftNodes::Translate(const Source& source, maxon::
 		return ColorCorrection(rs, colorData, what, depth);
 	}
 
-	// The groups added with F19 (0.2.0).
+	// The groups: more math, colour, utility and texture nodes.
 	maxon::Bool handled = false;
 	NodeOutput result = MoreMath(source, name, colorData, what, depth, handled) iferr_return;
 	if (!handled)
@@ -1073,7 +1074,7 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::Blend(maxon::Int mode, const T
 }
 
 //----------------------------------------------------------------------------------------
-// More math (F19): inverse trigonometry, logarithm, bias and gain, and the colour and vector
+// More math: inverse trigonometry, logarithm, bias and gain, and the colour and vector
 // versions of the scalar operations. Measured against Redshift's render of constants
 // (docs/reference/c4d-sdk.md, "Redshift nodes").
 //----------------------------------------------------------------------------------------
@@ -1272,7 +1273,7 @@ static const maxon::Char* const LAYER_PORTS[7][6] = { RS_LAYER(1), RS_LAYER(2), 
 #undef RS_LAYER
 
 //----------------------------------------------------------------------------------------
-// Colour nodes (F19): Color Composite, Color Layer, Golaem HSL, Shader Switch. The rules were
+// Colour nodes: Color Composite, Color Layer, Golaem HSL, Shader Switch. The rules were
 // measured on constant colours rendered by Redshift (docs/reference/c4d-sdk.md, "Redshift nodes").
 //----------------------------------------------------------------------------------------
 maxon::Result<NodeOutput> RedshiftNodes::ColorNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what,
@@ -1513,7 +1514,7 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::UvTangent()
 }
 
 //----------------------------------------------------------------------------------------
-// Utility nodes (F19): Fresnel, IOR To Metal Tints, Surface Tangent, State, Vertex Attribute,
+// Utility nodes: Fresnel, IOR To Metal Tints, Surface Tangent, State, Vertex Attribute,
 // Ray Switch, WireFrame, AO. Measured on spheres rendered by Redshift (docs/reference/c4d-sdk.md,
 // "Redshift nodes").
 //----------------------------------------------------------------------------------------
@@ -2152,7 +2153,7 @@ maxon::Result<maxon::BaseArray<maxon::GraphNode>> RedshiftNodes::Entries(const m
 }
 
 //----------------------------------------------------------------------------------------
-// Texture nodes (F19): Ramp, Scalar Ramp, Camera Map, MatCap, UV Projection, TriPlanar.
+// Texture nodes: Ramp, Scalar Ramp, Camera Map, MatCap, UV Projection, TriPlanar.
 //----------------------------------------------------------------------------------------
 maxon::Result<NodeOutput> RedshiftNodes::TextureNodes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what,
 	maxon::Int depth, maxon::Bool& handled)

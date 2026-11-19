@@ -157,15 +157,17 @@ void FrameWatcher::Main()
 		_work.contentHash = HashFrame(_work);
 
 		maxon::Bool notify = false;
+		maxon::UInt64 frameId = 0;
 		{
 			maxon::ScopedLock guard(_lock);
 			notify = !_fresh;
 			std::swap(_latest, _work);
-			_work.frameId = _latest.frameId;	// only frames newer than this one are fetched
+			frameId = _latest.frameId;	// (read here: once the lock is gone, Take() may swap _latest away)
+			_work.frameId = frameId;	// only frames newer than this one are fetched
 			_fresh = true;
 			_arrival = platform::UnixTime();
 		}
-		TraceIpr("frame", maxon::Float64(_latest.frameId));
+		TraceIpr("frame", maxon::Float64(frameId));
 		// One message per frame the main thread has not picked up yet is enough.
 		if (notify)
 			cinema::SpecialEventAdd(ID_CORE_MESSAGE);

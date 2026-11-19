@@ -21,7 +21,7 @@ namespace cyclesrender
 static const maxon::Float64 DEFAULT_CLIP_START = 0.01;
 static const maxon::Float64 DEFAULT_CLIP_END = 10000.0;
 // The smallest clip_start sent, and the widest range (clip_end / clip_start). Measured with Eevee
-// of Blender 5.0, 5.2 and 5.3 (0.2.0, B10; docs/reference/blender.md, "Cameras"): a ball under an
+// of Blender 5.0, 5.2 and 5.3 (docs/reference/blender.md, "Cameras"): a ball under an
 // omni light renders black (no light at all) once the range exceeds about 10^7 (3e-4 m to 10 km,
 // 1e-5 m to 1 km, 1e-6 m to 100 m), and too bright below 1 mm (+4 % at 1e-4 m, +40 % at 1e-5 m);
 // from 1 mm and within 10^6 it renders as with Blender's defaults (within 0.4 %). Cinema 4D 2024's

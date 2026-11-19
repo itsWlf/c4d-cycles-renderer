@@ -104,7 +104,7 @@ static const RenderPass PASSES[] =
 	{ CYCLES_PASS_EMISSION,               "Emission", "use_pass_emit" },
 	{ CYCLES_PASS_ENVIRONMENT,            "Environment", "use_pass_environment" },
 	{ CYCLES_PASS_AO,                     "Ambient Occlusion", "use_pass_ambient_occlusion" },
-	// Added in 0.2.0 (F5). Which engine delivers which: docs/reference/blender.md, "Final frames".
+	// Which engine delivers which: docs/reference/blender.md, "Final frames".
 	{ CYCLES_PASS_VECTOR,                 "Vector", "use_pass_vector" },
 	{ CYCLES_PASS_OBJECT_INDEX,           "Object Index", "use_pass_object_index" },
 	{ CYCLES_PASS_MATERIAL_INDEX,         "Material Index", "use_pass_material_index" },
@@ -156,7 +156,7 @@ void InitRenderSettings(cinema::BaseContainer& data)
 {
 	data.SetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES);
 	// Not Blender's default (the CPU): new render settings render on the GPU when Blender has one, else
-	// on the CPU, which the bridge then names (0.2.0, B11, the maintainer's decision). A scene saved with
+	// on the CPU, which the bridge then names (the maintainer's decision). A scene saved with
 	// CPU or GPU keeps that: the device was stored from the first version on.
 	data.SetInt32(CYCLES_DEVICE, CYCLES_DEVICE_AUTOMATIC);
 	data.SetInt32(CYCLES_LAYOUT, CYCLES_LAYOUT_SIMPLE);
@@ -259,7 +259,7 @@ cinema::BaseContainer GetDocumentRenderSettings(cinema::BaseDocument* doc)
 			return post->GetDataInstanceRef();
 	}
 	// Settings made new, as the renderer added now would have them: with the Preferences' Default
-	// Engine (0.2.0, F21), which the IPR then renders with.
+	// Engine, which the IPR then renders with.
 	cinema::BaseContainer defaults;
 	InitRenderSettings(defaults);
 	defaults.SetInt32(CYCLES_ENGINE, GetDefaultEngine());
@@ -302,8 +302,8 @@ maxon::Int32 WriteRenderSettings(JsonWriter& request, const cinema::BaseContaine
 	}
 	else if (engine == CYCLES_ENGINE_CYCLES)
 	{
-		// A GPU type chosen in the Preferences does nothing while the Render Settings say CPU, which looked like
-		// a GPU render that was none (found with B11): said, so that the choice is not silently dropped.
+		// A GPU type chosen in the Preferences does nothing while the Render Settings say CPU, which looks like
+		// a GPU render that is none: said, so that the choice is not silently dropped.
 		iferr (const DeviceSettings devices = GetDeviceSettings())
 		{
 		}

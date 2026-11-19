@@ -5,6 +5,8 @@
 // the source and writes the item (WriteLight).
 
 #include "c4d.h"
+#include "drsfile.h"
+#include "maxon/atomictypes.h"
 #include "olight.h"
 #include "orslight.h"
 
@@ -12,10 +14,12 @@
 #include "tcycleslight.h"
 
 #include "../ids.h"
+#include "../sdk_compat.h"
 #include "../lights/light_settings.h"
 #include "../lights/light_tag.h"
 #include "light_export.h"
 #include "parameters.h"
+#include "redshift_ids.h"
 
 namespace cyclesrender
 {
@@ -64,8 +68,8 @@ maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light)
 }
 
 //----------------------------------------------------------------------------------------
-// The softness of a standard light's shadow type in Blender's terms: the size of the light
-// (0.2.0, F20 follow-up). Measured in the Standard renderer (docs/reference/c4d-sdk.md, "Soft
+// The softness of a standard light's shadow type in Blender's terms: the size of the light.
+// Measured in the Standard renderer (docs/reference/c4d-sdk.md, "Soft
 // and area shadows"): the 10-90 % width W of a straight shadow edge on a floor, the caster
 // between light and floor, g = (light-to-floor - light-to-caster) / light-to-caster.
 //
@@ -172,16 +176,189 @@ static void ApplyShadowSoftness(const cinema::BaseObject* light, const Coords& c
 
 //----------------------------------------------------------------------------------------
 // A Redshift light. Unlike Cinema 4D's standard lights these are physical, so the conversion
-// is exact. Measured by rendering a white wall with Redshift (docs/reference/c4d-sdk.md,
-// "Redshift lights"), with intensity I, exposure e and v = I * 2^e, units "Image":
-//   infinite:     the wall renders as v / pi                       -> sun strength v
-//   point, spot:  v / (pi * d^2), d in metres                      -> power 4 * pi * v
-//   area:         its radiance is v, or v / area with "Normalize"  -> power pi * v * area, or pi * v
-// A spot's cone angle is the full angle; its falloff angle lies inside the cone. A disc's size
-// is its diameter.
+// is exact where Blender has the same light. Measured with Redshift 2027.0.0 in Cinema 4D 2027.0.0
+// (docs/reference/c4d-sdk.md, "Redshift lights"; tests/c4d/redshift_lights.py), with v = intensity
+// * 2^exposure in the unit "Image" (the default):
+//   infinite:     a white wall renders as v / pi                   -> sun strength v
+//   point, spot:  its radiant intensity is v (W/sr)                -> power 4 * pi * v
+//   area:         its radiance is v, or v / A with "Normalize", A the surface that emits
+//                 (rectangle sx * sy, disc pi/4 sx sy, sphere pi d^2) -> power pi * L * A
+// The other units are photometric, at 683 lm/W, or radiometric through the light's own
+// "Luminous Efficacy" (RedshiftUnitFactor). The light's size counts with the object's scale.
+// The colour modes "Temperature" and "Temperature and Color" use RedshiftTemperatureColor.
 //----------------------------------------------------------------------------------------
-static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const Coords& coords, maxon::Float64 multiplier, BlenderLight& out,
-	SceneWriter* writer)
+
+// (Redshift's own ids that not every SDK's copy of orslight.h lists, the units "Luminous Intensity
+// (cd)" and "Luminous Exitance (lm/m2)" and the ray contribution "Camera", are in redshift_ids.h.)
+
+// The photometric constant (lm per W at 555 nm) Redshift converts every photometric unit with
+// (measured: candela / 683 is the intensity of "Image"), whatever the light's own efficacy.
+static const maxon::Float64 LUMENS_PER_WATT = 683.0;
+
+// What a value in Redshift's unit `unit` is in the unit "Image", for a light whose "Image" value
+// is a radiant intensity spread over the solid angle `solidAngle` (point 4 pi, spot its cone; a
+// sun 4 pi, measured), or, for an area light (`surface` > 0), a radiance over `surface` square
+// metres. `efficacy` is the light's "Luminous Efficacy (lm/W)", which only the radiometric units
+// use (Redshift turns their watts into lumens with it). Measured with Redshift 2027.0.0: every
+// factor below to 0.2 % on a floor lit by the light. Returns 0 for a unit Redshift renders black
+// for this kind of light (the area units on a point or spot light: 1e-6 of the light).
+static maxon::Float64 RedshiftUnitFactor(maxon::Int32 unit, maxon::Float64 efficacy, maxon::Float64 solidAngle, maxon::Float64 surface, maxon::Bool sun)
+{
+	const maxon::Bool area = surface > 0.0;
+	switch (unit)
+	{
+		case REDSHIFT_LIGHT_UNITSTYPE_IMAGE:
+			return 1.0;
+		case REDSHIFT_LIGHT_UNITSTYPE_LUMINOUS_POWER_LM:
+			return 1.0 / (LUMENS_PER_WATT * (area ? maxon::PI * surface : solidAngle));
+		case REDSHIFT_LIGHT_UNITSTYPE_RADIANT_POWER_W:
+			return efficacy / (LUMENS_PER_WATT * (area ? maxon::PI * surface : solidAngle));
+		case REDSHIFT_UNITS_LUMINOUS_INTENSITY:
+			return 1.0 / (LUMENS_PER_WATT * (area ? surface : 1.0));
+		case REDSHIFT_LIGHT_UNITSTYPE_LUMINANCE_CD_PER_MSQUARED:
+			return (area || sun) ? 1.0 / LUMENS_PER_WATT : 0.0;
+		case REDSHIFT_LIGHT_UNITSTYPE_RADIANCE_W_PER_SR_PER_MSQUARED:
+			return (area || sun) ? efficacy / LUMENS_PER_WATT : 0.0;
+		case REDSHIFT_UNITS_LUMINOUS_EXITANCE:
+			if (sun)
+				return 1.0 / (LUMENS_PER_WATT * 4.0 * maxon::PI);
+			return area ? 1.0 / (LUMENS_PER_WATT * maxon::PI) : 0.0;
+		default:
+			return 1.0;
+	}
+}
+
+// The colour of Redshift's colour temperature `kelvin` in the space Blender calculates in, as
+// Redshift computes it (measured, Redshift 2027.0.0, in ACEScg and in linear Rec.709 render spaces,
+// 1000 to 25000 K, within 0.003): the chromaticity of the Planckian locus by Kim et al. (2002;
+// Krystek's 1985 approximation below 1667 K, where Kim's does not hold), the temperature held to
+// 1000 to 20000 K, made a colour of the render space (DocumentColors::FromXyz), negative parts
+// cut off, divided by its largest part. Its brightness is not kept: 3000 K in ACEScg is
+// (1, 0.65, 0.26). Redshift's 6500 K is not white (the locus misses D65): (0.995, 0.961, 1).
+static cinema::Vector RedshiftTemperatureColor(maxon::Float64 kelvin, const DocumentColors& colors)
+{
+	const maxon::Float64 t = maxon::ClampValue(kelvin, 1000.0, 20000.0);
+	maxon::Float64 x = 0.0;
+	maxon::Float64 y = 0.0;
+	if (t < 1667.0)
+	{
+		// Krystek: CIE 1960 (u, v), then (x, y).
+		const maxon::Float64 u = (0.860117757 + 1.54118254e-4 * t + 1.28641212e-7 * t * t) / (1.0 + 8.42420235e-4 * t + 7.08145163e-7 * t * t);
+		const maxon::Float64 v = (0.317398726 + 4.22806245e-5 * t + 4.20481691e-8 * t * t) / (1.0 - 2.89741816e-5 * t + 1.61456053e-7 * t * t);
+		const maxon::Float64 d = 2.0 * u - 8.0 * v + 4.0;
+		x = 3.0 * u / d;
+		y = 2.0 * v / d;
+	}
+	else
+	{
+		const maxon::Float64 t2 = t * t;
+		const maxon::Float64 t3 = t2 * t;
+		if (t <= 4000.0)
+			x = -0.2661239e9 / t3 - 0.2343589e6 / t2 + 0.8776956e3 / t + 0.179910;
+		else
+			x = -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390;
+		const maxon::Float64 x2 = x * x;
+		const maxon::Float64 x3 = x2 * x;
+		if (t <= 2222.0)
+			y = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683;
+		else if (t <= 4000.0)
+			y = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867;
+		else
+			y = 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
+	}
+	if (y <= 1e-9)
+		return cinema::Vector(1.0);
+	cinema::Vector rgb = colors.FromXyz(cinema::Vector(x / y, 1.0, (1.0 - x - y) / y));
+	rgb = cinema::Vector(maxon::Max(0.0, rgb.x), maxon::Max(0.0, rgb.y), maxon::Max(0.0, rgb.z));
+	const maxon::Float64 largest = maxon::Max(rgb.x, maxon::Max(rgb.y, rgb.z));
+	return largest > 0.0 ? rgb / largest : cinema::Vector(1.0);
+}
+
+// Whether the Redshift light has a texture for its colour: a parameter of Redshift's own file type
+// (REDSHIFT_FILE_TYPE), read as the dome light's (environment_export.cpp).
+static maxon::Bool HasRedshiftTexture(const cinema::BaseObject* light)
+{
+	cinema::GeData data;
+	if (!light->GetParameter(CreateDescID(cinema::DescLevel(REDSHIFT_LIGHT_PHYSICAL_TEXTURE, REDSHIFT_FILE_TYPE, 0), cinema::DescLevel(REDSHIFT_FILE_PATH, cinema::DTYPE_STRING, 0)),
+		data, cinema::DESCFLAGS_GET::NONE))
+		return false;
+	return data.GetType() == cinema::DA_STRING && !data.GetString().IsEmpty();
+}
+
+// Whether this Redshift counts its units as Redshift 2026 and 2027 do, the versions measured (their
+// lights list the units 5 and 6). Redshift 3.6.04, Cinema 4D 2024's, does not: there a point or spot
+// light in "Image" and a normalized area light depend on Redshift's unit scale (1 cm, the default of
+// a new document from Python: about 10000 times darker than 2027's; 1 m: the same), and the photometric
+// units on its photometric settings (lm: 10000 where 2027 has 683, at their defaults). Asked once:
+// Redshift does not change in a session.
+static maxon::Bool RedshiftUnitsAsMeasured(const cinema::BaseObject* light)
+{
+	static maxon::AtomicInt32 known;   // 0 not yet asked, 1 yes, 2 no
+	const maxon::Int32 state = known.Load();
+	if (state != 0)
+		return state == 1;
+	maxon::Bool current = false;
+	cinema::AutoAlloc<cinema::Description> description;
+	if (description && light->GetDescription(description, cinema::DESCFLAGS_DESC::NONE))
+	{
+		const cinema::BaseContainer* const parameter = description->GetParameterI(ConstDescIDLevel(REDSHIFT_LIGHT_PHYSICAL_UNITSTYPE), nullptr);
+		const cinema::BaseContainer* const cycle = parameter ? parameter->GetContainerInstance(cinema::DESC_CYCLE) : nullptr;
+		current = cycle && cycle->GetDataPointer(REDSHIFT_UNITS_LUMINOUS_INTENSITY) != nullptr;
+	}
+	known.Set(current ? 1 : 2);
+	return current;
+}
+
+// Redshift's render setting "Image Units Scale" (REDSHIFT_RENDERER_IMAGE_UNITS_SCALE, from
+// Redshift 2026 on; 100 by default), read from a Redshift video post of the document's active render
+// data (a scene set up for Redshift keeps it when Cycles Render is chosen), else its default. A point
+// or spot light in "Image" is (scale / 100)^2 times as strong (measured: 50 gives 0.25, 200 gives 4.0;
+// the other units, area and infinite lights do not change).
+static maxon::Float64 RedshiftImageUnitsScale(const cinema::BaseObject* light)
+{
+	const cinema::BaseDocument* const doc = light->GetDocument();
+	const cinema::RenderData* const renderData = doc ? doc->GetActiveRenderData() : nullptr;
+	for (const cinema::BaseVideoPost* post = renderData ? FirstVideoPost(renderData) : nullptr; post; post = post->GetNext())
+	{
+		if (post->GetType() != REDSHIFT_RENDERER)
+			continue;
+		const maxon::Float64 scale = GetFloatParameter(post, REDSHIFT_RENDERER_IMAGE_UNITS_SCALE, 100.0);
+		return scale > 0.0 ? scale : 100.0;
+	}
+	return 100.0;
+}
+
+// Redshift's area light "Spread" s (1: a plain diffuse emitter) in Blender's terms. Measured with
+// Redshift 2027.0.0 (a 10 cm light 1 m over a floor): within the half angle s * 90 degrees the light
+// is the diffuse one times 1 / (1 - cos(s * 90)), beyond it nothing (s 0.8: 1.447 to 72 degrees;
+// s 0.5: 3.414 to 45; s 0.3: 9.17 to 27). Cycles' spread is another profile: from the axis it falls
+// with the tangent of the angle to nothing at half the spread, its power kept (Blender's
+// intern/cycles/kernel/light/area.h, read; the model reproduces Cycles' measured floor to 2 %).
+// The table gives, per s, Blender's half angle and a factor for the power that come closest to
+// Redshift's light on a floor below a small light (least squares of the floor's brightness, weighted
+// by the floor's area, out to 80 degrees; docs/reference/c4d-sdk.md, "Redshift lights"). What is left
+// is the difference of the profiles: Blender's edge is soft and lies farther out.
+// Sets `spread` (Blender's full angle) and returns the factor for the power.
+static maxon::Float64 RedshiftSpread(maxon::Float64 s, maxon::Float64& spread)
+{
+	// s in steps of 0.05 from 0 to 1: Blender's half angle in degrees, the power factor.
+	static const maxon::Float64 TABLE[21][2] = {
+		{ 0.0, 2.000 }, { 6.00, 1.988 }, { 12.05, 1.984 }, { 18.05, 1.979 }, { 24.10, 1.961 }, { 30.25, 1.949 }, { 36.40, 1.926 },
+		{ 42.70, 1.908 }, { 49.00, 1.883 }, { 55.35, 1.857 }, { 61.85, 1.836 }, { 68.25, 1.809 }, { 74.40, 1.775 }, { 79.85, 1.721 },
+		{ 84.25, 1.644 }, { 87.35, 1.543 }, { 89.05, 1.423 }, { 89.80, 1.300 }, { 90.0, 1.184 }, { 90.0, 1.084 }, { 90.0, 1.000 } };
+	spread = maxon::PI;
+	const maxon::Float64 position = maxon::ClampValue(s, 0.0, 1.0) * 20.0;
+	const maxon::Int index = maxon::Min(maxon::Int(position), maxon::Int(19));
+	const maxon::Float64 t = position - maxon::Float64(index);
+	const maxon::Float64 halfAngle = (TABLE[index][0] + t * (TABLE[index + 1][0] - TABLE[index][0])) * maxon::PI / 180.0;
+	const maxon::Float64 factor = TABLE[index][1] + t * (TABLE[index + 1][1] - TABLE[index][1]);
+	if (halfAngle < maxon::PI * 0.5 - 1e-6)
+		spread = 2.0 * halfAngle;
+	return factor;
+}
+
+static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const Coords& coords, const DocumentColors& colors, maxon::Float64 multiplier,
+	const cinema::Vector& scale, BlenderLight& out, SceneWriter* writer)
 {
 	const maxon::Float64 value = GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_INTENSITY, 1.0) *
 		maxon::Pow(2.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_EXPOSURE, 0.0)) * multiplier;
@@ -196,15 +373,46 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 		Warn(writer, FormatString("Light \"@\": Redshift portal lights are not translated; Cycles samples the environment without them.", light->GetName()));
 		return false;
 	}
-	if (GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_UNITSTYPE, REDSHIFT_LIGHT_UNITSTYPE_IMAGE) != REDSHIFT_LIGHT_UNITSTYPE_IMAGE)
-		Warn(writer, FormatString("Light \"@\": only the intensity unit \"Image\" is translated; its intensity is read as such.", light->GetName()));
-	if (GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_DECAYTYPE, REDSHIFT_LIGHT_DECAYTYPE_INVERSE_SQUARE) != REDSHIFT_LIGHT_DECAYTYPE_INVERSE_SQUARE)
-		Warn(writer, FormatString("Light \"@\": lights in Blender always fall off with the square of the distance.", light->GetName()));
-	if (GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLORMODE, REDSHIFT_LIGHT_COLORMODE_COLOR) != REDSHIFT_LIGHT_COLORMODE_COLOR)
-		Warn(writer, FormatString("Light \"@\": the colour temperature is not translated; the colour of the light is used.", light->GetName()));
 
-	out.color = GetVectorParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLOR, cinema::Vector(1.0));
+	// The colour: the light's colour, its temperature's, or both multiplied (measured).
+	const cinema::Vector color = GetVectorParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLOR, cinema::Vector(1.0));
+	const maxon::Int32 colorMode = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLORMODE, REDSHIFT_LIGHT_COLORMODE_COLOR);
+	if (colorMode == REDSHIFT_LIGHT_COLORMODE_COLOR)
+	{
+		out.color = color;
+	}
+	else
+	{
+		const cinema::Vector warm = RedshiftTemperatureColor(GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_TEMPERATURE, 6500.0), colors);
+		out.color = colorMode == REDSHIFT_LIGHT_COLORMODE_TEMPERATURE_AND_COLOR ? cinema::Vector(warm.x * color.x, warm.y * color.y, warm.z * color.z) : warm;
+	}
+	if (HasRedshiftTexture(light))
+		Warn(writer, FormatString("Light \"@\": a texture on a Redshift light is not translated; the light's colour is used.", light->GetName()));
 	out.useShadow = RedshiftLightCastsShadow(light);
+
+	const maxon::Int32 unit = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_UNITSTYPE, REDSHIFT_LIGHT_UNITSTYPE_IMAGE);
+	const maxon::Float64 efficacy = maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_LUMENSPERWATT, 17.0));
+	// A point or spot light in "Image" follows Redshift's render setting "Image Units Scale".
+	const maxon::Bool pointLike = type != REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE && type != REDSHIFT_LIGHT_TYPE_PHYSICALSUN && type != REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA;
+	maxon::Float64 imageScale = 1.0;
+	if (pointLike && unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE)
+	{
+		const maxon::Float64 ratio = RedshiftImageUnitsScale(light) / 100.0;
+		imageScale = ratio * ratio;
+	}
+	// An older Redshift counts these otherwise; named, translated as the measured versions render them.
+	// Measured alike in Redshift 3.6.04: area and infinite lights in "Image" with their shapes, scale and
+	// colour temperature, without "Normalize Intensity", a spread or a decay other than the inverse square.
+	const maxon::Bool area = type == REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA;
+	const maxon::Bool alike = !pointLike && unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE &&
+		!(area && GetBoolParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_NORMALIZE, false)) &&
+		!(area && GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SPREAD, 1.0) < 0.9999) &&
+		(!area || GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_DECAYTYPE, REDSHIFT_LIGHT_DECAYTYPE_INVERSE_SQUARE) == REDSHIFT_LIGHT_DECAYTYPE_INVERSE_SQUARE);
+	if (!alike && !RedshiftUnitsAsMeasured(light))
+		Warn(writer, FormatString("Light \"@\": this Redshift is older than 2026 and renders point and spot lights, other units than \"Image\", \"Normalize Intensity\", spread and decay otherwise; the light is translated as Redshift 2026 and 2027 render it.", light->GetName()));
+	const maxon::Float64 scaleX = maxon::Abs(scale.x);
+	const maxon::Float64 scaleY = maxon::Abs(scale.y);
+	const maxon::Float64 scaleZ = maxon::Abs(scale.z);
 	switch (type)
 	{
 		case REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE:
@@ -213,7 +421,7 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 			if (type == REDSHIFT_LIGHT_TYPE_PHYSICALSUN)
 				Warn(writer, FormatString("Light \"@\": the Redshift sun is rendered as a plain infinite light.", light->GetName()));
 			out.type = BLENDERLIGHT::SUN;
-			out.energy = value;
+			out.energy = value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, true);
 			out.angle = 0.0;
 			break;
 		}
@@ -221,28 +429,90 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 		{
 			const maxon::Float64 cone = maxon::ClampValue(GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_SPOT_CONE_ANGLE, maxon::PI * 40.0 / 180.0), MIN_SPOT_SIZE, MAX_SPOT_SIZE);
 			const maxon::Float64 falloff = GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_SPOT_CONE_FALLOFF_ANGLE, 0.0);
+			// Lumens and watts are spread over the cone, its falloff included (measured).
+			const maxon::Float64 coneSolidAngle = 2.0 * maxon::PI * (1.0 - maxon::Cos(cone * 0.5));
 			out.type = BLENDERLIGHT::SPOT;
-			out.energy = 4.0 * maxon::PI * value;
+			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, coneSolidAngle, 0.0, false) * imageScale;
 			out.radius = 0.0;
 			out.spotSize = cone;
 			out.spotBlend = SpotBlend(maxon::Max(0.0, cone - 2.0 * falloff), cone);
+			if (GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_SPOT_CONE_FALLOFF_CURVE, 0.0) > 0.0)
+				Warn(writer, FormatString("Light \"@\": the spot's \"Falloff Curve\" is not translated; Blender's spot is evenly bright inside its cone.", light->GetName()));
 			break;
 		}
 		case REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA:
 		{
 			const maxon::Int32 geometry = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_GEOMETRY, REDSHIFT_LIGHT_AREA_GEOMETRY_RECTANGLE);
-			const maxon::Float64 sizeX = coords.Length(GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SIZEX, 200.0));
-			const maxon::Float64 sizeY = coords.Length(GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SIZEY, 200.0));
-			const maxon::Bool disc = geometry == REDSHIFT_LIGHT_AREA_GEOMETRY_DISC;
-			if (!disc && geometry != REDSHIFT_LIGHT_AREA_GEOMETRY_RECTANGLE)
-				Warn(writer, FormatString("Light \"@\": this area shape is rendered as a rectangle, and its brightness will differ.", light->GetName()));
-			const maxon::Float64 area = disc ? maxon::PI * 0.25 * sizeX * sizeX : sizeX * sizeY;
+			const maxon::Float64 sizeX = coords.Length(maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SIZEX, 200.0))) * scaleX;
+			const maxon::Float64 sizeY = coords.Length(maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SIZEY, 200.0))) * scaleY;
+			const maxon::Float64 sizeZ = coords.Length(maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SIZEZ, 200.0))) * scaleZ;
 			const maxon::Bool normalized = GetBoolParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_NORMALIZE, false);
+			// The surface that emits, as Redshift counts it for "Normalize" and the units (measured):
+			// a sphere's diameter is Size X (Size Y and Z only change how it looks), a cylinder of the
+			// diameters Size X and Size Y runs along its Z by Size Z (its side emits).
+			maxon::Float64 surface = sizeX * sizeY;
+			maxon::Float64 diameter = 0.0;
+			switch (geometry)
+			{
+				case REDSHIFT_LIGHT_AREA_GEOMETRY_DISC:
+					surface = maxon::PI * 0.25 * sizeX * sizeY;
+					break;
+				case REDSHIFT_LIGHT_AREA_GEOMETRY_SPHERE:
+					diameter = sizeX;
+					surface = maxon::PI * diameter * diameter;
+					break;
+				case REDSHIFT_LIGHT_AREA_GEOMETRY_CYLINDER:
+					diameter = 0.5 * (sizeX + sizeY);
+					surface = maxon::PI * diameter * sizeZ;
+					break;
+				case REDSHIFT_LIGHT_AREA_GEOMETRY_RECTANGLE:
+					break;
+				default:
+					Warn(writer, FormatString("Light \"@\": a mesh as the shape of a Redshift area light is not translated; it is rendered as a rectangle of its size.", light->GetName()));
+					break;
+			}
+			if (surface <= 0.0)
+				return false;
+			// Its radiance in Redshift's terms of "Image": "Normalize" counts in that unit only.
+			const maxon::Float64 radiance = value * RedshiftUnitFactor(unit, efficacy, 0.0, surface, false) /
+				((unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE && normalized) ? surface : 1.0);
+			if (geometry == REDSHIFT_LIGHT_AREA_GEOMETRY_SPHERE)
+			{
+				// Blender's point light with a radius is that sphere: power pi * L * (pi d^2).
+				// Blender's "Soft Falloff" (on by default) lights as a disc facing the point would, 1 / (1 + (r/d)^2)
+				// of the sphere (measured: 0.941 of Redshift's at r/d = 0.25); off, it is the sphere.
+				out.type = BLENDERLIGHT::POINT;
+				out.radius = 0.5 * diameter;
+				out.softFalloff = false;
+				out.energy = maxon::PI * radiance * surface;
+				break;
+			}
+			if (geometry == REDSHIFT_LIGHT_AREA_GEOMETRY_CYLINDER)
+			{
+				// Blender has no tube. A sphere as bright as the tube seen from its side: Redshift's tube
+				// lights a floor below its middle as a diffuse tube of twice its radiance would (measured
+				// for round tubes, 2.0 within 4 %), radiant intensity 2 L d l there, so power 4 pi of that.
+				Warn(writer, FormatString("Light \"@\": Blender has no cylinder light; it is rendered as a sphere as bright as the cylinder seen from its side (brighter along its axis).", light->GetName()));
+				out.type = BLENDERLIGHT::POINT;
+				out.radius = 0.5 * diameter;
+				out.softFalloff = false;
+				out.energy = 4.0 * maxon::PI * 2.0 * radiance * diameter * sizeZ;
+				break;
+			}
 			out.type = BLENDERLIGHT::AREA;
-			out.energy = maxon::PI * value * (normalized ? 1.0 : area);
-			out.shape = disc ? BLENDERAREA::DISK : BLENDERAREA::RECTANGLE;
+			const maxon::Bool round = geometry == REDSHIFT_LIGHT_AREA_GEOMETRY_DISC;
+			const maxon::Bool square = maxon::Abs(sizeX - sizeY) <= 1e-9 * maxon::Max(sizeX, sizeY);
+			out.shape = round ? (square ? BLENDERAREA::DISK : BLENDERAREA::ELLIPSE) : BLENDERAREA::RECTANGLE;
 			out.size = sizeX;
 			out.sizeY = sizeY;
+			const maxon::Float64 spread = GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_SPREAD, 1.0);
+			out.energy = maxon::PI * radiance * surface * RedshiftSpread(spread, out.spread);
+			if (spread < 0.9999)
+				Warn(writer, FormatString("Light \"@\": Blender's spread is shaped otherwise than Redshift's: matched in strength, its edge is softer and lies farther out (Eevee ignores the spread).", light->GetName()));
+			// Seen by the camera as in Redshift (its ray contribution "Camera", on by default).
+			out.rayVisibility = true;
+			out.visibleCamera = GetFloatParameter(light, REDSHIFT_CAMERA_CONTRIBUTION, 1.0) > 0.0;
+			out.twoSided = GetBoolParameter(light, REDSHIFT_LIGHT_PHYSICAL_AREA_BIDIRECTIONAL, false);
 			break;
 		}
 		default:
@@ -250,9 +520,39 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 			if (type != REDSHIFT_LIGHT_TYPE_PHYSICAL_POINT)
 				Warn(writer, FormatString("Light \"@\": this Redshift light type is rendered as a point light.", light->GetName()));
 			out.type = BLENDERLIGHT::POINT;
-			out.energy = 4.0 * maxon::PI * value;
+			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, false) * imageScale;
 			out.radius = 0.0;
 			break;
+		}
+	}
+	if (out.energy <= 0.0)
+	{
+		Warn(writer, FormatString("Light \"@\": Redshift renders this light black in its unit (an area light's unit on a point or spot light); it is left out.", light->GetName()));
+		return false;
+	}
+
+	// Decay. Blender's lights always fall off with the square of the distance. Redshift's "None" is
+	// as bright at any distance as its inverse square is at 1 m, and "Linear" falls from that to
+	// nothing between Start and Stop (measured; Start and Stop count for "Linear" only). Matched:
+	// "None" at 1 m (the light is unchanged), "Linear" halfway between Start and Stop.
+	if (type != REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE && type != REDSHIFT_LIGHT_TYPE_PHYSICALSUN)
+	{
+		const maxon::Int32 decay = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_DECAYTYPE, REDSHIFT_LIGHT_DECAYTYPE_INVERSE_SQUARE);
+		if (decay == REDSHIFT_LIGHT_DECAYTYPE_NONE)
+		{
+			Warn(writer, FormatString("Light \"@\": Blender's lights fall off with the square of the distance; Redshift's decay \"None\" is matched 1 m from the light (brighter closer, darker farther).", light->GetName()));
+		}
+		else if (decay == REDSHIFT_LIGHT_DECAYTYPE_LINEAR)
+		{
+			const maxon::Float64 start = coords.Length(maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_FALLOFFSTART, 0.0)));
+			const maxon::Float64 stop = coords.Length(maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_FALLOFFSTOP, 100.0)));
+			// Halfway the ramp is at one half; a ramp without length is a step at Start.
+			const maxon::Float64 middle = stop > start ? 0.5 * (start + stop) : start;
+			const maxon::Float64 ramp = stop > start ? 0.5 : 1.0;
+			out.energy *= ramp * middle * middle;   // metres: 1 m is where Redshift's light is v
+			Warn(writer, FormatString("Light \"@\": Blender's lights fall off with the square of the distance; Redshift's linear decay is matched halfway between its Start and Stop.", light->GetName()));
+			if (out.energy <= 0.0)
+				return false;
 		}
 	}
 	return true;
@@ -275,7 +575,7 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 		return false;
 	out.color = colors.Input(GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0)));
 	// Every standard light casts shadows, also with "Shadow" set to None (Cinema 4D's default, under
-	// which the Standard renderer casts none): the maintainer's decision for 0.2.0 (F20). A Cycles
+	// which the Standard renderer casts none): the maintainer's decision. A Cycles
 	// Light tag's Settings tab turns them off (ExportLight). The shadow type decides how soft they are
 	// (ApplyShadowSoftness): None and Raytraced (Hard) sharp, Area and Shadow Maps (Soft) through the
 	// light's size; an area light keeps its own size whatever the type.
@@ -370,13 +670,21 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 }
 
 maxon::Bool TranslateLight(const cinema::BaseObject* light, const Coords& coords, const DocumentColors& colors, maxon::Float64 multiplier,
-	BlenderLight& out, SceneWriter* writer)
+	const cinema::Matrix& mg, BlenderLight& out, SceneWriter* writer)
 {
 	if (!light)
 		return false;
 	if (light->GetType() == Orslight)
-		return TranslateRedshiftLight(light, coords, multiplier, out, writer);
+	{
+		const cinema::Vector scale(mg.sqmat.v1.GetLength(), mg.sqmat.v2.GetLength(), mg.sqmat.v3.GetLength());
+		return TranslateRedshiftLight(light, coords, colors, multiplier, scale, out, writer);
+	}
 	return TranslateStandardLight(light, coords, colors, multiplier, out, writer);
+}
+
+maxon::String BackLightId(const maxon::String& id)
+{
+	return id + "_back"_s;
 }
 
 static void WriteLinking(JsonWriter& json, const LightLinking* linking)
@@ -393,7 +701,8 @@ static void WriteLinking(JsonWriter& json, const LightLinking* linking)
 }
 
 // Writes the item. A translated light sends what it sent before the plugin had lights of its own,
-// field for field; the extra blocks only when they were filled.
+// field for field, and a Redshift area light's spread, a sphere's soft falloff and the camera's
+// view when it has them; the extra blocks only when they were filled.
 static void WriteLight(SceneWriter& writer, const Coords& coords, const cinema::Matrix& mg, const maxon::String& id, const BlenderLight& light,
 	const LightLinking* linking)
 {
@@ -417,6 +726,9 @@ static void WriteLight(SceneWriter& writer, const Coords& coords, const cinema::
 			json.String("type", "POINT"_s);
 			json.Float("energy", light.energy);
 			json.Float("shadow_soft_size", light.radius);
+			// A translated sphere (a Redshift area light's) is lit as a sphere: Soft Falloff off.
+			if (!light.blenderSettings && !light.softFalloff)
+				json.Bool("use_soft_falloff", false);
 			break;
 		case BLENDERLIGHT::SPOT:
 			json.String("type", "SPOT"_s);
@@ -434,6 +746,9 @@ static void WriteLight(SceneWriter& writer, const Coords& coords, const cinema::
 			json.Float("size", light.size);
 			if (light.shape == BLENDERAREA::RECTANGLE || light.shape == BLENDERAREA::ELLIPSE)
 				json.Float("size_y", light.sizeY);
+			// A translated light's spread (a Redshift area light's) only when it is not Blender's default.
+			if (!light.blenderSettings && light.spread < maxon::PI)
+				json.Float("spread", light.spread);
 			break;
 		}
 	}
@@ -497,8 +812,11 @@ static void NoteCameraVisibility(SceneWriter& writer, const cinema::BaseObject* 
 	}
 }
 
-maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
-	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights)
+// ExportLight without the bookkeeping of the other side: sets `written` when a two-sided light wrote
+// its other side (BackLightId).
+static maxon::Bool WriteTranslatedLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
+	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights,
+	maxon::Bool& written)
 {
 	// The green check in the Object Manager. The walk leaves such a light out already; this keeps a
 	// light written alone (the IPR during a drag, SceneExporter::WriteLightAlone) in step with it.
@@ -532,8 +850,16 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 		ReadLightPanel(tag, coords, colors, values);
 		values.useShadow = shadow;
 		values.energy *= multiplier;
+		// How the light is seen stays the light's own (a Redshift area light's camera visibility),
+		// until the Visibility tab says otherwise; what it emits, its back side included, is the tab's.
+		BlenderLight own;
+		if (light->GetType() == Orslight && TranslateLight(light, coords, colors, multiplier, mg, own, nullptr) && own.rayVisibility)
+		{
+			values.rayVisibility = true;
+			values.visibleCamera = own.visibleCamera;
+		}
 	}
-	else if (!TranslateLight(light, coords, colors, multiplier, values, &writer))
+	else if (!TranslateLight(light, coords, colors, multiplier, mg, values, &writer))
 	{
 		return false;
 	}
@@ -548,7 +874,28 @@ maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords
 	}
 	NoteCameraVisibility(writer, light, values, eeveeHidesLights);
 	WriteLight(writer, coords, mg, id, values, linking);
+	if (values.twoSided && values.type == BLENDERLIGHT::AREA)
+	{
+		// The other side: the same light turned half a turn about its Y axis.
+		cinema::Matrix back = mg;
+		back.sqmat.v1 = -back.sqmat.v1;
+		back.sqmat.v3 = -back.sqmat.v3;
+		WriteLight(writer, coords, back, BackLightId(id), values, linking);
+		written = true;
+	}
 	return true;
+}
+
+maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
+	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights)
+{
+	maxon::Bool back = false;
+	const maxon::Bool written = WriteTranslatedLight(writer, coords, colors, light, mg, id, multiplier, linking, eeveeHidesLights, back);
+	// A light written alone (the IPR during a drag) that no longer shines to both sides, or not at
+	// all, takes its other side out of Blender's scene; a whole export leaves it out by itself.
+	if (!back)
+		writer.RemoveItem(BackLightId(id));
+	return written;
 }
 
 } // namespace cyclesrender

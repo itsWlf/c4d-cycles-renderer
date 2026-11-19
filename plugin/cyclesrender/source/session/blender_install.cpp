@@ -129,7 +129,7 @@ maxon::Bool IsSupportedBlender(maxon::Int32 major, maxon::Int32 minor)
 // IPR's first export did not know the version and sent a setting 5.0 lacks. Blender keeps its data
 // in a folder named "<major>.<minor>" next to the executable, which tells the version that matters
 // here (the patch stays 0). Any such folder counts, not only a supported version's: measured with
-// Blender 4.2.11 (2026-11-17, B7), whose answer was missing on one start of two, so that it passed
+// Blender 4.2.11 (2026-11-17), whose answer was missing on one start of two, so that it passed
 // as "version unknown" and was started, instead of being named as not supported.
 static maxon::Result<void> VersionFromDataFolder(BlenderInstall& install)
 {

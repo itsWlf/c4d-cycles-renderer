@@ -92,6 +92,7 @@ class Scene:
                 pointclouds.remove_data(data)
 
     def _remove_object(self, item_id):
+        """Remove the object of an item, with the light or camera data only it uses."""
         old = self.objects.pop(item_id, None)
         if old is None:
             return

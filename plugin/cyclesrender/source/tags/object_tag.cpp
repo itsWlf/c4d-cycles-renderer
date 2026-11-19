@@ -63,7 +63,9 @@ public:
 		const cinema::BaseList2D* const item = static_cast<const cinema::BaseList2D*>(node);
 		const maxon::Int32 parameter = id.GetDepth() > 0 ? id[0].id : 0;
 		maxon::Int32 enable = 0;
-		if (parameter >= CYCLESOBJECT_VOLUME_DENSITY && parameter < CYCLESOBJECT_VOLUME_ENABLE)
+		// The Volume tab's settings lie on both sides of its switch (1010): 1000 to 1009, 1011 and 1012.
+		if ((parameter >= CYCLESOBJECT_VOLUME_DENSITY && parameter < CYCLESOBJECT_VOLUME_ENABLE) || parameter == CYCLESOBJECT_VOLUME_TEMPERATURE
+			|| parameter == CYCLESOBJECT_VOLUME_FIRE_MODE)
 			enable = CYCLESOBJECT_VOLUME_ENABLE;
 		else if (parameter > CYCLESOBJECT_VISIBILITY_ENABLE && parameter < CYCLESOBJECT_LINKING_ENABLE)
 			enable = CYCLESOBJECT_VISIBILITY_ENABLE;

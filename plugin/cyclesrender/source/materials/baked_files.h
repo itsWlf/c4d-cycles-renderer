@@ -14,9 +14,11 @@ class BridgeClient;
 class SceneWriter;
 
 //----------------------------------------------------------------------------------------
-/// Baked files are written by MaterialExporter::GetBakedImageId and GetPixelImageId into a
-/// folder of this process, <preferences>/cyclesrender/baked/session-<process id>-<time>, and
-/// known by the id of their `image` item, which follows from what was baked. An export that
+/// Baked files are written by MaterialExporter::GetBakedImageId and GetPixelImageId, and the
+/// copies of files Blender cannot open itself (MaterialExporter::ResolveImageUrl: an image of
+/// the Asset Browser), into a folder of this process,
+/// <preferences>/cyclesrender/baked/session-<process id>-<time>, and known by the id of their
+/// `image` item, which follows from what was baked. An export that
 /// asks for a known id gets the file again instead of a new bake: within a session, across
 /// final renders and the IPR.
 ///

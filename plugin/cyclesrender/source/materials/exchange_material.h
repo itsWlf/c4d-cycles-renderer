@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Node materials and Redshift materials, through Cinema 4D's own material exchange.
+// Node materials no other translator reads (and Redshift materials whose surface node redshift_material.h does not know), through Cinema 4D's own material exchange.
 
 #ifndef CYCLESRENDER_EXCHANGE_MATERIAL_H__
 #define CYCLESRENDER_EXCHANGE_MATERIAL_H__
@@ -22,7 +22,9 @@ class MaterialExporter;
 ///
 /// Used: base colour and weight, metalness, specular weight, roughness and IOR,
 /// transmission, coat (weight, roughness, IOR), sheen, emission, opacity. Textures are used
-/// for base colour, roughness, metalness, emission colour and opacity.
+/// for base colour, metalness, roughness, transmission, coat weight and roughness, sheen,
+/// emission colour and opacity; a texture on base weight, specular, IOR, coat IOR or emission
+/// strength is left out and named in the console.
 ///
 /// @param[out] surface  The surface output of the nodes added to @p graph.
 /// @return              False, with nothing added, when Cinema 4D could not describe the material.

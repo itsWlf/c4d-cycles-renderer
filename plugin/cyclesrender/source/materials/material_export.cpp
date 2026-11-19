@@ -1180,6 +1180,12 @@ maxon::Result<void> MaterialExporter::WriteLayers(const maxon::BaseArray<Materia
 			// A Redshift material is read from its Standard Material node; any other node
 			// material, as Cinema 4D describes it to other programs.
 			// A material of Cycles nodes goes to Blender as it is.
+			// The texture tag's placement is read for classic materials only.
+			if (!layers[i].mapping.IsPlain())
+			{
+				Warn(FormatString("Material \"@\": the projection, offset and tiles of its texture tag are translated for classic materials only; "
+					"this one is placed as with UVW mapping, no offset and no tiles.", material->GetName()));
+			}
 			NodeOutput layerDisplacement;
 			CyclesMaterialSettings layerSettings;
 			maxon::Bool described = BuildCyclesNodeSurface(*this, graph, material, layerSurface, layerDisplacement, layerSettings) iferr_return;
@@ -1259,6 +1265,17 @@ void MaterialExporter::Warn(const maxon::String& message)
 	_writer.Warn(message);
 }
 
+maxon::Result<void> MaterialExporter::TakeIds(MaterialIdTable& table)
+{
+	iferr_scope;
+	table.ids = std::move(_materials);
+	table.keyed = std::move(_keyedMaterials);
+	table.hasDefault = _defaultId.IsPopulated();
+	_materials.Reset();
+	_keyedMaterials.Reset();
+	return maxon::OK;
+}
+
 maxon::Result<maxon::String> MaterialExporter::GetMaterialId(cinema::BaseMaterial* material)
 {
 	iferr_scope;
@@ -1279,6 +1296,11 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseAr
 
 	if (layers.IsEmpty())
 	{
+		if (_known)
+		{
+			_unknown = _unknown || !_known->hasDefault;
+			return _known->hasDefault ? "material_default"_s : maxon::String();
+		}
 		if (_defaultId.IsEmpty())
 		{
 			// What Cinema 4D renders for an object without a material: its 80 % grey, which is
@@ -1293,6 +1315,13 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseAr
 	maxon::String key;
 	for (const MaterialLayer& layer : layers)
 		key += FormatString("@:@;", maxon::String::HexToString(maxon::UInt64(reinterpret_cast<maxon::UInt>(layer.material)), false), layer.mapping.GetKey());
+	if (_known)
+	{
+		// Only what an earlier export wrote (SetKnownIds).
+		const auto* const known = _known->ids.Find(key);
+		_unknown = _unknown || !known;
+		return known ? known->GetValue() : maxon::String();
+	}
 	if (const auto* const known = _materials.Find(key))
 		return known->GetValue();
 

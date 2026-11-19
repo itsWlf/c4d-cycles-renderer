@@ -6,8 +6,8 @@ into plugin/cyclesrender/res/icons.
 
 Run it only to change an icon; the PNG files it writes are checked in. Each icon is described
 below as a function inside(x, y) on the unit square (y down); the script samples it 6 x 6
-times per pixel for smooth edges and writes a light-grey shape on a transparent background.
-Standard library only.
+times per pixel for smooth edges and writes it on a transparent background, light grey unless
+the function gives colours of its own. Standard library only.
 """
 
 import math
@@ -174,8 +174,8 @@ def app_grey(x, y):
 
 
 def camera_tag(x, y):
-    """The Cycles Camera tag's icon (the maintainer's wish, 0.2.0): the plugin's hexagon in grey,
-    a dark background with a lighter circle, so it reads as the plugin's but not as a colour."""
+    """The Cycles Camera tag's icon: the plugin's hexagon in grey, a dark background with a
+    lighter circle, so it reads as the plugin's but not as a colour."""
     dx, dy = abs(x - 0.5), abs(y - 0.5)
     hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
     if not hexagon:
@@ -188,9 +188,8 @@ def camera_tag(x, y):
 
 
 def light(x, y):
-    """The icon of the Cycles Light object and of the Cycles Light tag (the maintainer's wish,
-    0.2.0): the camera tag's kind of variant in yellow, the plugin's hexagon in a dark yellow with
-    a lighter, shaded yellow circle."""
+    """The icon of the Cycles Light object and of the Cycles Light tag: the camera tag's kind of
+    variant in yellow, the plugin's hexagon in a dark yellow with a lighter, shaded yellow circle."""
     dx, dy = abs(x - 0.5), abs(y - 0.5)
     hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
     if not hexagon:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef C4D_SYMBOLS_H__
 #define C4D_SYMBOLS_H__
 

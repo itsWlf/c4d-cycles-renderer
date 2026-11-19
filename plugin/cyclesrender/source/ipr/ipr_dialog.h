@@ -25,7 +25,8 @@ void OpenIprDialog();
 /// For tests (ipr_testhook): what the window's own controls do.
 ///   open, zoom <percent>, type_zoom <percent> (as if typed into the zoom field), fit, snapshot, save <file>,
 ///   pick_camera <position in the dropdown's list of cameras>,
-///   click start|pause|reload|lock|snapshot|frame|settings|close|restart_blender|show_blender|scale_50|scale_100,
+///   click start|pause|reload|lock|snapshot|frame|settings|close|restart_blender|show_blender|scale_50|scale_100|
+///   fit_window|add_material|add_camera|add_camera_tag|add_object_tag|add_light|add_light_tag,
 ///   click image (a plain click on the picture: starts again after a failure, or opens the Preferences
 ///   when no Blender can be started, IprController::IsBlenderMissing())
 /// @param[out] problem  Why the command could not be carried out.
@@ -33,19 +34,25 @@ void OpenIprDialog();
 //----------------------------------------------------------------------------------------
 maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::String& argument, maxon::String& problem);
 
-/// Any thread: the window is open, the IPR renders, the Preferences' live updates are on (0.2.0, F22;
-/// prefs/settings.h, GetIprLiveUpdates), and its timer has not run for three periods, so Cinema 4D is
+/// Any thread: the window is open, the IPR renders, the Preferences' live updates are on
+/// (prefs/settings.h, GetIprLiveUpdates), and its timer has not run for three periods, so Cinema 4D is
 /// in a modal loop (a drag in a view or in the Attribute Manager) that the IPR follows. For ipr_scenehook.h.
 maxon::Bool IsIprInModalLoop();
+/// Any thread: the Preferences' "Optimized Live Updates" as the window's timer last read it.
+maxon::Bool IsIprOptimizedInLoop();
 
 //----------------------------------------------------------------------------------------
 /// Main thread: the active document has been evaluated, or a frame arrived (ipr_scenehook.h). If
 /// Cinema 4D is in a modal loop, what can be sent alone follows (IprController::FollowStep with the
-/// Preferences' "Optimized Live Updates": the camera, the lights, the place of objects; without it
-/// the lights, IprController::FollowLights) and the newest frame is shown. Otherwise nothing: the
-/// change event and the timer do that.
+/// Preferences' "Optimized Live Updates": the camera, the lights, the place of objects, the meshes of
+/// generators and deformed objects that changed; without it the lights, IprController::FollowLights)
+/// and the newest frame is shown. Otherwise nothing: the change event and the timer do that.
+/// @param[in] evaluated  The call is the scene hook's at the end of an evaluation on the main thread:
+///                       the document's caches can be read. False for a frame that arrived, and after
+///                       an evaluation on another thread (which IprController::FollowEvaluation has
+///                       followed on that thread): another thread may be evaluating the document.
 //----------------------------------------------------------------------------------------
-void FollowIprEvaluation();
+void FollowIprEvaluation(maxon::Bool evaluated);
 
 /// Number of scene cameras the window's dropdown lists; NOTOK when the window is closed. For tests.
 maxon::Int GetIprDialogCameraCount();

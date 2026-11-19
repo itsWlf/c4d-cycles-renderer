@@ -18,6 +18,7 @@ class _Rect(ctypes.Structure):
 
 
 def _user32():
+    """user32.dll with the argument types of the calls made here (handles are pointers on 64 bits)."""
     user32 = ctypes.windll.user32
     user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
     user32.GetClientRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Rect)]
@@ -49,6 +50,7 @@ def find():
 
 
 def show(hwnd, visible):
+    """Show the window without activating it, or hide it."""
     if hwnd:
         _user32().ShowWindow(hwnd, _SW_SHOWNOACTIVATE if visible else _SW_HIDE)
 

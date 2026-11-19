@@ -10,7 +10,7 @@
 namespace cyclesrender
 {
 
-static maxon::String Escaped(const maxon::String& value)
+maxon::String JsonQuoted(const maxon::String& value)
 {
 	maxon::String result = "\""_s;
 	for (maxon::Int i = 0; i < value.GetLength(); ++i)
@@ -88,7 +88,7 @@ void JsonWriter::EndArray()
 void JsonWriter::String(const maxon::Char* key, const maxon::String& value)
 {
 	Separator(key);
-	_text += Escaped(value);
+	_text += JsonQuoted(value);
 }
 
 void JsonWriter::Int(const maxon::Char* key, maxon::Int64 value)

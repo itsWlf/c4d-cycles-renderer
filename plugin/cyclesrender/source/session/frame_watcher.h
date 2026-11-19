@@ -18,7 +18,7 @@ namespace cyclesrender
 /// message ID_CORE_MESSAGE. The main thread then calls Take(). So a frame is on its way to
 /// the screen without anyone polling, and copying it does not hold up Cinema 4D's interface.
 /// It also hashes every frame (Frame::contentHash), so that the window can leave out a frame that
-/// shows nothing new, and announces a frame Take() held back once it may be shown (0.2.0, B11).
+/// shows nothing new, and announces a frame Take() held back once it may be shown.
 //----------------------------------------------------------------------------------------
 class FrameWatcher : public cinema::C4DThread
 {
@@ -35,7 +35,7 @@ public:
 	//----------------------------------------------------------------------------------------
 	/// Moves the newest frame into @p frame if Take() has not returned it yet.
 	/// @param[out] arrivalTime  When the frame was fetched from shared memory (Unix seconds).
-	/// @param[in] minSeconds    At most one frame per this many seconds (0.2.0, B11): a frame asked for
+	/// @param[in] minSeconds    At most one frame per this many seconds: a frame asked for
 	///                          sooner is held back (false), and the watcher announces it again, with the
 	///                          core message and the arrival callback, as soon as its time has come, so the
 	///                          newest frame is always shown in the end. 0: no limit (tests reading frames).

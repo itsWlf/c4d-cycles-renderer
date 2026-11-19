@@ -69,8 +69,7 @@ static const cinema::Int32 ID_LIGHT_OBJECT = 1073987;
 
 /// The scene hook that tells the IPR the document was evaluated during a modal loop
 /// (ipr/ipr_scenehook.h). Stored in every scene file saved with the plugin, which is why it has a
-/// number of its own and does not share the renderer's. (Development builds of 2026-11-16 used
-/// the test number 1000001 for one day; it was never committed or published.)
+/// number of its own and does not share the renderer's.
 static const cinema::Int32 ID_IPR_SCENE_HOOK = 1074340;
 
 } // namespace cyclesrender

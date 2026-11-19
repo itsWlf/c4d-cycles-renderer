@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Navigating the scene from the IPR's picture (0.2.0, F17): a drag with Cinema 4D's navigation keys
+// Navigating the scene from the IPR's picture: a drag with Cinema 4D's navigation keys
 // orbits, pans or dollies the camera the IPR renders through, as in Cinema 4D's own views.
 
 #ifndef CYCLESRENDER_IPR_NAVIGATION_H__
@@ -15,7 +15,7 @@ namespace cyclesrender
 /// What a drag in the IPR's picture does to the camera.
 enum class IPRNAV
 {
-	NONE,		///< nothing: the drag is the picture's own (it pans the picture, as before 0.2.0)
+	NONE,		///< nothing: the drag is the picture's own (it pans the picture)
 	ORBIT,	///< turns the camera around a point (Cinema 4D's "Rotate Camera")
 	PAN,		///< moves it in the plane of the picture ("Move Camera")
 	DOLLY		///< moves it nearer or further; a parallel view zooms instead ("Scale Camera")
@@ -58,6 +58,7 @@ struct NavigationPrefs
 	maxon::Float64 dollySpeed = 1.0;			///< PREF_NAVIGATION_SCALE
 	maxon::Float64 orbitSpeed = 1.0;			///< PREF_NAVIGATION_ROTATE
 
+	/// Cinema 4D's navigation preferences as they are now (read at the start of every drag).
 	static NavigationPrefs Read();
 };
 
@@ -106,8 +107,7 @@ public:
 	/// camera BaseDraw::DoUndo).
 	void Cancel();
 
-	maxon::Bool IsActive() const { return _camera != nullptr; }
-	IPRNAV GetMode() const { return _mode; }
+	/// The camera the drag moves; nullptr outside a drag.
 	cinema::BaseObject* GetCamera() const { return _camera; }
 	/// The view that shows the camera's picture (the editor camera's view, or a view looking through
 	/// the camera object), or nullptr when no view does; for redrawing it during the drag.

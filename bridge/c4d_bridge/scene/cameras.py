@@ -49,6 +49,7 @@ def remove_shear_parent(obj):
 
 
 def build_camera(scene, item, blobs):
+    """A `camera` item: lens, sensor, shift, clipping, panorama and depth of field, and its place."""
     # A camera that exists is changed in place: moving the view is the most frequent edit of all.
     existing = scene.objects.get(item["id"])
     camera = existing.data if existing is not None and existing.type == 'CAMERA' else bpy.data.cameras.new(item["id"])

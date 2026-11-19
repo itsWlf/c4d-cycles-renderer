@@ -6,6 +6,8 @@ from .common import place
 
 
 def build_object(scene, item, blobs):
+    """An `object` item: an object that shows a mesh sent before, with its place, materials,
+    visibility and properties."""
     mesh = scene.meshes.get(item["mesh"])
     if mesh is None:
         raise RequestError("bad_request", f"object {item['id']!r} refers to unknown mesh {item['mesh']!r}")
