@@ -123,6 +123,14 @@ public:
 	//----------------------------------------------------------------------------------------
 	maxon::Bool KeepMesh(const SyncState& state, const maxon::String& meshId, maxon::UInt64 signature);
 	void NoteMeshSource(const maxon::String& meshId, maxon::UInt64 signature, maxon::UInt64 after);
+	//----------------------------------------------------------------------------------------
+	/// The same for one item of any kind (a hair's `curves`): NoteItemSource() attaches @p signature to
+	/// the item that was written last, which must be @p id; KeepItem() with the same signature puts the
+	/// item into the request as Blender holds it, without its content, instead of making it again.
+	/// @return  False, with nothing added, unless @p state holds the item made from @p signature.
+	//----------------------------------------------------------------------------------------
+	maxon::Bool KeepItem(const SyncState& state, const maxon::String& id, maxon::UInt64 signature);
+	void NoteItemSource(const maxon::String& id, maxon::UInt64 signature);
 	/// True when KeepChanges() found an item of KeepMesh() that Blender does not hold as kept: the
 	/// request lacks its content and must be made again without KeepMesh(). Never seen; a guard.
 	maxon::Bool IsMissingKeptItems() const { return _missingKept; }

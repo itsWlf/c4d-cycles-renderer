@@ -219,6 +219,20 @@ Measured with a prototype script on 5.2.3, hidden, 960×540, Cycles on OptiX. [T
 - With 100,000 Geometry Nodes instances added, **every** scene edit costs 0.16–0.21 s before the first frame, including a camera-object move, because Cycles walks all object instances on each scene update.
 - Changing the viewport's own view (`region_3d.view_distance`, `view_location`, `view_rotation`, `view_matrix` with `view_perspective = 'PERSP'`) changes no scene datablock and reaches pixels in 18 ms in the same scene. Depth of field and camera-only features need camera view.
 - Eevee redraws all instances for every sample: about 0.07–0.15 s per update and 2 s for 32 samples with 100,000 instances.
+- **What an instance costs per update, and what does not help** (0.3.0, F1; measured 2026-11-23 with `internal/f1/blender_instancing.py`, Blender 5.2.3, GPU, 640 x 640, a cylinder of 48 triangles; the time from a `scene` request with new matrices until a picture with one sample, median of ten updates) [T]:
+
+  | Copies | As | Cycles | Eevee |
+  |---|---|---|---|
+  | 120,000 | a `pointcloud` (Blender's spheres) | 35 ms | 21 ms |
+  | 12,000 | one `instancer` | 34 ms | |
+  | 120,000 | one `instancer` | 242 ms | 106 ms |
+  | 120,000 | the same without Set Instance Transform (places only) | 238 ms | 102 ms |
+  | 120,000 | the same with Realize Instances after it (one mesh of 5.8 million triangles) | 308 ms | |
+  | 120,000 | 20 instancers with the same matrices (an object of 20 meshes before 0.3.0) | 5,202 ms | |
+  | 120,000 | one `instancer` with 20 `parts` (0.3.0) | 256 ms | 119 ms |
+
+  So an instance costs about 2 microseconds per update in Cycles and 1 in Eevee, whatever the nodes that make it, and the bridge's own part is small (the request was answered after 13 to 18 ms in every row but the 20 instancers', 250 ms). It is the engines' walk over the instances (the first bullet above), which a point cloud does not have: a point cloud is one geometry. Instances therefore cannot be as fast as the spheres; what can be avoided is multiplying them. Twenty meshes on 120,000 copies were 2.4 million instances and are 120,000 with `parts`. (The point cloud's own updates were sometimes 0.67 s instead of 35 ms in this measurement, in about half of the updates at 120,000 points and nine of ten at 12,000: not looked into, and not seen in the plugin's own measurement below; open.)
+- **Joining an instancer's parts** (0.3.0, F1; `bridge/c4d_bridge/scene/instancers.py`; `internal/f1/blender_join_probe.py` on 5.0.0, 5.2.3 and 5.3.0, the same on all three) [T]: geometry taken from an object with Object Info leaves the materials of the object's slots behind (two parts of one mesh with different materials on their objects came out with no material at all, and all faces in slot 0). Set by nodes they stay: per part and material slot a Set Material whose selection is `material_index` equal to the slot, before the Join Geometry (the joined mesh then lists every part's materials and each face has its own). The parts' places come from their objects' matrices with Object Info set to Relative. The prototype that carries the join is in no collection, like the single-mesh prototype, and is evaluated because the instancer's node group refers to it.
 
 ## Viewport versus final-render properties
 

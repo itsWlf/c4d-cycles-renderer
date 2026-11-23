@@ -243,6 +243,38 @@ void SceneWriter::NoteMeshSource(const maxon::String& meshId, maxon::UInt64 sign
 	}
 }
 
+maxon::Bool SceneWriter::KeepItem(const SyncState& state, const maxon::String& id, maxon::UInt64 signature)
+{
+	if (_clear || _itemOpen)
+		return false;
+	const auto* const source = state._sources.Find(id);
+	const auto* const held = state._items.Find(id);
+	if (!source || !held || source->GetValue() != signature)
+		return false;
+	Item item;
+	item.id = id;
+	item.firstBlob = _itemFirstBlob;
+	item.send = false;
+	item.kept = true;
+	item.keptFingerprint = held->GetValue();
+	item.hasSource = true;
+	item.source = signature;
+	item.sourceAfter = signature;
+	iferr (_items.Append(std::move(item)))
+		return false;
+	return true;
+}
+
+void SceneWriter::NoteItemSource(const maxon::String& id, maxon::UInt64 signature)
+{
+	if (_items.IsEmpty() || _items[_items.GetCount() - 1].id != id)
+		return;
+	Item& item = _items[_items.GetCount() - 1];
+	item.hasSource = true;
+	item.source = signature;
+	item.sourceAfter = signature;
+}
+
 maxon::UInt64 SceneWriter::Fingerprint(const Item& item) const
 {
 	if (item.kept)

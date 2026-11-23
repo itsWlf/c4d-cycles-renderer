@@ -64,7 +64,8 @@ namespace cyclesrender
 /// objects/scatter_object.h); proxy [name] answers what the Cycles Proxy object of that name holds of its file
 /// ({"found", "proxy": {"state", "status", "file", "stamp", "blender", "entries", "box", "source"}}:
 /// scene/proxy_export.h, DescribeProxy) and proxyread [name] first reads the file as its button "Read File" does
-/// (starts a Blender; adds "read" or "error"). The status also has meshes_exported, meshes_kept, export_ms
+/// (starts a Blender; adds "read" or "error"). The status also has meshes_exported, meshes_kept, hairs_generated, hairs_kept (Hair objects of the last
+/// export whose hairs were generated, or left as Blender holds them), export_ms
 /// and mesh_ms of the last export.
 /// Blender versions: versioned <code> exports the active document as for a Blender of
 /// that version (BlenderVersionCode(), 502 for 5.2), whatever Blender is installed, and answers
@@ -105,7 +106,10 @@ namespace cyclesrender
 /// the IPR started; settle_pending, whole_needed (the last step could not be sent alone), alone_ms and
 /// alone_objects (of the last step: its time, the `object` items it wrote), objects_followed and
 /// nodes_followed (what a step can write and what it compares), and meshes_by_data_hash (meshes of the
-/// last export judged by Cinema 4D's data hashes, scene/mesh_export.h).
+/// last export judged by Cinema 4D's data hashes, scene/mesh_export.h); manual_refresh (the manual
+/// mode as the last tick read it: the Preferences' "Refresh Whole Scene Only on Reload" with the live
+/// and the optimized updates) and refresh_waiting (in that mode: a change was not sent and waits for
+/// reload; whole_reason says why).
 /// Meshes in a change in progress: unevaluated runs FollowStep(false, false) (a step as a
 /// frame's call makes it in a modal loop: no cache of the document is read, so nothing is collected
 /// again), quiet <seconds> sets the time until a step may collect objects again (the guard after a step

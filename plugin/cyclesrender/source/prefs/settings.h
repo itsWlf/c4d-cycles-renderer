@@ -112,6 +112,24 @@ void SetIprLiveUpdates(cinema::Bool live);
 cinema::Bool GetIprOptimizedUpdates();
 void SetIprOptimizedUpdates(cinema::Bool optimized);
 
+//----------------------------------------------------------------------------------------
+/// Preferences > Renderer > Cycles Render > IPR, "Refresh Whole Scene Only on Reload". For scenes in
+/// which the whole export after every change is what makes Cinema 4D lag. It counts only when "Live
+/// Updates During Drags and Playback" and "Optimized Live Updates" are both on (else it is greyed out
+/// and has no effect).
+/// Off (the default): as described above, the whole scene is exported when a change has ended.
+/// On: the IPR sends only what a step can send alone (the camera, the lights, the place of objects, the
+/// meshes of single objects, the world of Cycles Environments), also when a change has ended and when
+/// the time changes, and never exports the scene whole by itself. A change a step cannot send (a
+/// material, a tag, a new or deleted object, a render dot, hair, a volume, the render settings) is not
+/// sent: the IPR's status line says that the scene has changed, and the Reload button then sends what
+/// differs. So the picture can be out of date until Reload is pressed; that is the switch's purpose.
+/// The rules: IprController, "The manual mode". Read at every tick of the IPR: a change applies to a
+/// running IPR at once. Main thread only.
+//----------------------------------------------------------------------------------------
+cinema::Bool GetIprManualRefresh();
+void SetIprManualRefresh(cinema::Bool manual);
+
 /// The development setting g_cyclesRenderIprUnoptimized (docs/development.md): the IPR exports
 /// without the optimizations of its live updates, for measuring what they gain on a given machine
 /// and scene with one build. Every redraw exports the scene (no look at the change counters, no

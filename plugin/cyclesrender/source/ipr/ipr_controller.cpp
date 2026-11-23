@@ -444,8 +444,11 @@ void IprController::Reload()
 		PostSimple("view_pause", "paused", false);
 		_state = IPRSTATE::RUNNING;
 	}
-	_sentSettings = maxon::String();
-	iferr (SyncScene(true))
+	// The manual mode, with changes waiting: the whole export that sends what differs. Else from scratch.
+	const maxon::Bool differs = _manual && _refreshWaiting && _nodesValid;
+	if (!differs)
+		_sentSettings = maxon::String();
+	iferr (SyncScene(!differs))
 		Fail(err.GetMessage());
 }
 
@@ -562,6 +565,7 @@ void IprController::SetEngineOverride(maxon::Int32 engine)
 	const IprLocked held(_lock);
 	_engineOverride = engine;
 	_sceneDirty = true;
+	_forceWhole = true;	// the settings go with a whole export, also in the manual mode
 	if (!_viewStarted)
 	{
 		// Nothing is running: still remember the engine, so the pass list is the right one.
@@ -662,6 +666,8 @@ void IprController::ForgetFollowed()
 	_redrawn = false;
 	_settlePending = false;
 	_wholeNeeded = false;
+	_refreshWaiting = false;
+	_retry = false;
 }
 
 void IprController::NoteFrame(const Frame& frame)
@@ -821,6 +827,9 @@ maxon::Result<void> IprController::SyncScene(maxon::Bool clear)
 	_redrawn = false;
 	_settlePending = false;
 	_recheck = false;
+	_refreshWaiting = false;
+	_forceWhole = false;
+	_retry = false;
 	const maxon::Float64 compared = platform::UnixTime();
 	_lastStats = exporter.GetStats();
 	_lastExportMilliseconds = (compared - exportStart) * 1000.0;
@@ -1035,6 +1044,15 @@ void IprController::Tick()
 		return;
 	}
 	TraceIpr("tick");
+	// The manual mode, read here for every thread that follows (the Preferences are the main thread's).
+	// Switched off while changes wait: the whole export it held back comes now.
+	const maxon::Bool manual = GetIprLiveUpdates() && GetIprOptimizedUpdates() && GetIprManualRefresh();
+	if (_manual && !manual && _refreshWaiting)
+	{
+		_sceneDirty = true;
+		_forceWhole = true;
+	}
+	_manual = manual;
 	if (_deferredFailure.IsPopulated())
 	{
 		const maxon::String message = _deferredFailure;
@@ -1119,7 +1137,12 @@ void IprController::Tick()
 	// playing, an EVMSG_CHANGE only when it stopped), so the time is compared on every tick; the
 	// window's timer runs while Cinema 4D plays. This also follows a time set without an event.
 	if (_exportedTimeKnown && doc->GetTime() != _exportedTime)
+	{
 		MarkSceneChanged();
+		// (The manual mode answers with a step, which exports no time: one step per time.)
+		if (_manual)
+			_exportedTime = doc->GetTime();
+	}
 
 	// While Blender is still busy with the last change, wait: the next export then covers
 	// everything that happened in the meantime.
@@ -1129,8 +1152,19 @@ void IprController::Tick()
 	if (_sceneDirty)
 	{
 		_sceneDirty = false;
-		iferr (SyncScene(false))
-			Fail(err.GetMessage());
+		// A finished edit: the scene whole; in the manual mode what a step can send (as after a redraw).
+		const maxon::Bool step = _manual && !_forceWhole && !IsIprUnoptimized();
+		if (step)
+		{
+			_redrawn = false;
+			iferr (FollowRedraw(doc))
+				Fail(err.GetMessage());
+		}
+		else
+		{
+			iferr (SyncScene(false))
+				Fail(err.GetMessage());
+		}
 	}
 	else if (_redrawn)
 	{
@@ -1140,6 +1174,33 @@ void IprController::Tick()
 	}
 	else if (_settlePending && platform::UnixTime() - _activityTime >= SETTLE_SECONDS)
 	{
+		if (_manual)
+		{
+			// Things have stood still: no whole export in the manual mode. A step that was postponed is tried
+			// again; without one nothing is looked at (a change no counter shows waits for Reload).
+			_settlePending = false;
+			const DocumentCounters counters = ReadCounters(doc);
+			if (_retry || _recheck || !(counters == _counters))
+			{
+				TraceIpr("settle_step");
+				_recheck = false;
+				iferr (const ALONE alone = SyncAlone(doc, counters, true))
+				{
+					Fail(err.GetMessage());
+					return;
+				}
+				if (alone == ALONE::NO)
+				{
+					iferr (SyncScene(false))
+						Fail(err.GetMessage());
+					return;
+				}
+				_settlePending = alone == ALONE::POSTPONED;
+			}
+			iferr (SyncView(doc))
+				Fail(err.GetMessage());
+			return;
+		}
 		// Things have stood still: Blender now gets exactly what a whole export gives.
 		++_settleCount;
 		TraceIpr("settle");
@@ -1657,6 +1718,21 @@ IprController::ALONE IprController::Whole(WHOLE why)
 	return ALONE::NO;
 }
 
+void IprController::Waits(WHOLE why)
+{
+	_lastWhole = why;
+	_refreshWaiting = true;
+	TraceIpr("alone_waits", maxon::Float64(maxon::Int(why)));
+}
+
+IprController::ALONE IprController::Refuse(WHOLE why)
+{
+	if (!_manual)
+		return Whole(why);
+	Waits(why);
+	return ALONE::WAITS;
+}
+
 maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocument* doc, const DocumentCounters& counters, maxon::Bool cachesReadable)
 {
 	iferr_scope;
@@ -1669,8 +1745,18 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 	_lastAloneKept = 0;
 	// Another time moves whatever is animated; anything but objects and tags (materials, render settings,
 	// the hierarchy, layers, takes) is not looked at here.
-	if (!_nodesValid || !_counters.known || counters.time != _counters.time || ReadOtherCounters(doc) != _otherCounters)
+	// (Nothing to compare with: a whole export, in the manual mode too.)
+	if (!_nodesValid || !_counters.known)
 		return Whole(WHOLE::DOCUMENT);
+	const maxon::Bool manual = _manual;
+	_retry = false;
+	if (counters.time != _counters.time || ReadOtherCounters(doc) != _otherCounters)
+	{
+		if (!manual)
+			return Whole(WHOLE::DOCUMENT);
+		// The manual mode: what the objects show at this time, or beside that change, still goes.
+		Waits(WHOLE::DOCUMENT);
+	}
 	// The counters of an object that shows a deformed mesh are inside its cache, which must not be read
 	// while another thread may be building it.
 	if (!cachesReadable && _anyDeformed)
@@ -1678,6 +1764,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 		++_postponedCount;
 		TraceIpr("postponed", 1.0);
 		_settlePending = true;
+		_retry = true;
 		return ALONE::POSTPONED;
 	}
 
@@ -1739,7 +1826,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 	{
 		// An object added, removed or put elsewhere: the hierarchy counter said so already; a guard.
 		if (index >= _nodes.GetCount() || _nodes[index].object != op)
-			return Whole(WHOLE::HIERARCHY);
+			return Refuse(WHOLE::HIERARCHY);
 		const FollowedNode& node = _nodes[index];
 		const maxon::UInt32 matrixDirty = op->GetDirty(cinema::DIRTYFLAGS::MATRIX);
 		const maxon::UInt32 dataDirty = op->GetDirty(cinema::DIRTYFLAGS::DATA);
@@ -1747,13 +1834,21 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 		const maxon::UInt32 cacheDirty = CacheDirty(op, node.deformed);
 		// The render dot (which counts as a change of the matrix): the objects below inherit it.
 		if (op->GetRenderMode() != node.renderMode)
-			return Whole(WHOLE::RENDER_DOT);
+		{
+			if (!manual)
+				return Whole(WHOLE::RENDER_DOT);
+			Waits(WHOLE::RENDER_DOT);
+		}
 		// A tag: its material, its selection, what it hands to the objects below (not looked into). Not so
 		// the tags of a deformer with nothing below it: its points are tag data (the cage of an FFD), and
 		// they change what the objects around it show, like its values.
 		const maxon::Bool tagsChanged = tagsDirty != node.tagsDirty;
 		if (tagsChanged && !node.dataAlone && !(node.modifier && !op->GetDown()))
-			return Whole(WHOLE::TAG);
+		{
+			if (!manual)
+				return Whole(WHOLE::TAG);
+			Waits(WHOLE::TAG);
+		}
 		// The mark "used by a generator" (as its input, or as a generator that has a cache): whether the
 		// object shows something itself. Measured: it can be off for one evaluation and on again at the next
 		// (a spline below an Extrude when its rounding was switched on), and it goes off with a generator's
@@ -1775,7 +1870,11 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 		{
 			// Its name is part of what the objects below it are sent with (the keys of Redshift's random nodes).
 			if (dataChanged && NameHash(op) != node.nameHash)
-				return Whole(WHOLE::NAME);
+			{
+				if (!manual)
+					return Whole(WHOLE::NAME);
+				Waits(WHOLE::NAME);
+			}
 			mark(index, index + 1, COLLECT) iferr_return;
 		}
 		// A deformer changes what the object above it and everything below that show.
@@ -1811,7 +1910,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 		}
 	}
 	if (index != _nodes.GetCount())
-		return Whole(WHOLE::HIERARCHY);
+		return Refuse(WHOLE::HIERARCHY);
 
 	// What shows the same object goes together: an object that changed below one an instance shows takes
 	// the instance with it, and an instance takes what it shows (the first of them in the document names
@@ -1856,9 +1955,23 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 				continue;
 			// A volume, hair, the sky, a light of a generator, a mesh shared by content: the whole export's.
 			if (_nodes[i].fixed)
-				return Whole(WHOLE::FIXED);
+			{
+				if (!manual)
+					return Whole(WHOLE::FIXED);
+				// The manual mode: nothing is collected in this step (what shows the same object goes
+				// together, so no part of the marked objects is left out alone); what only moved still goes.
+				Waits(WHOLE::FIXED);
+				owners.Reset();
+				collecting = false;
+				for (maxon::UChar& value : marks)
+					value &= maxon::UChar(~COLLECT);
+				break;
+			}
 			owners.Append(_nodes[i].object) iferr_return;
 		}
+	}
+	if (collecting)
+	{
 		// Collecting reads caches and exports meshes: not while another thread may be evaluating the document,
 		// and not again right after a step that took long (the newest state goes with a later step, or with
 		// the whole export at the end).
@@ -1867,6 +1980,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 			++_postponedCount;
 			TraceIpr("postponed", cachesReadable ? 0.0 : 1.0);
 			_settlePending = true;
+			_retry = true;
 			return ALONE::POSTPONED;
 		}
 	}
@@ -1895,7 +2009,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 		exporter.CollectOwners(owners) iferr_return;
 		exporter.Write(*task->scene) iferr_return;
 		if (exporter.IsRefused())
-			return Whole(WHOLE::REFUSED);
+			return Refuse(WHOLE::REFUSED);
 		_lastAloneOwners = maxon::Int32(owners.GetCount());
 		_lastAloneMeshes = maxon::Int32(exporter.GetStats().meshesExported);
 		_lastAloneKept = maxon::Int32(exporter.GetStats().meshesKept);
@@ -1926,7 +2040,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 			}
 		}
 		if ((differs || exporter.GetOwnedItems().GetCount() != before) && _anyLinking)
-			return Whole(WHOLE::LINKING);
+			return Refuse(WHOLE::LINKING);
 	}
 
 	// The lights, each written alone (SceneExporter::WriteLightAlone): their values and their places.
@@ -1944,7 +2058,11 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 			task->scene->RemoveItem(light.id);
 	}
 	if (lost)
-		return Whole(WHOLE::LIGHT_GONE);
+	{
+		if (!manual)
+			return Whole(WHOLE::LIGHT_GONE);
+		Waits(WHOLE::LIGHT_GONE);
+	}
 	// The world of Cycles Environments, written alone: their values, their places and a linked light's sun
 	// (SceneExporter::WriteWorldAlone).
 	if (_worldAlone)
@@ -1954,7 +2072,11 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 			environments[role] = _worldLinks[role] ? static_cast<const cinema::BaseObject*>(_worldLinks[role]->GetLink(doc, Obase)) : nullptr;
 		const maxon::Bool written = SceneExporter::WriteWorldAlone(*task->scene, doc, _exportSettings, environments, _writtenWorld) iferr_return;
 		if (!written)
-			return Whole(WHOLE::ENVIRONMENT);
+		{
+			if (!manual)
+				return Whole(WHOLE::ENVIRONMENT);
+			Waits(WHOLE::ENVIRONMENT);
+		}
 	}
 	for (const maxon::String& warning : task->scene->GetWarnings())
 		ReportOnce(warning);
@@ -1964,7 +2086,7 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 	{
 		// A kept mesh that Blender turned out not to hold (never seen): the scene is sent again from scratch.
 		_resend = true;
-		return Whole(WHOLE::MESH_NOT_HELD);
+		return Refuse(WHOLE::MESH_NOT_HELD);
 	}
 	for (const Seen& entry : seen)
 	{

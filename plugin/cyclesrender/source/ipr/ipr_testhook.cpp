@@ -514,6 +514,10 @@ static maxon::Bool RunFollowCommand(const maxon::String& command, const maxon::S
 static void WriteFollowStatus(JsonWriter& json, IprController& ipr)
 {
 	json.Bool("optimized_updates", GetIprOptimizedUpdates());
+	json.Bool("manual_refresh", ipr.IsManualRefresh());
+	json.Bool("refresh_waiting", ipr.IsRefreshWaiting());
+	json.Int("hairs_generated", ipr.GetLastExportStats().hairsGenerated);
+	json.Int("hairs_kept", ipr.GetLastExportStats().hairsKept);
 	json.Int("gated", ipr.GetGatedCount());
 	json.Int("alone", ipr.GetAloneCount());
 	json.Int("settled", ipr.GetSettleCount());

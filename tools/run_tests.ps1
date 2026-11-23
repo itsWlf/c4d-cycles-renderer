@@ -190,6 +190,10 @@ $c4dTests = @(
      Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "hair_particles"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/curves_export.*", "${B}scene/curves.py", "${B}scene/pointclouds.py", "${P}scene/document_colors.*") },
+  # Hair (0.3.0, F2): the hair material's shape against the hairs Cinema 4D generates, a texture tag's material
+  # for the colour, and which changes make the IPR generate a hair again.
+  @{ Name = "hair"; Settings = @{ g_cyclesRenderCapture = "<file>"; g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}scene/curves_export.*", "${P}scene/scene_writer.*", "${B}scene/curves.py") },
   @{ Name = "visibility"; Covers = @("${P}scene/light_export.*", "${P}scene/scene_exporter.*", "${B}scene/lights.py", "${B}scene/objects.py") },
   @{ Name = "redshift"; Covers = @("${P}scene/light_export.*", "${P}scene/camera_export.*", "${B}scene/lights.py", "${B}scene/cameras.py") },
   @{ Name = "object_tag"; Settings = @{ g_cyclesRenderCapture = "<file>" }
@@ -230,6 +234,11 @@ $c4dTests = @(
                 "${P}scene/light_export.*", "${P}scene/camera_export.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
                 "${R}strings_en-US/description/prefscyclesrender.str", "${B}scene/objects.py", "${B}scene/__init__.py", "tests/c4d/ipr_reuse.py",
                 "${P}materials/material_export.*") },
+  # The manual mode (Preferences, "Refresh Whole Scene Only on Reload"): steps only, never a whole export
+  # by itself; what cannot go alone waits for Reload, which sends what differs.
+  @{ Name = "ipr_manual"; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}ipr/ipr_controller.*", "${P}prefs/settings.*", "${P}prefs/prefs_page.*", "${R}description/prefscyclesrender.*",
+                "${R}strings_en-US/description/prefscyclesrender.str") },
   # The values that follow inside an evaluation of the document (an Attribute Manager drag): a
   # camera's, the parameters of primitives and generators, deformers; single objects collected again and
   # their meshes sent alone, what still waits for the end, the guard after a heavy mesh.

@@ -62,6 +62,23 @@ static maxon::UInt64 MixKeys(maxon::UInt64 a, maxon::UInt64 b)
 	return hash ^ (hash >> 33);
 }
 
+// The key an object of the document is walked under: what names its items from one export to the next.
+// Its GUID, which stays while the object does; but a particle group's GUID is another at every frame of
+// its simulation (measured, Cinema 4D 2027: docs/reference/c4d-sdk.md, "Instances and MoGraph"), which gave everything
+// instanced on its particles new ids, and so new meshes and instancers in Blender, at every frame. Its
+// marker stays, so that is hashed instead.
+static maxon::UInt64 ObjectKey(const cinema::BaseObject* op)
+{
+	if (op->GetType() != Ofpgroup)
+		return op->GetGUID();
+	void* data = nullptr;
+	maxon::Int32 size = 0;
+	op->GetMarker().GetMemory(data, size);
+	if (!data || size <= 0)
+		return op->GetGUID();
+	return HashBytes(static_cast<const maxon::Char*>(data), size, 0x70617274);
+}
+
 static maxon::String KeyId(const maxon::Char* prefix, maxon::UInt64 key)
 {
 	return maxon::String(prefix) + maxon::String::HexToString(key, false);
@@ -214,7 +231,7 @@ maxon::Result<void> SceneExporter::Collect()
 
 	for (cinema::BaseObject* op = _doc->GetFirstObject(); op; op = op->GetNext())
 	{
-		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, op->GetGUID(), false) iferr_return;
+		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, ObjectKey(op), false) iferr_return;
 	}
 	_camera = _settings.camera ? _settings.camera : FindRenderCamera(_doc);
 	return maxon::OK;
@@ -241,7 +258,7 @@ maxon::Result<void> SceneExporter::CollectOwners(const maxon::BaseArray<const ci
 	{
 		if (!_only.Contains(op) && !_onlyAbove.Contains(op))
 			continue;
-		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, op->GetGUID(), false) iferr_return;
+		Walk(op, op->GetMl(), Inherited(), maxon::String(), false, ObjectKey(op), false) iferr_return;
 	}
 	return maxon::OK;
 }
@@ -820,7 +837,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			source.object = op;
 			source.mg = mg;
 			source.owner = inherited.ownerObject;
-			source.own = !inCache && !instanceRoot && key == op->GetGUID() && inherited.followable;
+			source.own = !inCache && !instanceRoot && key == ObjectKey(op) && inherited.followable;
 			_worlds.Append(std::move(source)) iferr_return;
 		}
 	}
@@ -1115,7 +1132,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			forChild.tail = ExtendTail(inherited.tail, child->GetMl()) iferr_return;
 		}
 		// (This product, from the top object's GetMl() down, is the one WalkMatrix() forms again.)
-		Walk(child, mg * child->GetMl(), forChild, path, false, inCache ? MixKeys(key, childIndex++) : child->GetGUID(), inCache) iferr_return;
+		Walk(child, mg * child->GetMl(), forChild, path, false, inCache ? MixKeys(key, childIndex++) : ObjectKey(child), inCache) iferr_return;
 	}
 	return maxon::OK;
 }
@@ -1698,7 +1715,7 @@ void SceneExporter::WriteObjectAlone(SceneWriter& writer, const Coords& coords, 
 
 maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
 	const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
-	const Visibility& visibility)
+	const Visibility& visibility, const maxon::BaseArray<InstancerPart>* parts)
 {
 	iferr_scope;
 
@@ -1778,8 +1795,28 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 	}
 
 	JsonWriter& json = writer.BeginItem("instancer", id);
-	json.String("mesh", resolved.meshId);
-	WriteMaterialIds(json, resolved.materialIds);
+	if (parts)
+	{
+		// The meshes of one copy, each with its place in the copy (the conversion of a matrix is a change
+		// of basis, so a copy's matrix times a part's is the matrix the part alone would be sent with).
+		json.BeginArray("parts");
+		for (const InstancerPart& part : *parts)
+		{
+			maxon::Float64 matrix[16];
+			_coords.ObjectMatrix(part.ml, matrix);
+			json.BeginObject();
+			json.String("mesh", part.resolved->meshId);
+			WriteMaterialIds(json, part.resolved->materialIds);
+			json.Floats("matrix", matrix, 16);
+			json.EndObject();
+		}
+		json.EndArray();
+	}
+	else
+	{
+		json.String("mesh", resolved.meshId);
+		WriteMaterialIds(json, resolved.materialIds);
+	}
 	json.Int("matrices", matricesBlob);
 	if (colorsBlob != NOTOK)
 		json.Int("colors", colorsBlob);
@@ -1842,6 +1879,55 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	};
 	maxon::BaseArray<Group> groups;
 	maxon::HashMap<maxon::UInt64, maxon::Int> groupIndex;
+	const auto addToGroup = [&](maxon::Int index, Resolved&& resolved) -> maxon::Result<void>
+	{
+		iferr_scope;
+		const Leaf& leaf = _leaves[index];
+		const InstanceSet* const set = leaf.instanceSet != NOTOK ? &_instanceSets[leaf.instanceSet] : nullptr;
+		maxon::UInt64 groupKey = MixKeys(leaf.owner, maxon::UInt64(resolved.meshId.GetHashCode()));
+		for (const maxon::String& materialId : resolved.materialIds)
+			groupKey = MixKeys(groupKey, maxon::UInt64(materialId.GetHashCode()));
+		maxon::Int groupPosition = NOTOK;
+		if (const auto* const known = groupIndex.Find(groupKey))
+		{
+			groupPosition = known->GetValue();
+		}
+		else
+		{
+			Group group;
+			group.resolved = std::move(resolved);
+			groups.Append(std::move(group)) iferr_return;
+			groupPosition = groups.GetCount() - 1;
+			groupIndex.Insert(groupKey, groupPosition) iferr_return;
+		}
+		Group& group = groups[groupPosition];
+		group.leaves.Append(index) iferr_return;
+		group.count += set ? set->matrices->GetCount() : 1;
+		group.hasColor = group.hasColor || leaf.hasColor || (set && set->colors);
+		group.hasInstances = group.hasInstances || set;
+		return maxon::OK;
+	};
+
+	// The meshes of one instance set (the copies of an object listed in a Cycles Object tag, of a Cycles
+	// Scatter's source, of a multi-instance): an object made of several meshes is one instancer whose copies
+	// each show all of them, where that can be (below).
+	struct SetGroup
+	{
+		maxon::Int set = NOTOK;
+		maxon::BaseArray<maxon::Int> leaves;
+		maxon::BaseArray<Resolved> resolved;
+	};
+	maxon::BaseArray<SetGroup> setGroups;
+	maxon::HashMap<maxon::Int, maxon::Int> setGroupIndex;
+	maxon::BaseArray<maxon::Int> setLeafCounts;
+	setLeafCounts.Resize(_instanceSets.GetCount()) iferr_return;
+	for (maxon::Int& value : setLeafCounts)
+		value = 0;
+	for (const Leaf& leaf : _leaves)
+	{
+		if (leaf.instanceSet != NOTOK)
+			++setLeafCounts[leaf.instanceSet];
+	}
 
 	// The item each leaf ends up in, for the lights' include and exclude lists. Lights are
 	// written last, when all of these are known.
@@ -1859,7 +1945,23 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			continue;
 		if (leaf.kind == LEAF::HAIR)
 		{
-			ExportHair(writer, _coords, _doc, leaf.object, KeyId("hair_", leaf.key)) iferr_return;
+			// A texture tag on the Hair object itself: its material colours the hairs, and the hair material
+			// keeps giving their shape (the last such tag counts, as on any object).
+			maxon::String materialId;
+			for (cinema::BaseTag* tag = leaf.object->GetFirstTag(); tag; tag = tag->GetNext())
+			{
+				if (tag->GetType() != Ttexture)
+					continue;
+				if (cinema::BaseMaterial* const material = static_cast<cinema::TextureTag*>(tag)->GetMaterial())
+				{
+					materialId = state.materials.GetMaterialId(material) iferr_return;
+				}
+			}
+			maxon::Bool kept = false;
+			const maxon::Bool written = ExportHair(writer, _coords, _doc, leaf.object, KeyId("hair_", leaf.key), materialId, _settings.reuse,
+				_settings.reuse != nullptr || _settings.noteSources, &kept) iferr_return;
+			_stats.hairsKept += kept ? 1 : 0;
+			_stats.hairsGenerated += written && !kept ? 1 : 0;
 			NoteFixed(leaf.ownerObject) iferr_return;
 			continue;
 		}
@@ -1958,27 +2060,79 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			continue;
 		}
 
-		maxon::UInt64 groupKey = MixKeys(leaf.owner, maxon::UInt64(resolved.meshId.GetHashCode()));
-		for (const maxon::String& materialId : resolved.materialIds)
-			groupKey = MixKeys(groupKey, maxon::UInt64(materialId.GetHashCode()));
-		maxon::Int groupPosition = NOTOK;
-		if (const auto* const known = groupIndex.Find(groupKey))
+		if (set && setLeafCounts[leaf.instanceSet] >= 2)
 		{
-			groupPosition = known->GetValue();
+			maxon::Int position = NOTOK;
+			if (const auto* const known = setGroupIndex.Find(leaf.instanceSet))
+			{
+				position = known->GetValue();
+			}
+			else
+			{
+				SetGroup group;
+				group.set = leaf.instanceSet;
+				setGroups.Append(std::move(group)) iferr_return;
+				position = setGroups.GetCount() - 1;
+				setGroupIndex.Insert(leaf.instanceSet, position) iferr_return;
+			}
+			setGroups[position].leaves.Append(index) iferr_return;
+			setGroups[position].resolved.Append(std::move(resolved)) iferr_return;
+			continue;
 		}
-		else
+		addToGroup(index, std::move(resolved)) iferr_return;
+	}
+
+	for (SetGroup& group : setGroups)
+	{
+		// Together when every mesh is shown the same way and none of the materials reads a number per
+		// object (those numbers are the copies' own in Blender, one set per instancer); and not for more
+		// meshes than INSTANCER_PARTS_MAXIMUM, each of which is a node in Blender. Else as before: one
+		// instancer per mesh and set of materials.
+		const Leaf& first = _leaves[group.leaves[0]];
+		maxon::Bool together = group.leaves.GetCount() >= 2 && group.leaves.GetCount() <= INSTANCER_PARTS_MAXIMUM;
+		for (maxon::Int i = 0; i < group.leaves.GetCount() && together; ++i)
 		{
-			Group group;
-			group.resolved = std::move(resolved);
-			groups.Append(std::move(group)) iferr_return;
-			groupPosition = groups.GetCount() - 1;
-			groupIndex.Insert(groupKey, groupPosition) iferr_return;
+			const Visibility& a = _leaves[group.leaves[i]].visibility;
+			const Visibility& b = first.visibility;
+			together = !group.resolved[i].objectKeys && a.camera == b.camera && a.shadow == b.shadow && a.diffuse == b.diffuse && a.glossy == b.glossy &&
+				a.transmission == b.transmission && a.volumeScatter == b.volumeScatter && a.holdout == b.holdout && a.shadowCatcher == b.shadowCatcher &&
+				a.passIndex == b.passIndex;
 		}
-		Group& group = groups[groupPosition];
-		group.leaves.Append(index) iferr_return;
-		group.count += set ? set->matrices->GetCount() : 1;
-		group.hasColor = group.hasColor || leaf.hasColor || (set && set->colors);
-		group.hasInstances = group.hasInstances || set;
+		if (!together)
+		{
+			for (maxon::Int i = 0; i < group.leaves.GetCount(); ++i)
+			{
+				addToGroup(group.leaves[i], std::move(group.resolved[i])) iferr_return;
+			}
+			continue;
+		}
+		const InstanceSet& set = _instanceSets[group.set];
+		maxon::BaseArray<InstancerPart> parts;
+		parts.EnsureCapacity(group.leaves.GetCount()) iferr_return;
+		for (maxon::Int i = 0; i < group.leaves.GetCount(); ++i)
+		{
+			InstancerPart part;
+			part.resolved = &group.resolved[i];
+			part.ml = _leaves[group.leaves[i]].mg;     // (a leaf's matrix is relative to a copy)
+			parts.Append(part) iferr_return;
+		}
+		maxon::BaseArray<cinema::Vector> colors;
+		if (set.colors)
+		{
+			colors.EnsureCapacity(set.colors->GetCount()) iferr_return;
+			for (const maxon::Color64& color : *set.colors)
+			{
+				colors.Append(cinema::Vector(color.r, color.g, color.b)) iferr_return;
+			}
+		}
+		const maxon::String instancerId = KeyId("instancer_", first.key);
+		WriteInstancer(writer, instancerId, group.resolved[0], *set.matrices, set.colors ? &colors : nullptr, nullptr, first.visibility, &parts) iferr_return;
+		NoteOwned(first.ownerObject, instancerId) iferr_return;
+		for (maxon::Int index : group.leaves)
+		{
+			itemIds[index] = instancerId;
+			NoteUnfollowed(_leaves[index].ownerObject) iferr_return;
+		}
 	}
 
 	for (const Group& group : groups)
@@ -2052,7 +2206,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			EeveeHidesLights(_settings)) iferr_return;
 		// An object of the document is walked under its own GUID (Collect, Walk), with its matrix
 		// formed from the local ones of its parents: such a light can be written again by itself.
-		if (leaf.key == leaf.object->GetGUID())
+		if (leaf.key == ObjectKey(leaf.object))
 		{
 			WrittenLight written;
 			written.object = leaf.object;

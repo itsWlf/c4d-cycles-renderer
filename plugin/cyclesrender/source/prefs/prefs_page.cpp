@@ -144,6 +144,11 @@ public:
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
 				return true;
 
+			case PREF_CYCLES_IPR_MANUAL_REFRESH:
+				data = cinema::GeData(GetIprManualRefresh());
+				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+				return true;
+
 			case PREF_CYCLES_DEFAULT_ENGINE:
 				data = cinema::GeData(GetDefaultEngine());
 				flags |= cinema::DESCFLAGS_GET::PARAM_GET;
@@ -209,6 +214,14 @@ public:
 				// A running IPR reads it at its next step and its next export.
 				SetIprOptimizedUpdates(data.GetInt32() != 0);
 				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+				// "Refresh Whole Scene Only on Reload" is greyed out without it.
+				cinema::GeUpdateUI();
+				return true;
+
+			case PREF_CYCLES_IPR_MANUAL_REFRESH:
+				// A running IPR reads it at its next timer tick.
+				SetIprManualRefresh(data.GetInt32() != 0);
+				flags |= cinema::DESCFLAGS_SET::PARAM_SET;
 				return true;
 
 			case PREF_CYCLES_IPR_THREADS_FREE:
@@ -240,6 +253,9 @@ public:
 		// "Optimized Live Updates" says how the live updates are sent: without them it does nothing.
 		if (id[0].id == PREF_CYCLES_IPR_OPTIMIZED_UPDATES)
 			return GetIprLiveUpdates();
+		// "Refresh Whole Scene Only on Reload" leaves the steps of the optimized updates as all that is sent.
+		if (id[0].id == PREF_CYCLES_IPR_MANUAL_REFRESH)
+			return GetIprLiveUpdates() && GetIprOptimizedUpdates();
 		return SUPER::GetDEnabling(node, id, data, flags, itemdesc);
 	}
 

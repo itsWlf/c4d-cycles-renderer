@@ -66,6 +66,8 @@ struct ExportStats
 	maxon::Int meshesByIdentity = 0;   ///< judged by what the object is (the rest by a hash of their data)
 	maxon::Int meshesByDataHash = 0;   ///< of the rest: judged by Cinema 4D's own hashes of their arrays, without a pass over them (MESHHASH::DATA_HASH)
 	maxon::Float64 meshMilliseconds = 0.0;   ///< spent deciding about and exporting meshes
+	maxon::Int hairsGenerated = 0;     ///< Hair objects whose hairs were generated and written
+	maxon::Int hairsKept = 0;          ///< Hair objects left as Blender holds them (ExportHair, reuse)
 };
 
 /// Which rays see an object: the switches of its Compositing tag, or of the nearest one above it.
@@ -471,6 +473,13 @@ private:
 		maxon::Bool objectKeys = false;      ///< one of the materials reads the object keys (Leaf::nameKey)
 	};
 
+	/// One mesh of an instancer whose copies each show several meshes (WriteInstancer).
+	struct InstancerPart
+	{
+		const Resolved* resolved = nullptr;  ///< its mesh and materials
+		cinema::Matrix ml;                   ///< where it sits in a copy
+	};
+
 	/// @param[in] key      Identity of @p op that survives from one export to the next.
 	/// @param[in] inCache  @p op is generated, not an object of the document.
 	maxon::Result<void> Walk(cinema::BaseObject* op, const cinema::Matrix& mg, Inherited inherited, const maxon::String& parentPath,
@@ -519,9 +528,12 @@ private:
 	/// @param[in] matrices  Global matrix of every copy.
 	/// @param[in] colors    MoGraph colour of every copy as MoGraph stores it, or nullptr.
 	/// @param[in] keys      The object keys of every copy (x the name key, y the Object ID), or nullptr.
+	/// @param[in] parts     With it, every copy shows all of these meshes, each at its place in the copy, and
+	///                      @p resolved is not used: one item for an object made of several meshes, so that
+	///                      Blender has one instance per copy and not one per copy and mesh.
 	maxon::Result<void> WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
 		const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
-		const Visibility& visibility);
+		const Visibility& visibility, const maxon::BaseArray<InstancerPart>* parts = nullptr);
 
 	cinema::BaseDocument* _doc;
 	DocumentColors _colors;                    ///< the document's colour settings, for colours written here (lights, MoGraph)
@@ -572,6 +584,9 @@ private:
 public:
 	/// Copies of one mesh inside one generator are sent as one instancer from this number on.
 	static const maxon::Int BATCH_MINIMUM = 16;
+	/// The copies of an instance set show up to this many meshes as one instancer (its `parts`); an object of
+	/// more meshes is sent as one instancer per mesh, as before 0.3.0. Each part is a few nodes in Blender.
+	static const maxon::Int INSTANCER_PARTS_MAXIMUM = 256;
 };
 
 } // namespace cyclesrender

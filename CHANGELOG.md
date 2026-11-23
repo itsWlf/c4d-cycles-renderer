@@ -4,6 +4,9 @@ All notable changes to Cycles Render. Version numbers follow [Semantic Versionin
 
 ## 0.3.0 (in preparation)
 
+- Preferences > IPR, "Refresh Whole Scene Only on Reload": for big scenes. The IPR then sends only what can go alone (the camera, lights, objects moved or changed) and never exports the whole scene by itself; whatever else changed waits until Reload is pressed.
+- Instances on particles and Matrix objects (Cycles Object tag) and of the Cycles Scatter are faster: an object made of several meshes is one set of instances in Blender, not one per mesh (20 meshes on 120,000 particles: 0.26 s per frame instead of 6.7 s), and what is instanced on a particle group is no longer rebuilt in Blender at every frame.
+- Hair renders with the hair material's shape (bend, curl, frizz, kink, twist, clump, length, scale) and all colours of its gradient. A material on a texture tag of the Hair object gives the hairs their colour while the hair material keeps giving the shape. In the IPR a hair is generated again only when it changed, which removes the wait after every edit in scenes with hair.
 - Cycles Fog object: a box that renders as a volume, with Cinema 4D's noises for its density.
 - Cycles Environment object: a colour, Blender's Sky Texture, an HDRI or a world material of Cycles nodes; separate environments for what the camera sees and what lights the scene; a light as the sun; world fog. Among Cycles Environment, Sky and Redshift dome light, the highest in the Object Manager is used (before, a Sky always won over a dome light).
 - Cycles Scatter object: scatters the objects below it over a surface, its vertices or the places of a CSV file or sequence, with effectors, fields, a spacing radius, and copies that keep their place when a vertex map or the surface is animated.

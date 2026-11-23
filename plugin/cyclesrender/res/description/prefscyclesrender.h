@@ -41,7 +41,8 @@ enum
 	PREF_CYCLES_IPR_NAVIGATE = 1008,
 	PREF_CYCLES_IPR_LIVE_UPDATES = 1010,	// GetIprLiveUpdates (1009 is the Default Engine)
 	PREF_CYCLES_IPR_THREADS_FREE = 1011,	// GetIprThreadsFree
-	PREF_CYCLES_IPR_OPTIMIZED_UPDATES = 1012	// GetIprOptimizedUpdates (1013 to 1099 have never been used)
+	PREF_CYCLES_IPR_OPTIMIZED_UPDATES = 1012,	// GetIprOptimizedUpdates
+	PREF_CYCLES_IPR_MANUAL_REFRESH = 1013	// GetIprManualRefresh (1014 to 1099 have never been used)
 };
 
 #endif // PREFSCYCLESRENDER_H__

@@ -41,6 +41,7 @@ enum
 	SETTING_IPR_LIVE_UPDATES = 1022,	///< GetIprLiveUpdates()
 	SETTING_IPR_THREADS_FREE = 1023,	///< GetIprThreadsFree()
 	SETTING_IPR_OPTIMIZED_UPDATES = 1024,	///< GetIprOptimizedUpdates()
+	SETTING_IPR_MANUAL_REFRESH = 1025,	///< GetIprManualRefresh()
 	SETTING_DEFAULT_ENGINE = 1030		///< GetDefaultEngine()
 };
 
@@ -287,6 +288,21 @@ void SetIprOptimizedUpdates(cinema::Bool optimized)
 {
 	cinema::BaseContainer settings = ReadSettings();
 	settings.SetBool(SETTING_IPR_OPTIMIZED_UPDATES, optimized);
+	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
+}
+
+cinema::Bool GetIprManualRefresh()
+{
+	if (g_cyclesRenderIprUnoptimized)
+		return false;
+	const cinema::BaseContainer* const stored = cinema::GetWorldPluginData(ID_CYCLES_VIDEOPOST);
+	return stored ? stored->GetBool(SETTING_IPR_MANUAL_REFRESH, false) : false;
+}
+
+void SetIprManualRefresh(cinema::Bool manual)
+{
+	cinema::BaseContainer settings = ReadSettings();
+	settings.SetBool(SETTING_IPR_MANUAL_REFRESH, manual);
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, settings, false);
 }
 

@@ -132,6 +132,22 @@ private:
 /// - After steps and after redraws that were not exported, the scene is exported whole once more when
 ///   the change has ended or nothing happened for a moment (the settle export), so that Blender holds
 ///   exactly what a whole export gives, also where a counter missed a change.
+///
+/// The manual mode (Preferences, "Refresh Whole Scene Only on Reload", with the live and the optimized
+/// updates on; prefs/settings.h, GetIprManualRefresh): the IPR never exports the scene whole by itself.
+/// - A finished edit, another time and the moment things stand still are each answered with a step
+///   (SyncAlone), as a redraw is: what a step can write alone is sent.
+/// - What a step cannot write alone is not sent, and the IPR notes that the scene waits for Reload
+///   (IsRefreshWaiting; the window says so). Where the rest of the step can still go, it goes: another
+///   time, a counter of the document that is not an object's, a render dot, a tag, a name, an object
+///   that only a whole export writes, a light that is gone, the world. Where the step has nothing to
+///   compare with any more it sends nothing (the objects of the document are no longer those of the
+///   last whole export, collecting was refused, items came or went under light linking, a kept mesh
+///   was not held): then only the camera and the lights follow until Reload.
+/// - Reload(), while the scene waits, is the whole export that sends what differs; with nothing waiting
+///   it sends the scene from scratch, as without the mode.
+/// - Still exported whole: the first export, another document, the IPR's own engine menu, a step when
+///   there is nothing to compare with yet, and the first tick after the mode was switched off.
 //----------------------------------------------------------------------------------------
 class IprController
 {
@@ -174,7 +190,8 @@ public:
 	void Stop();
 	/// Pauses a running render, or resumes a paused one (and sends what changed meanwhile).
 	void TogglePause();
-	/// Sends the whole scene again and restarts the render.
+	/// Sends the whole scene again, from scratch, and restarts the render. In the manual mode, while the
+	/// scene waits for it (IsRefreshWaiting): exports the scene whole and sends what differs.
 	void Reload();
 
 	/// What the camera list chose; @p camera for IPRCAMERA::OBJECT (without one: the render view).
@@ -406,6 +423,11 @@ public:
 	void SetMeshQuietForTest(maxon::Float64 seconds);
 	maxon::Float64 GetMeshQuietMilliseconds() const;
 	maxon::Bool WasWholeNeeded() const { const IprLocked held(_lock); return _wholeNeeded; }
+	/// The manual mode as the last Tick() read it from the Preferences.
+	maxon::Bool IsManualRefresh() const { const IprLocked held(_lock); return _manual; }
+	/// In the manual mode: the document changed in a way no step sent, so Blender's scene is out of date
+	/// until Reload() (or any other whole export). GetLastWholeReason() says why, for the last step.
+	maxon::Bool IsRefreshWaiting() const { const IprLocked held(_lock); return _refreshWaiting; }
 	/// A whole export is still to come once things stand still (after steps and redraws without one).
 	maxon::Bool IsSettlePending() const { const IprLocked held(_lock); return _settlePending; }
 	maxon::Bool IsIdle() const { return !_worker || _worker->GetPendingCount() == 0; }
@@ -454,11 +476,17 @@ private:
 	{
 		NO,					///< the scene has to be exported whole; nothing was sent
 		YES,				///< what changed was sent, or nothing had
-		POSTPONED		///< nothing was sent and nothing noted: objects would have to be collected again, which is not
+		POSTPONED,	///< nothing was sent and nothing noted: objects would have to be collected again, which is not
 								///< possible now (no leave to read caches) or too soon after a step that took long
+		WAITS				///< the manual mode: nothing was sent, and the scene waits for Reload()
 	} MAXON_ENUM_LIST_CLASS(ALONE);
 	/// Notes why a step has to be exported whole (GetLastWholeReason), and answers ALONE::NO.
 	ALONE Whole(WHOLE why);
+	/// The manual mode: notes that the scene waits for Reload() and why (IsRefreshWaiting,
+	/// GetLastWholeReason); the step goes on with what it can send.
+	void Waits(WHOLE why);
+	/// A step that cannot go on: Whole(), or in the manual mode Waits() and ALONE::WAITS.
+	ALONE Refuse(WHOLE why);
 	/// FollowStep()'s update of single items.
 	maxon::Result<ALONE> SyncAlone(cinema::BaseDocument* doc, const DocumentCounters& counters, maxon::Bool cachesReadable);
 	/// Takes what @p exporter noted about the objects of the document it wrote: all of them (after a whole
@@ -614,6 +642,10 @@ private:
 	maxon::Float64 _lastAloneMilliseconds = 0.0;
 	maxon::Int32 _lastAloneObjects = 0;
 	maxon::Bool _wholeNeeded = false;
+	maxon::Bool _manual = false;					///< the manual mode, as the last Tick() read it (the Preferences are the main thread's)
+	maxon::Bool _refreshWaiting = false;	///< IsRefreshWaiting()
+	maxon::Bool _forceWhole = false;			///< the next export of a dirty scene is whole also in the manual mode (the IPR's own engine menu)
+	maxon::Bool _retry = false;						///< the last SyncAlone() was postponed: the manual mode's settle step tries again
 	maxon::String _sentView = "?"_s;			///< the last `view_camera` request; empty: Blender looks through its camera object; "?": not known
 	maxon::String _sentSettings;
 	ExportSettings _exportSettings;

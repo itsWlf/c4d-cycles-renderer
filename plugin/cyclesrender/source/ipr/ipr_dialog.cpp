@@ -566,7 +566,8 @@ void IprDialog::RefreshStatus()
 		SetString(ID_TEXT_VRAM, vram);
 	}
 
-	const maxon::String device = ipr.GetDeviceText();
+	// (The manual mode: a change that was not sent is said where the device is named, until Reload.)
+	const maxon::String device = ipr.IsRefreshWaiting() ? "Scene changed: Reload to update"_s : ipr.GetDeviceText();
 	if (device != _shownDevice)
 	{
 		_shownDevice = device;
