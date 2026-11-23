@@ -72,7 +72,7 @@ The test suite lives in `tests/` and is **kept locally: it is not part of the re
 ```powershell
 .\tools\run_tests.ps1 -Changed             # the tests for what differs from the last commit
 .\tools\run_tests.ps1 -Changed -DryRun     # only print what it would run, and why
-.\tools\run_tests.ps1                      # the whole baseline: build, 14 bridge tests, 65 Cinema 4D tests; about 30 minutes, with Blender 5.2 and Cinema 4D 2027
+.\tools\run_tests.ps1                      # the whole baseline: build, 14 bridge tests, 66 Cinema 4D tests; about 45 minutes, with Blender 5.2 and Cinema 4D 2027
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
 .\tools\run_tests.ps1 -SkipBuild -Blender 5.3   # the baseline with another supported Blender (a version, or the path of a blender.exe)
 .\tools\run_tests.ps1 -C4D 2026                  # the baseline in another supported Cinema 4D (a year, or the folder of an installation)

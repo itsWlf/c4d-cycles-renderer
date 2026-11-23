@@ -25,7 +25,7 @@ Run from the repository root in PowerShell. Details and options are in `docs/dev
 .\tools\build_plugin.ps1                  # build the plugin for Cinema 4D 2027 -> build\plugin\bin\Release\plugins\cyclesrender
 .\tools\build_plugin.ps1 -Version all     # for 2024, 2025, 2026 and 2027 (the others go to build\plugin-<year>)
 .\tools\run_tests.ps1 -Changed            # the tests for what differs from the last commit (needs the local tests folder)
-.\tools\run_tests.ps1                     # the whole test baseline (Cinema 4D 2027, Blender 5.2), once per sprint, about 19 minutes
+.\tools\run_tests.ps1                     # the whole test baseline (Cinema 4D 2027, Blender 5.2), once per sprint, about 45 minutes
 .\tools\run_tests.ps1 -C4D 2026           # the same in another Cinema 4D version, before a major release (with Blender 5.2)
 .\tools\run_tests.ps1 -SkipBuild -Blender 5.0   # the same on another Blender, before a major release (with Cinema 4D 2027)
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
@@ -51,7 +51,7 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 - `prototypes/`: throw-away scripts that proved the Blender mechanisms.
 - `build/`: all build output.
 - `release/<version>/`: built packages.
-- `internal/`: working notes and archived planning documents. The archive is history, not instructions: the documents in `docs/` are what counts. The one working file is the checklist of the release in preparation (`internal/roadmap-<version>.md`): if it is there, read it after `docs/roadmap.md`.
+- `internal/`: working notes and archived planning documents. The archive is history, not instructions: the documents in `docs/` are what counts. The one working file is the checklist of the release in preparation (`internal/roadmap-<version>.md`): if it is there, read it after `docs/roadmap.md`; it opens with where the work stands and what comes next. `internal/README.md` says what else is in the folder.
 
 ## Rules
 

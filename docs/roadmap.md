@@ -8,6 +8,7 @@ Words used here: **verified** means a test compares the feature with Cinema 4D's
 
 - [Where the project stands](#where-the-project-stands)
 - [Release 0.1.0](#release-010)
+- [Release 0.2.0](#release-020)
 - [What renders differently from 0.1.0](#what-renders-differently-from-010)
 - [Open bugs](#open-bugs)
 - [Known faults in translation](#known-faults-in-translation)
@@ -19,8 +20,11 @@ Words used here: **verified** means a test compares the feature with Cinema 4D's
 ## Where the project stands
 
 - Final frames and the IPR work end to end on Windows with Cinema 4D 2024, 2026 and 2027 (measured with 2024.5.1, 2026.3.4 and 2027.0.0; supported since 0.2.0, before only 2027) and Blender 5.0, 5.1, 5.2 and 5.3 (measured with 5.0.0, 5.1.2, 5.2.3 LTS and 5.3.0; since 0.2.0, before only 5.2), for Cycles and Eevee. Cinema 4D 2025 is supported too, but its installation here has no Python, so only its loading, a scene with the plugin's tags and lights open in it, and final frames through `Commandline.exe` were seen ([reference/c4d-sdk.md](reference/c4d-sdk.md), "Cinema 4D versions").
-- The test baseline is 80 tests (14 for the bridge alone, 66 inside Cinema 4D; `ipr_threads_window` added with the review of the IPR's threads before 0.2.0, `redshift_lights` added for F24 of 0.2.0, `ipr_values` and `ipr_values_window` added for F23 of 0.2.0, `ipr_optimized` and `ipr_optimized_window` for the third step of B11, `test_frame_rate`, `ipr_device` and `ipr_frames_window` for its first two, `ipr_live_window` added for F22 of 0.2.0, `editor_camera` and `new_light_window` added for B10 and B12 of 0.2.0, `blender_missing_window` added for B7 of 0.2.0, `default_engine` and `default_engine_window` for F21, `light_enable` and `light_shadows` for B8, B9 and F20, `redshift_lookalikes` added for F19's look-alikes, `ipr_reuse` and `ipr_follow_window` added for F15 and F16 of 0.2.0, `test_versions` for F8, `ipr_lights` and `ipr_lights_window` for F18, `ipr_navigate` and `ipr_navigate_window` for F17). It runs on Cinema 4D 2027 with Blender 5.2 once per sprint; before a major release also on each other Cinema 4D version with Blender 5.2 (`-C4D`) and on each other Blender with Cinema 4D 2027 (`-Blender`; the maintainer's rule of 2026-11-16, `docs/development.md`, "Which versions, when"). On 2026-11-16 (F9, Blender 5.2.3, the two tests of the Cycles Native Material on hold and not counted): Cinema 4D 2027.0.0 56 of 56 (1143 s), 2026.3.4 56 of 56 (1075 s), 2024.5.1 56 of 56 (1078 s), no Blender left running; 2025 cannot run the tests here (no Python in its installation). On 2026-11-16 (F8, the two tests of the Cycles Native Material on hold and not counted): 5.0.0 and 5.1.2 55 of 56 (`volumes`, explained and handled since, then passed alone), 5.2.3 56 of 56, 5.3.0 54 of 56 (`test_viewport`, fixed since and then passed alone; `camera_tag`'s IPR panorama, open: "Open bugs"); no Blender left running. 15 to 18 minutes per version. The 44 of then all passed for 0.1.0, and again on 2026-11-12 after the 0.2.0 bug fixes; the two camera tests added since (`test_cameras`, `camera_tag`), the extended `cameras`, the four tests of F4 to F13 (`test_output`, `output`, `image_nodes`, `ipr_add`), the extended `passes`, and the five tests of F10, F11, F12 and F14 (`test_lights`, `cycles_lights`, `redshift_nodes`, `test_devices`, `devices`; `ipr_add` and `native_material` extended) passed in the selected runs of their work, the whole baseline has not run with them yet; both with one start of Cinema 4D per test and with the tests sharing starts (`docs/development.md`, "Tests"). For each piece of work only the tests for what changed are run (`tools/run_tests.ps1 -Changed`); the whole baseline runs once per sprint, before a commit the maintainer asks for, and before a release.
-- Version 0.1.0 is published as the first public release (branch `0.1.0`, tag `v0.1.0`). Work for 0.2.0 is on `main`.
+- **Releases.** Version 0.1.0 is published as the first public release (branch `0.1.0`, tag `v0.1.0`; both locked). Version 0.2.0 is built and in its last steps: [Release 0.2.0](#release-020) says what is in it and what is left. All of it is on `main`.
+- **The version number in the sources is 0.2.2**, the number of the last test release handed to the maintainer (`release/0.2.2`, 2026-11-19; the test releases before it were 0.2.0 and 0.2.1). It goes to 0.2.0 when the release is made.
+- **The test baseline is 80 tests** (14 for the bridge alone, 66 inside Cinema 4D; the two tests of the Cycles Native Material are on hold and not counted). It takes about 45 minutes on Cinema 4D 2027 with Blender 5.2. For each piece of work only the tests for what changed are run (`tools/run_tests.ps1 -Changed`); the whole baseline runs once per sprint, before a commit the maintainer asks for, and before a release; before a major release also on each other Cinema 4D version and each other Blender version (`docs/development.md`, "Which versions, when").
+- **The last runs.** The whole baseline on Cinema 4D 2027.0.0 with Blender 5.2.3: 74 of 74 on 2026-11-18 (1897 s, the 74 tests of then), no Blender left running. Since then six tests were added and the code review's fixes went in; the selected run after them covered 78 of the 80 tests: 78 of 79 with the build (2026-11-19, 2641 s), the one failure a timing bound of `ipr_optimized` that passed alone three times. The other versions last ran the whole baseline on 2026-11-16, with the 56 tests of then: Cinema 4D 2026.3.4 and 2024.5.1 56 of 56 each; Blender 5.0.0 and 5.1.2 55 of 56 (`volumes`, explained and handled since), 5.3.0 54 of 56 (`test_viewport`, fixed since; `camera_tag`'s IPR panorama, still open: "Open bugs"). The runs on all six combinations for 0.2.0 have not been made yet.
+- **Tests that failed once and passed when run again**, to tell from a real fault in a baseline: `ipr_optimized` (its first step over the 5 ms bound once in a long shared start), `ipr_reuse` (its "texture file" kind once, cause not found). Two checks were loosened with the measurement in their comments: `ipr_live_window` (allows one timer tick in a modal loop, 2024) and `ipr_values_window` (allows the last step's mesh of a tool's drag to wait for the export at the end, about one drag in six).
 
 ## Release 0.1.0
 
@@ -34,6 +38,52 @@ Words used here: **verified** means a test compares the feature with Cinema 4D's
 - [x] `examples/cycles_render_examples.c4d` built anew with `tools/make_example_scene.py`: it matches `examples/README.md` and names no file outside the repository.
 - [ ] Try the two packages by hand, best on a machine that never had the project: install both, render a frame, open the IPR. (Checked by script so far, on the development machine: the bridge package installed by Blender into a throw-away profile and the packaged plugin folder pass the session self-test in both modes and render a frame that matches the Standard renderer; without the bridge the plugin names what to install. Not yet tried: the installation through Blender's Preferences window and into Cinema 4D's own plugins folder.)
 - [x] First commit, tag `v0.1.0`, the two packages on the release page.
+
+## Release 0.2.0
+
+Everything asked for is built and on `main`; what is left is the release itself. The reports came from the maintainer's use of 0.1.0 and of the three test releases (0.2.0 on 2026-11-17, 0.2.1 on 2026-11-18, 0.2.2 on 2026-11-19; of 0.2.2 the maintainer said on 2026-11-23 that everything looks good).
+
+**Bugs fixed** (each is described under "Open bugs" or "Known faults in translation", with its test):
+
+- [x] Colour with "Basic" colour management (sRGB legacy), in final frames, the IPR, snapshots and passes.
+- [x] The curve nodes of the Cycles node space have curve controls.
+- [x] Baked textures are removed and reused.
+- [x] The big material preview in the Attribute Manager is the right way up; the IPR's samples bar and zoom text.
+- [x] A clear message when no usable Blender is chosen.
+- [x] Lights follow the green check in the Object Manager, also live in the IPR; the Cycles Light has that check.
+- [x] Eevee lights the scene through the editor camera (near clipping).
+- [x] Cinema 4D's interface stays free while the IPR follows: the device "Automatic", Blender's priority and free CPU threads, at most 30 pictures a second, only what moves is sent ("Optimized Live Updates").
+- [x] A Cycles Light from the IPR's Add menu appears at the workplane.
+- [x] A scene of more than about 800 meshes can be sent; undoing the Add menu's camera keeps the view's camera.
+- [x] What the code review found: the IPR entered from two threads, and small faults in materials, hair, tags and the scene request.
+
+**Features built** (each is described under "Planned features", "What is supported" and "Known limits"):
+
+- [x] Cycles Camera tag: depth of field, orthographic and panoramic lenses; Cinema 4D's fixed projections and parallel views.
+- [x] Cycles Light object and Cycles Light tag.
+- [x] Output tab in the Render Settings; more render passes.
+- [x] Node Editor: an image dropped becomes an Image Texture node; buttons to make a path relative or absolute.
+- [x] Redshift: 112 of 159 nodes translated, four of them as look-alikes; lights as bright and as coloured as in Redshift (units, spread, scale, shapes, temperature).
+- [x] IPR: an Add menu; the picture follows tools' drags, playback, light values, camera values, parametric objects and deformers while they change; unchanged meshes are not exported again; navigating the camera from the IPR's picture.
+- [x] Preferences: Blender's render devices, Default Engine, and switches for each of the IPR's live behaviours.
+- [x] Cinema 4D's lights cast shadows by default, soft where their shadow type is soft.
+- [x] Blender 5.0 to 5.3 and Cinema 4D 2024 to 2027, one package for all.
+- [x] Selected test runs (`tools/run_tests.ps1 -Changed`).
+
+**Before the release:**
+
+- [x] Review of all code for structure and comments, in three passes (2026-11-19); the fixes are in, what was put off is listed below.
+- [ ] The whole baseline on all six combinations, one run after the other: Cinema 4D 2027 with Blender 5.2; Cinema 4D 2024 and 2026 with Blender 5.2; Cinema 4D 2027 with Blender 5.0, 5.1 and 5.3 (the commands: `docs/development.md`, "Which versions, when"). Cinema 4D 2025 cannot run tests on the development machine (no Python in its installation): its build is checked by loading only.
+- [ ] `CHANGELOG.md` gets its 0.2.0 section (it has none yet), and the release notes say what renders differently from 0.1.0 (the next section).
+- [ ] The version number 0.2.0 in its three places (`release/README.md`, checklist).
+- [ ] `tools/make_release.ps1 -Version 0.2.0` from a tree without stray files (the script packages the working tree as it is); the folder `release/0.2.0` of the first test release is replaced by it. Packages checked by script and by hand.
+- [ ] Commit, tag `v0.2.0`, publish; a branch `0.2.0` is cut and locked as `0.1.0` was. Publishing and pushing are the maintainer's.
+
+**Open, and not holding the release up:**
+
+- Checks only a hand can make ("Untested" has the list): the IPR's picture during a real drag of a tool and of view navigation, number fields' arrows and handles in the view, Alt with the mouse buttons in the IPR's picture, a real drop of an image on the Node Editor, the two path buttons pressed by hand.
+- Known and open: the IPR's equirectangular panorama on Blender 5.3, Eevee's per-object numbers after a Cycles render, the Cycles Native Material (switched off), a Wire Rerouter in a Cycles graph (left out with its wires, named in the console), Redshift 3.6.04 of Cinema 4D 2024 counting some light values differently (the maintainer: pointing users to a newer Redshift is enough), Eevee's Light Threshold against Redshift's intensities (the maintainer: users lower the setting themselves).
+- Put off until after 0.2.0: the IPR picture's conversion off the main thread ("Planned features"); four files that have grown large and would each gain from one split (the IPR controller, the IPR window's modal-loop handling, the scene exporter's walk, the Redshift light translation); a whole export on the main thread does not check whether Cinema 4D's redraw is still evaluating the document; and, to measure first, whether a channel's Brightness is ignored when it has a texture and whether Redshift's bump and subsurface lengths assume a centimetre project.
 
 ## What renders differently from 0.1.0
 
