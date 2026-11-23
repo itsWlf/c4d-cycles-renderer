@@ -130,36 +130,23 @@ static maxon::Result<maxon::UInt64> HashFile(const cinema::Filename& file)
 	return hash;
 }
 
-// Saves the grids to a .vdb file named after its content and returns the file.
-static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const maxon::BaseArray<const cinema::VolumeObject*>& grids,
-	const maxon::BaseArray<maxon::String>& names, maxon::UInt64 sourceKey)
+cinema::Filename FindVolumeFile(const maxon::String& id, maxon::UInt64 sourceKey)
+{
+	maxon::ScopedLock lock(g_writtenLock);
+	const auto* const known = g_written.Find(id);
+	if (known && known->GetValue().source == sourceKey && cinema::GeFExist(known->GetValue().file))
+		return known->GetValue().file;
+	return cinema::Filename();
+}
+
+maxon::Result<cinema::Filename> SaveVolumeFile(const maxon::String& id, maxon::BaseArray<maxon::Volume>& volumes, maxon::UInt64 sourceKey)
 {
 	iferr_scope;
-
-	{
-		maxon::ScopedLock lock(g_writtenLock);
-		const auto* const known = g_written.Find(id);
-		if (known && known->GetValue().source == sourceKey && cinema::GeFExist(known->GetValue().file))
-			return known->GetValue().file;
-	}
 
 	const cinema::Filename folder = VolumeFolder();
 	if (!cinema::GeFExist(folder, true) && !cinema::GeFCreateDirRec(folder))
 		return maxon::IoError(MAXON_SOURCE_LOCATION, maxon::Url(), "The folder for volume files could not be created."_s);
 
-	maxon::BaseArray<maxon::Volume> volumes;
-	for (maxon::Int index = 0; index < grids.GetCount(); ++index)
-	{
-		maxon::Volume volume(grids[index]->GetVolume());
-		// A grid written under another name than its own (one without a name, ExportVolume): renamed
-		// on a copy of its own, so that the grid of Cinema 4D's cache keeps its name.
-		if (volume.GetGridName() != names[index])
-		{
-			volume.MakeWritable() iferr_return;
-			volume.SetGridName(names[index]);
-		}
-		volumes.Append(std::move(volume)) iferr_return;
-	}
 	const cinema::Filename temporary = folder + cinema::Filename(id + ".writing.vdb"_s);
 	const maxon::Url url = cinema::MaxonConvert(temporary, cinema::MAXONCONVERTMODE::WRITE);
 	maxon::VolumeToolsInterface::SaveVDBFile(url, 1.0, volumes) iferr_return;
@@ -180,6 +167,32 @@ static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const 
 	written.file = file;
 	g_written.Insert(id, written) iferr_return;
 	return file;
+}
+
+// Saves the grids to a .vdb file named after its content and returns the file.
+static maxon::Result<cinema::Filename> SaveGrids(const maxon::String& id, const maxon::BaseArray<const cinema::VolumeObject*>& grids,
+	const maxon::BaseArray<maxon::String>& names, maxon::UInt64 sourceKey)
+{
+	iferr_scope;
+
+	const cinema::Filename known = FindVolumeFile(id, sourceKey);
+	if (known.IsPopulated())
+		return known;
+
+	maxon::BaseArray<maxon::Volume> volumes;
+	for (maxon::Int index = 0; index < grids.GetCount(); ++index)
+	{
+		maxon::Volume volume(grids[index]->GetVolume());
+		// A grid written under another name than its own (one without a name, ExportVolume): renamed
+		// on a copy of its own, so that the grid of Cinema 4D's cache keeps its name.
+		if (volume.GetGridName() != names[index])
+		{
+			volume.MakeWritable() iferr_return;
+			volume.SetGridName(names[index]);
+		}
+		volumes.Append(std::move(volume)) iferr_return;
+	}
+	return SaveVolumeFile(id, volumes, sourceKey);
 }
 
 maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coords, cinema::BaseDocument* doc, const maxon::String& id,

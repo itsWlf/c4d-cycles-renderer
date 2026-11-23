@@ -82,6 +82,10 @@ struct CyclesNodeFolder
 #define CYCLES_NODES_DATABASE_ID "com.wolfnimations.cyclesrender.nodes"
 /// The node every material ends in.
 #define CYCLES_OUTPUT_NODE_ID "com.wolfnimations.cyclesrender.node.outputmaterial"
+/// The nodes of a world material (materials/cycles_material.h, CreateCyclesWorldMaterial).
+#define CYCLES_WORLD_OUTPUT_NODE_ID "com.wolfnimations.cyclesrender.node.outputworld"
+#define CYCLES_BACKGROUND_NODE_ID "com.wolfnimations.cyclesrender.node.background"
+#define CYCLES_SKY_TEXTURE_NODE_ID "com.wolfnimations.cyclesrender.node.texsky"
 #define CYCLES_PRINCIPLED_NODE_ID "com.wolfnimations.cyclesrender.node.bsdfprincipled"
 /// The Image Texture node, which Cinema 4D makes for an image dropped on the Node Editor
 /// (NODESPACE::IMAGENODEASSETID), with the ports it fills (cycles_nodespace.cpp).

@@ -81,6 +81,11 @@ enum
 	ID_MENU_ADD_OBJECT_TAG,
 	ID_MENU_ADD_LIGHT,
 	ID_MENU_ADD_LIGHT_TAG,
+	ID_MENU_ADD_FOG,
+	ID_MENU_ADD_ENVIRONMENT,
+	ID_MENU_ADD_WORLD_MATERIAL,
+	ID_MENU_ADD_SCATTER,
+	ID_MENU_ADD_PROXY,
 
 	CAMERA_RENDER_VIEW = 0,
 	CAMERA_AUTO = 1,
@@ -329,6 +334,7 @@ cinema::Bool IprDialog::CreateLayout()
 	// What the plugin offers, added to the active document (ipr_add.h).
 	MenuSubBegin("Add"_s);
 	MenuAddString(ID_MENU_ADD_MATERIAL, "Cycles Material"_s);
+	MenuAddString(ID_MENU_ADD_WORLD_MATERIAL, "Cycles World Material"_s);
 	MenuAddSeparator();
 	MenuAddString(ID_MENU_ADD_CAMERA, "Camera with Cycles Camera Tag"_s);
 	MenuAddString(ID_MENU_ADD_CAMERA_TAG, "Cycles Camera Tag on Selected Cameras"_s);
@@ -336,6 +342,11 @@ cinema::Bool IprDialog::CreateLayout()
 	MenuAddSeparator();
 	MenuAddString(ID_MENU_ADD_LIGHT, "Cycles Light"_s);
 	MenuAddString(ID_MENU_ADD_LIGHT_TAG, "Cycles Light Tag on Selected Lights"_s);
+	MenuAddSeparator();
+	MenuAddString(ID_MENU_ADD_FOG, "Cycles Fog"_s);
+	MenuAddString(ID_MENU_ADD_ENVIRONMENT, "Cycles Environment"_s);
+	MenuAddString(ID_MENU_ADD_SCATTER, "Cycles Scatter"_s);
+	MenuAddString(ID_MENU_ADD_PROXY, "Cycles Proxy"_s);
 	MenuSubEnd();
 	MenuSubBegin("Options"_s);
 	MenuSubBegin("IPR Resolution"_s);
@@ -995,10 +1006,17 @@ cinema::Bool IprDialog::Command(cinema::Int32 id, const cinema::BaseContainer& m
 		case ID_MENU_ADD_OBJECT_TAG:
 		case ID_MENU_ADD_LIGHT:
 		case ID_MENU_ADD_LIGHT_TAG:
+		case ID_MENU_ADD_FOG:
+		case ID_MENU_ADD_ENVIRONMENT:
+		case ID_MENU_ADD_WORLD_MATERIAL:
+		case ID_MENU_ADD_SCATTER:
+		case ID_MENU_ADD_PROXY:
 		{
 			const IPRADD what = id == ID_MENU_ADD_MATERIAL ? IPRADD::CYCLES_MATERIAL : id == ID_MENU_ADD_CAMERA ? IPRADD::CAMERA_WITH_TAG
 				: id == ID_MENU_ADD_CAMERA_TAG ? IPRADD::CAMERA_TAG : id == ID_MENU_ADD_LIGHT ? IPRADD::CYCLES_LIGHT
-				: id == ID_MENU_ADD_LIGHT_TAG ? IPRADD::LIGHT_TAG : IPRADD::OBJECT_TAG;
+				: id == ID_MENU_ADD_LIGHT_TAG ? IPRADD::LIGHT_TAG : id == ID_MENU_ADD_FOG ? IPRADD::CYCLES_FOG
+				: id == ID_MENU_ADD_ENVIRONMENT ? IPRADD::CYCLES_ENVIRONMENT : id == ID_MENU_ADD_WORLD_MATERIAL ? IPRADD::CYCLES_WORLD_MATERIAL
+				: id == ID_MENU_ADD_SCATTER ? IPRADD::CYCLES_SCATTER : id == ID_MENU_ADD_PROXY ? IPRADD::CYCLES_PROXY : IPRADD::OBJECT_TAG;
 			maxon::String message;
 			AddToDocument(cinema::GetActiveDocument(), what, message);
 			cinema::StatusSetText("Cycles Render: "_s + message);
@@ -1177,7 +1195,9 @@ maxon::Bool RunIprDialogCommand(const maxon::String& command, const maxon::Strin
 			{ "close", ID_MENU_CLOSE }, { "restart_blender", ID_MENU_RESTART_BLENDER }, { "show_blender", ID_MENU_SHOW_BLENDER }, { "scale_50", ID_MENU_SCALE_50 }, { "fit_window", ID_MENU_FIT_WINDOW },
 			{ "scale_100", ID_MENU_SCALE_100 }, { "add_material", ID_MENU_ADD_MATERIAL }, { "add_camera", ID_MENU_ADD_CAMERA },
 			{ "add_camera_tag", ID_MENU_ADD_CAMERA_TAG }, { "add_object_tag", ID_MENU_ADD_OBJECT_TAG }, { "add_light", ID_MENU_ADD_LIGHT },
-			{ "add_light_tag", ID_MENU_ADD_LIGHT_TAG } };
+			{ "add_light_tag", ID_MENU_ADD_LIGHT_TAG }, { "add_fog", ID_MENU_ADD_FOG },
+			{ "add_environment", ID_MENU_ADD_ENVIRONMENT }, { "add_world_material", ID_MENU_ADD_WORLD_MATERIAL },
+			{ "add_scatter", ID_MENU_ADD_SCATTER }, { "add_proxy", ID_MENU_ADD_PROXY } };
 		for (const auto& control : CONTROLS)
 		{
 			if (argument == maxon::String(control.name))

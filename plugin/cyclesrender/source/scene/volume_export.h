@@ -7,6 +7,7 @@
 
 #include "c4d.h"
 #include "lib_volumeobject.h"
+#include "maxon/volume.h"
 
 #include "coords.h"
 #include "scene_writer.h"
@@ -46,6 +47,22 @@ struct VolumeSource
 //----------------------------------------------------------------------------------------
 maxon::Result<maxon::Bool> ExportVolume(SceneWriter& writer, const Coords& coords, cinema::BaseDocument* doc, const maxon::String& id,
 	const VolumeSource& source);
+
+//----------------------------------------------------------------------------------------
+/// The .vdb file last saved for the volume item @p id (SaveVolumeFile), if it was made from
+/// @p sourceKey (a hash of everything its grids follow from) and still exists; otherwise an empty
+/// name: the grids are to be made and saved anew.
+//----------------------------------------------------------------------------------------
+cinema::Filename FindVolumeFile(const maxon::String& id, maxon::UInt64 sourceKey);
+
+//----------------------------------------------------------------------------------------
+/// Saves @p volumes into <preferences>/cyclesrender/volumes, in a file named after @p id and its
+/// content, as ExportVolume() saves the grids of a Volume Builder: the file saved before for @p id is
+/// deleted, and FindVolumeFile() gives the new one while @p sourceKey stays the same. The grids keep
+/// the axes and units Cinema 4D gives them (Coords::RawMatrix places them). Also for the noise of a
+/// Cycles Fog (fog_export.h).
+//----------------------------------------------------------------------------------------
+maxon::Result<cinema::Filename> SaveVolumeFile(const maxon::String& id, maxon::BaseArray<maxon::Volume>& volumes, maxon::UInt64 sourceKey);
 
 /// Deletes the .vdb files this process wrote. Call when the plugin is unloaded.
 void FreeVolumeFiles();

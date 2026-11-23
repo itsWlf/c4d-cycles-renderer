@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Draws the plugin's icons (the IPR window's toolbar, the commands, tags and the light object)
-into plugin/cyclesrender/res/icons.
+"""Draws the plugin's icons (the IPR window's toolbar, the commands, tags, the light, fog, environment, scatter and proxy
+objects) into plugin/cyclesrender/res/icons.
 
     python tools/make_icons.py
 
@@ -200,10 +200,90 @@ def light(x, y):
     return (150, 112, 12)
 
 
+def fog(x, y):
+    """The icon of the Cycles Fog object: the light's kind of variant in a misty blue grey, the
+    plugin's hexagon dark, the circle filled with soft bands of fog that thin out towards the top."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        band = 0.5 + 0.5 * math.sin((y + 0.06 * math.sin(x * 9.0)) * 34.0)
+        mist = min(1.0, max(0.0, 0.35 + 0.45 * band + 0.6 * (y - 0.4)))
+        return (int(120 + 125 * mist), int(135 + 115 * mist), int(155 + 100 * mist))
+    return (52, 66, 82)
+
+
+def environment(x, y):
+    """The icon of the Cycles Environment object: the light's kind of variant in sky colours, the plugin's
+    hexagon in a deep blue with a sky in the circle, light at its horizon and a small sun."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        if math.hypot(x - 0.58, y - 0.42) < 0.06:
+            return (255, 236, 170)
+        if y > 0.56:
+            return (70, 90, 70)
+        height = min(1.0, max(0.0, (0.56 - y) / 0.3))
+        return (int(200 - 120 * height), int(225 - 95 * height), int(245 - 20 * height))
+    return (28, 46, 98)
+
+
+# Where the scatter icon's dots sit in its circle (x, y, radius): a few stones of different sizes, placed
+# by hand so that they look strewn and none touches another or the circle's edge.
+SCATTER_DOTS = ((0.40, 0.40, 0.045), (0.55, 0.36, 0.035), (0.62, 0.50, 0.05), (0.44, 0.56, 0.04), (0.53, 0.64, 0.03),
+                (0.36, 0.49, 0.025), (0.66, 0.62, 0.025), (0.50, 0.47, 0.025))
+
+
+def scatter(x, y):
+    """The icon of the Cycles Scatter object: the light's kind of variant in greens, the plugin's hexagon in a
+    deep green with copies strewn over a lighter ground in the circle."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        for cx, cy, r in SCATTER_DOTS:
+            d = math.hypot(x - cx, y - cy)
+            if d < r:
+                shade = max(0.0, 1.0 - math.hypot(x - cx + r * 0.3, y - cy + r * 0.3) / r)
+                return (int(200 + 55 * shade), int(225 + 30 * shade), int(150 + 80 * shade))
+        return (78, 128, 70)
+    return (30, 72, 40)
+
+
+# The proxy icon's box, seen from a corner: the six corners around its outline (clockwise from the top) and
+# the corner in the middle that faces the viewer.
+PROXY_OUTLINE = ((0.50, 0.335), (0.64, 0.415), (0.64, 0.585), (0.50, 0.665), (0.36, 0.585), (0.36, 0.415))
+PROXY_FRONT = (0.50, 0.50)
+
+
+def proxy(x, y):
+    """The icon of the Cycles Proxy object: the light's kind of variant in violets, the plugin's hexagon in a
+    deep violet with a box drawn as lines in the circle: what stands in for a file's content in the viewport."""
+    dx, dy = abs(x - 0.5), abs(y - 0.5)
+    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+    if not hexagon:
+        return None
+    if math.hypot(x - 0.5, y - 0.5) < 0.24:
+        edges = [(PROXY_OUTLINE[i], PROXY_OUTLINE[(i + 1) % 6]) for i in range(6)]
+        edges += [(PROXY_FRONT, PROXY_OUTLINE[i]) for i in (1, 3, 5)]
+        for (ax, ay), (bx, by) in edges:
+            length = math.hypot(bx - ax, by - ay)
+            along = min(1.0, max(0.0, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / (length * length)))
+            if math.hypot(x - ax - along * (bx - ax), y - ay - along * (by - ay)) < 0.014:
+                return (236, 226, 255)
+        return (112, 92, 168)
+    return (58, 40, 104)
+
+
 if __name__ == "__main__":
     for icon_name, shape in (("play", play), ("stop", stop), ("pause", pause), ("pause_active", pause_active), ("reload", reload_icon),
                              ("lock_closed", lock(True)), ("lock_open", lock(False)), ("snapshot", snapshot),
                              ("frame", frame), ("settings", gear), ("cyclesrender", app), ("cyclesrender_grey", app_grey),
-                             ("camera_tag", camera_tag), ("light_object", light), ("light_tag", light)):
+                             ("camera_tag", camera_tag), ("light_object", light), ("light_tag", light), ("fog_object", fog),
+                             ("environment_object", environment), ("scatter_object", scatter), ("proxy_object", proxy)):
         render(icon_name, shape)
     print("icons written to", os.path.normpath(OUT))

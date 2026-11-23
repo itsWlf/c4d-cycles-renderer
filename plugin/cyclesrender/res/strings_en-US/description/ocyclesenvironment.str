@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: Apache-2.0
+// The Sky Texture's and the HDRI's names here are only what shows if the node table lacks a setting:
+// objects/environment_object.cpp names them as Blender does.
+STRINGTABLE Ocyclesenvironment
+{
+	Ocyclesenvironment                      "Cycles Environment";
+
+	CYCLESENV_GROUP_ENVIRONMENT             "Environment";
+	CYCLESENV_TYPE                          "Type";
+	CYCLESENV_TYPE_COLOR                    "Color";
+	CYCLESENV_TYPE_SKY                      "Sky Texture";
+	CYCLESENV_TYPE_HDRI                     "HDRI";
+	CYCLESENV_TYPE_MATERIAL                 "Material";
+	CYCLESENV_STRENGTH                      "Strength";
+	CYCLESENV_SEEN_BY_CAMERA                "Seen by Camera";
+	CYCLESENV_LIGHTS_SCENE                  "Lights the Scene";
+	CYCLESENV_COLOR                         "Color";
+
+	CYCLESENV_GROUP_SKY                     "Sky Texture";
+	CYCLESENV_SKY_TYPE                      "Sky Type";
+	CYCLESENV_SKY_SUN_DISC                  "Sun Disc";
+	CYCLESENV_SKY_SUN_SIZE                  "Sun Size";
+	CYCLESENV_SKY_SUN_INTENSITY             "Sun Intensity";
+	CYCLESENV_SKY_SUN_ELEVATION             "Sun Elevation";
+	CYCLESENV_SKY_SUN_ROTATION              "Sun Rotation";
+	CYCLESENV_SKY_ALTITUDE                  "Altitude (m)";
+	CYCLESENV_SKY_AIR_DENSITY               "Air";
+	CYCLESENV_SKY_AEROSOL_DENSITY           "Aerosols";
+	CYCLESENV_SKY_OZONE_DENSITY             "Ozone";
+	CYCLESENV_SKY_TURBIDITY                 "Turbidity";
+	CYCLESENV_SKY_GROUND_ALBEDO             "Ground Albedo";
+	CYCLESENV_SKY_SUN_LIGHT                 "Sun from Light";
+
+	CYCLESENV_GROUP_HDRI                    "HDRI";
+	CYCLESENV_HDRI_FILE                     "File";
+	CYCLESENV_HDRI_COLORSPACE               "Color Space";
+	CYCLESENV_HDRI_PROJECTION               "Projection";
+	CYCLESENV_HDRI_INTERPOLATION            "Interpolation";
+	CYCLESENV_HDRI_MAKE_RELATIVE            "Make Relative";
+	CYCLESENV_HDRI_MAKE_ABSOLUTE            "Make Absolute";
+
+	CYCLESENV_GROUP_FOG                     "World Fog";
+	CYCLESENV_FOG_ENABLE                    "World Fog";
+	CYCLESENV_FOG_COLOR                     "Color";
+	CYCLESENV_FOG_DENSITY                   "Density";
+	CYCLESENV_FOG_ANISOTROPY                "Anisotropy";
+	CYCLESENV_FOG_ABSORPTION_COLOR          "Absorption Color";
+	CYCLESENV_FOG_EMISSION_STRENGTH         "Emission Strength";
+	CYCLESENV_FOG_EMISSION_COLOR            "Emission Color";
+}

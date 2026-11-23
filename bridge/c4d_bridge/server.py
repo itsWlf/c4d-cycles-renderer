@@ -52,6 +52,7 @@ class Bridge:
             "scene": self.handle_scene,
             "settings": self.handle_settings,
             "get": self.handle_get,
+            "blend_info": self.handle_blend_info,
             "render": self.handle_render,
             "material_preview": self.handle_material_preview,
             "edit_material": self.handle_edit_material,
@@ -219,10 +220,19 @@ class Bridge:
     def handle_scene(self, header, blobs):
         count, warnings = self.scene.apply(header, blobs)
         self._scene_changed()
-        return {"count": count, "warnings": warnings}, ()
+        return {"count": count, "warnings": warnings, "libraries": len(bpy.data.libraries)}, ()
+
+    def handle_blend_info(self, header, blobs):
+        from .scene import proxies
+        return proxies.info(self.scene, header)
 
     def handle_settings(self, header, blobs):
+        working_space = bpy.data.colorspace.working_space
         reply = settings.apply(header)
+        if bpy.data.colorspace.working_space != working_space:
+            # Blender converts the colours of linked files when it links them, not when the space changes.
+            from .scene import proxies
+            proxies.relink_all(self.scene)
         # A property set from Python notifies nobody; the tag makes a live viewport pick it up.
         bpy.context.scene.update_tag()
         self._scene_changed()

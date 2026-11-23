@@ -11,7 +11,9 @@
 #include "../materials/material_export.h"
 #include "coords.h"
 #include "document_colors.h"
+#include "environment_export.h"
 #include "light_export.h"
+#include "proxy_export.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -84,7 +86,8 @@ struct ObjectVisibility
 //----------------------------------------------------------------------------------------
 /// An `object` item Write() made that can be written again by itself when only its place changed
 /// (SceneExporter::WriteObjectAlone): everything of the item but its matrix, and how the
-/// matrix follows from the object of the document it belongs to. The walk forms a matrix as a product
+/// matrix follows from the object of the document it belongs to. The `proxy` item of a Cycles Proxy
+/// with one place is noted the same way (@p proxy), with what it says of its file instead of a mesh. The walk forms a matrix as a product
 /// from the top of the document down; @p tail is the part below @p owner (the generator's cache and
 /// the objects inside it), so that the product can be formed again in the same order and the item
 /// agrees with a full export's to the last bit.
@@ -100,6 +103,8 @@ struct WrittenObject
 	maxon::Float64 nameKey = 0.0;
 	maxon::Int32 objectId = 0;
 	maxon::BaseArray<cinema::Matrix> tail;          ///< local matrices below the owner, outermost first
+	maxon::Bool proxy = false;                      ///< the item is a `proxy`, not an `object`: the mesh, the materials and the keys do not count
+	ProxySource source;                             ///< a proxy's file and what is taken from it, as the whole export read them
 };
 
 /// An item Write() made for what an object of the document shows (a mesh and its points, an `object`,
@@ -157,9 +162,19 @@ struct MotionSample
 /// - Normally as a `mesh` (with its `points`) and an `object` showing it.
 /// - Texture tags restricted to polygon selections give the mesh several material slots.
 /// - A multi-instance becomes one `instancer` per mesh of the object it refers to.
+/// - A Cycles Scatter object becomes one `instancer` per mesh of each child it scatters, with a matrix and
+///   a MoGraph colour per copy (objects/scatter_object.h); it is the whole export's in the IPR.
 /// - The volume grids one object produces (Volume Loader, Volume Builder, Pyro Output) become
 ///   one `volume` (volume_export.h).
 /// - A Hair object becomes `curves`, a particle group a `pointcloud` (curves_export.h).
+/// - The world is the highest of the Sky objects, Redshift dome lights and Cycles Environment objects
+///   that render, in the order of the Object Manager; each other one is named in the console.
+/// - A Cycles Fog object becomes a box `mesh` of its size with a material of its own that has only
+///   a volume, and an `object` at its place, which moves alone in the IPR like a mesh's (fog_export.h);
+///   with a noise, its sampled grid as a `volume`, written by a whole export only.
+/// - A Cycles Proxy object becomes a `proxy` item: its Blender file's path and date, what to take from
+///   it, and its place (proxy_export.h); it moves alone in the IPR like a mesh's object. Inside a
+///   multi-instance or below a Cycles Scatter it is one `proxy` item with a matrix per copy.
 /// - A Compositing tag's "seen by" and "cast shadows" switches travel with the objects below
 ///   it; a light's include or exclude list becomes light linking.
 /// - What a generator produces is compared: copies of one mesh with the same materials are
@@ -191,6 +206,7 @@ public:
 	///   object or Cycles Object tag that shows it or an object above it: GetReferences()): the first of
 	///   them in the document names the mesh. They are given in the document's order.
 	/// - None of them was noted by GetFixedOwners() in the last whole export.
+	/// Cycles Fog boxes and Cycles Proxies are written too (their items are their own).
 	/// After Write(), IsRefused() says that something turned up that only a whole export writes right (a
 	/// light, a volume, hair or particles of a generator, the sky, a material the last whole export did
 	/// not write): what was written is then to be thrown away.
@@ -251,6 +267,30 @@ public:
 	MaterialIdTable TakeMaterialIds() { return std::move(_materialIds); }
 	/// After a whole Write(): a light was written with an include or exclude list, which names items.
 	maxon::Bool HasLightLinking() const { return _lightLinking; }
+
+	/// The world of a whole Write(), as far as a step can write it again by itself (WriteWorldAlone).
+	struct WrittenWorld
+	{
+		/// Every role is filled by a Cycles Environment that is an object of the document, or by nothing (and
+		/// the camera's or the light's by one): the world can be written alone. Any other environment, a Sky or
+		/// a dome light is then noted as fixed (GetFixedOwners), so that a change of it is a whole export.
+		maxon::Bool alone = false;
+		const cinema::BaseObject* objects[3] = { nullptr, nullptr, nullptr };   ///< what the camera sees, what lights the scene, the fog; nullptr: none
+		EnvironmentRoles roles[3];      ///< the roles each of them asked for
+		maxon::String images;           ///< the `image` items the world read, joined
+	};
+	const WrittenWorld& GetWrittenWorld() const { return _writtenWorld; }
+
+	//----------------------------------------------------------------------------------------
+	/// Writes the world of the last whole Write() again by itself from @p environments, the objects of
+	/// @p written found again (nullptr: gone), each at its place formed as the walk forms it: the IPR's
+	/// update of an environment whose values or place change, and of the sun of a light linked to one.
+	/// @return  False when only a whole export can write it right: an environment gone, switched off or
+	///          asking for other roles than then, or the world reading other images than then (the old one
+	///          is to be removed).
+	//----------------------------------------------------------------------------------------
+	static maxon::Result<maxon::Bool> WriteWorldAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
+		const cinema::BaseObject* const environments[3], const WrittenWorld& written);
 
 	//----------------------------------------------------------------------------------------
 	/// The global matrix of an object of the document as the walk forms it (Collect, CollectOwners): the
@@ -321,7 +361,9 @@ private:
 		LIGHT,
 		VOLUME,
 		HAIR,
-		PARTICLES
+		PARTICLES,
+		FOG,              ///< a Cycles Fog object: a box mesh of its own, its volume material, an `object` (fog_export.h)
+		PROXY             ///< a Cycles Proxy object: a `proxy` item naming its Blender file (proxy_export.h)
 	} MAXON_ENUM_LIST_CLASS(LEAF);
 
 	using Visibility = ObjectVisibility;
@@ -436,6 +478,11 @@ private:
 	/// Instances the objects listed in a Cycles Object tag on the particles of a particle group
 	/// or the matrices of a Matrix object. Returns false when @p op has no such tag.
 	maxon::Result<maxon::Bool> WalkTagInstances(cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited, const maxon::String& path, maxon::UInt64 key);
+	/// Instances the sources of a Cycles Scatter object (@p op, its green check on) on its copies, as
+	/// WalkTagInstances does for a tag: each source walked once, with one instance set of the copies that show it
+	/// (matrices and MoGraph colours). Its children are not walked as objects of their own.
+	maxon::Result<void> WalkScatter(cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited, const maxon::String& path, maxon::UInt64 key,
+		maxon::Bool inCache);
 	maxon::Result<void> AddMeshLeaf(cinema::BaseObject* object, const cinema::Matrix& mg, const Inherited& inherited, const maxon::String& path,
 		maxon::UInt64 key, maxon::Bool generated);
 	/// The stack for @p op: @p parent extended by the object's own texture tags.
@@ -451,6 +498,10 @@ private:
 	/// Writes the `object` item of a mesh leaf, and with ExportSettings::noteFollowed notes it, or its
 	/// owner when its place cannot be written alone.
 	maxon::Result<void> WriteObject(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved);
+	/// Writes the `proxy` item of a Cycles Proxy leaf (one place, or a matrix per copy of the multi-instance
+	/// it is in), with the same notes. A proxy without a file that is found is named in a warning and left out.
+	/// @return  The item's id, or an empty string when nothing was written.
+	maxon::Result<maxon::String> WriteProxy(SceneWriter& writer, const Leaf& leaf);
 	/// The walk went one level down inside a generator's cache: @p ml joins the tail. Returns the new
 	/// index, or NOTOK when tails are not kept.
 	maxon::Result<maxon::Int> ExtendTail(maxon::Int parent, const cinema::Matrix& ml);
@@ -479,14 +530,24 @@ private:
 	maxon::BaseArray<Leaf> _leaves;
 	maxon::BaseArray<TextureStack> _stacks;
 	maxon::BaseArray<InstanceSet> _instanceSets;
-	maxon::BaseArray<maxon::BaseArray<cinema::Matrix>*> _ownedMatrices;   ///< matrices of the instance sets made here (WalkTagInstances)
+	maxon::BaseArray<maxon::BaseArray<cinema::Matrix>*> _ownedMatrices;   ///< matrices of the instance sets made here (WalkTagInstances, WalkScatter)
+	maxon::BaseArray<maxon::BaseArray<maxon::Color64>*> _ownedColors;     ///< colours of the instance sets made here (WalkScatter)
 	maxon::BaseArray<maxon::String> _notes;   ///< things skipped on purpose, reported as warnings
 	cinema::BaseObject* _camera = nullptr;
-	cinema::BaseObject* _dome = nullptr;      ///< a Redshift dome light: the environment when there is no Sky object
-	cinema::Matrix _domeMg;
-	cinema::BaseObject* _sky = nullptr;
-	cinema::Matrix _skyMg;
-	cinema::BaseMaterial* _skyMaterial = nullptr;
+	/// What can be the world, in the order of the walk: the highest in the Object Manager first. Per role
+	/// the first that asks for it is used (Write()); the others are named.
+	struct WorldSource
+	{
+		WORLDPART kind = WORLDPART::SKY;
+		cinema::BaseObject* object = nullptr;
+		cinema::Matrix mg;
+		cinema::BaseMaterial* material = nullptr;          ///< a Sky's
+		const cinema::BaseObject* owner = nullptr;         ///< the object of the document it belongs to
+		maxon::Bool own = false;                           ///< it is an object of the document itself (not made by a generator)
+		EnvironmentRoles roles;                            ///< a Sky and a dome light: the camera's and the light's
+	};
+	maxon::BaseArray<WorldSource> _worlds;
+	WrittenWorld _writtenWorld;
 	cinema::OcioConverter* _ocio = nullptr;   ///< for MoGraph colours; made when first needed
 	maxon::Bool _ocioTried = false;
 	const MotionSample* _motionOpen = nullptr;

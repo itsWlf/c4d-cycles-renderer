@@ -27,8 +27,9 @@ struct PlacedNode
 {
 	maxon::GraphNode node;
 	const CyclesNode* definition = nullptr;
-	maxon::Int index = NOTOK;     ///< in the Blender graph; NOTOK for the Material Output and a node left out
+	maxon::Int index = NOTOK;     ///< in the Blender graph; NOTOK for the Material Output, a World Output and a node left out
 	maxon::Bool leftOut = false;  ///< the Blender in use does not have this node (CyclesNode::since)
+	maxon::Bool worldOutput = false;  ///< a World Output (a world material's end)
 };
 
 // Whether the Blender in use has what came with version @p since (the table's "since",
@@ -308,8 +309,33 @@ static maxon::Result<maxon::String> ColorRampJson(const maxon::GraphNode& inputs
 	return json + "]}"_s;
 }
 
+maxon::Bool IsCyclesNodeMaterial(const cinema::BaseMaterial* material)
+{
+	return material && material->GetType() == Mmaterial && static_cast<const cinema::NodeMaterial*>(material)->HasSpace(maxon::Id(CYCLES_NODESPACE_ID));
+}
+
+maxon::Bool IsCyclesWorldMaterial(const cinema::BaseMaterial* material)
+{
+	if (!IsCyclesNodeMaterial(material))
+		return false;
+	iferr (const maxon::nodes::NodesGraphModelRef model = static_cast<const cinema::NodeMaterial*>(material)->GetGraph(maxon::Id(CYCLES_NODESPACE_ID)))
+		return false;
+	if (!model)
+		return false;
+	maxon::Bool found = false;
+	iferr (model.GetViewRoot().GetInnerNodes(maxon::NODE_KIND::NODE, false, [&found](const maxon::GraphNode& node) -> maxon::Result<maxon::Bool>
+		{
+			iferr_scope;
+			const CyclesNode* const definition = DefinitionOf(node) iferr_return;
+			found = found || (definition && maxon::CString(definition->type) == "ShaderNodeOutputWorld"_cs);
+			return !found;
+		}))
+		return false;
+	return found;
+}
+
 maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, NodeGraph& graph, cinema::BaseMaterial* material,
-	NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings)
+	NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world)
 {
 	iferr_scope;
 
@@ -320,7 +346,7 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 	const maxon::nodes::NodesGraphModelRef model = nodeMaterial->GetGraph(space) iferr_return;
 	if (!model)
 		return false;
-	return BuildCyclesNodeSurface(exporter, graph, model, material->GetName(), surface, displacement, settings);
+	return BuildCyclesNodeSurface(exporter, graph, model, material->GetName(), surface, displacement, settings, world);
 }
 
 maxon::Result<void> WriteCyclesGraphMaterial(MaterialExporter& exporter, const maxon::GraphModelRef& model, const maxon::String& id)
@@ -359,7 +385,7 @@ maxon::Result<void> WriteCyclesGraphMaterial(MaterialExporter& exporter, const m
 }
 
 maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, NodeGraph& graph, const maxon::GraphModelRef& model,
-	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings)
+	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world)
 {
 	iferr_scope;
 
@@ -386,7 +412,8 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 				}
 				return true;
 			}
-			if (maxon::CString(entry.definition->asset) != maxon::CString(CYCLES_OUTPUT_NODE_ID))
+			entry.worldOutput = maxon::CString(entry.definition->type) == "ShaderNodeOutputWorld"_cs;
+			if (maxon::CString(entry.definition->asset) != maxon::CString(CYCLES_OUTPUT_NODE_ID) && !entry.worldOutput)
 			{
 				if (Lacks(exporter, entry.definition->since))
 				{
@@ -443,6 +470,7 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		return NodeOutput();
 	};
 	maxon::Bool surfaceDropped = false;
+	maxon::Bool worldOutputSeen = false;
 
 	maxon::Bool hasOutput = false;
 	for (const PlacedNode& entry : placed)
@@ -452,6 +480,35 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		const maxon::GraphNode inputs = entry.node.GetInputs() iferr_return;
 		const CyclesNode& definition = *entry.definition;
 
+		if (entry.worldOutput)
+		{
+			worldOutputSeen = true;
+			// A World Output: what is wired into it is the world (the first one counts); on an object it is nothing.
+			NodeOutput worldSurface;
+			NodeOutput worldVolume;
+			const maxon::GraphNode surfacePort = inputs.FindChild(maxon::Id("in.surface")) iferr_return;
+			if (surfacePort.IsValid())
+			{
+				worldSurface = source(surfacePort) iferr_return;
+			}
+			const maxon::GraphNode volumePort = inputs.FindChild(maxon::Id("in.volume")) iferr_return;
+			if (volumePort.IsValid())
+			{
+				worldVolume = source(volumePort) iferr_return;
+			}
+			if (world && !world->found)
+			{
+				world->found = true;
+				world->surface = worldSurface;
+				world->volume = worldVolume;
+			}
+			else if (!world && (worldSurface.IsValid() || worldVolume.IsValid()))
+			{
+				exporter.Warn(FormatString("Material \"@\" is a world material (it has a World Output); on an object it shows nothing of it. "
+					"Put it on a Cycles Environment of the type Material.", materialName));
+			}
+			continue;
+		}
 		if (entry.index == NOTOK)
 		{
 			// The Material Output: hand back what is wired into it. The first one counts.
@@ -684,6 +741,9 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		}
 	}
 
+	// A world material's Material Output stays empty: it is read for the world (or named above, on an object).
+	if (world || worldOutputSeen)
+		return true;
 	if (!surface.IsValid() && !displacement.IsValid())
 	{
 		// (A surface wired from a node this Blender lacks was named above.)

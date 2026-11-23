@@ -9,4 +9,9 @@ STRINGTABLE
 	IDS_CAMERA_TAG_NAME "Cycles Camera";
 	IDS_LIGHT_OBJECT_NAME "Cycles Light";
 	IDS_LIGHT_TAG_NAME "Cycles Light";
+	IDS_FOG_OBJECT_NAME "Cycles Fog";
+	IDS_ENVIRONMENT_OBJECT_NAME "Cycles Environment";
+	IDS_CYCLES_WORLD_MATERIAL_NAME "Cycles World Material";
+	IDS_SCATTER_OBJECT_NAME "Cycles Scatter";
+	IDS_PROXY_OBJECT_NAME "Cycles Proxy";
 }

@@ -5,12 +5,12 @@ change needs (-Changed), or the ones named (-Only).
 
 The tests themselves (the folder tests\) are kept locally and are not part of the repository;
 without them this script has nothing to run. See docs\development.md, "Tests", for when to run
-which: the tests of what changed for every piece of work, the whole baseline once per sprint,
-before a commit the maintainer asks for, and before a release.
+which: only the tests relevant to it for every piece of work (-Only), the whole baseline before
+every version release.
 
 Which versions (the maintainer's rule, 2026-11-16): every run is Cinema 4D 2027 with Blender 5.2
 unless told otherwise, the baseline, -Changed and -Only alike; nothing here loops over versions.
-The sprint's baseline is that pair. Before a major release the baseline also runs on each other
+The baseline before a release is that pair. Before a major release the baseline also runs on each other
 Cinema 4D version with Blender 5.2, and on each other Blender version with Cinema 4D 2027, one run
 after the other (never two at once: they share the output folder, the GPU and the plugin binary):
   foreach ($y in "2024","2025","2026") { .\tools\run_tests.ps1 -C4D $y > baseline_c4d$y.txt }
@@ -151,7 +151,10 @@ $bridgeTests = @(
   # Frames published at most about 30 a second, progress still right; the device reported.
   @{ Name = "test_frame_rate"; Covers = @("${B}viewport/*", "${B}render/devices.py", "${B}render/settings.py", "tests/bridge/frames.py") },
   @{ Name = "test_versions"; Covers = @("${B}render/settings.py", "${B}scene/materials.py", "${P}videopost/render_settings_table.h", "tools/make_settings.py",
-                                        "tools/make_nodes.py") }
+                                        "tools/make_nodes.py") },
+  # The `proxy` item and `blend_info` (0.3.0, F7): a .blend linked, instanced, moved, removed, linked anew,
+  # the scene cleared, in a background and in a windowed Blender; no library left behind.
+  @{ Name = "test_proxy"; Covers = @("${B}scene/proxies.py", "${B}scene/__init__.py", "${B}server.py", "tests/bridge/make_proxy_blend.py") }
 )
 
 # Plugin inside Cinema 4D (c4dpy). Settings: for the start ("<file>" is a file of the start, emptied
@@ -247,6 +250,32 @@ $c4dTests = @(
   @{ Name = "cycles_lights"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}lights/*", "${R}description/ocycleslight.*", "${R}description/tcycleslight.*", "${R}strings_en-US/description/ocycleslight.str",
                 "${R}strings_en-US/description/tcycleslight.str", "${P}scene/light_export.*", "${B}scene/lights.py", "${R}icons/*", "tools/make_icons.py") },
+  # The Cycles Fog object (0.3.0, F5): Beer-Lambert, colours, emission, shape against a Cube of the
+  # Standard renderer, the check, the IPR's move and value alone, the Add menu; the noise.
+  @{ Name = "fog_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}objects/fog_object.*", "${P}scene/fog_export.*", "${R}description/ocyclesfog.*", "${R}strings_en-US/description/ocyclesfog.str",
+                "${P}ipr/ipr_add.*", "${P}scene/volume_export.*", "${B}scene/volumes.py", "${B}scene/meshes.py", "${R}icons/*", "tools/make_icons.py") },
+  # The Cycles Environment object (0.3.0, F4): colour, HDRI against the Sky in 22 directions, Blender's Sky
+  # Texture and its sun, which environment is used, the world written alone in the IPR.
+  @{ Name = "environment_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}objects/environment_object.*", "${P}scene/environment_export.*", "${R}description/ocyclesenvironment.*",
+                "${R}strings_en-US/description/ocyclesenvironment.str", "${P}ipr/ipr_add.*", "${P}ipr/ipr_controller.*", "${B}scene/world.py",
+                "${R}icons/*", "tools/make_icons.py", "${P}nodespace/cycles_nodes_table.h",
+                "${P}materials/cycles_material.*", "${P}materials/cycles_node_material.*", "${P}nodespace/path_commands.*") },
+  # The Cycles Scatter object (0.3.0, F8): the four distributions and their determinism, the restrictions,
+  # Normal Align, MoGraph effectors and fields (through effectors and on the object), the copies rendered against
+  # the Standard renderer (places; a Cloner's clone colour), a surface below it, the IPR, 100,000 copies.
+  @{ Name = "scatter_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}objects/scatter_*", "${R}description/ocyclesscatter.*", "${R}strings_en-US/description/ocyclesscatter.str",
+                "${P}scene/scene_exporter.*", "${P}ipr/ipr_add.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_testhook.*", "${B}scene/instancers.py",
+                "${R}icons/*", "tools/make_icons.py") },
+  # The Cycles Proxy object (0.3.0, F7): the file read by a Blender (the menu, the box, stale content), the
+  # proxy's place against the same boxes built natively, two proxies of one file, a named collection, what is
+  # not there, the frame offset, the file's lamp, the IPR (a move alone), a Cloner's and a Scatter's copies.
+  @{ Name = "proxy_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}objects/proxy_object.*", "${P}scene/proxy_export.*", "${R}description/ocyclesproxy.*", "${R}strings_en-US/description/ocyclesproxy.str",
+                "${P}scene/scene_exporter.*", "${P}ipr/ipr_add.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_testhook.*", "${P}nodespace/path_commands.*",
+                "${B}scene/proxies.py", "${B}scene/__init__.py", "${B}server.py", "${R}icons/*", "tools/make_icons.py", "tests/bridge/make_proxy_blend.py") },
   @{ Name = "light_enable"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/light_export.*", "${P}scene/scene_exporter.*", "${P}lights/*", "${P}ipr/ipr_controller.*", "${B}scene/lights.py", "tests/scenes/old/*") },
   @{ Name = "light_shadows"; Covers = @("${P}scene/light_export.*", "${P}lights/*", "${B}scene/lights.py") },

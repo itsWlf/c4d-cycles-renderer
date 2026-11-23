@@ -24,8 +24,9 @@ Run from the repository root in PowerShell. Details and options are in `docs/dev
 ```powershell
 .\tools\build_plugin.ps1                  # build the plugin for Cinema 4D 2027 -> build\plugin\bin\Release\plugins\cyclesrender
 .\tools\build_plugin.ps1 -Version all     # for 2024, 2025, 2026 and 2027 (the others go to build\plugin-<year>)
-.\tools\run_tests.ps1 -Changed            # the tests for what differs from the last commit (needs the local tests folder)
-.\tools\run_tests.ps1                     # the whole test baseline (Cinema 4D 2027, Blender 5.2), once per sprint, about 45 minutes
+.\tools\run_tests.ps1 -SkipBuild -Only fog_object   # the tests of the thing you changed, after a build (needs the local tests folder)
+.\tools\run_tests.ps1 -Changed -DryRun    # which tests the map connects to what differs from the last commit: a help for choosing, often more than is relevant
+.\tools\run_tests.ps1                     # the whole test baseline (Cinema 4D 2027, Blender 5.2), before a release, about 45 minutes
 .\tools\run_tests.ps1 -C4D 2026           # the same in another Cinema 4D version, before a major release (with Blender 5.2)
 .\tools\run_tests.ps1 -SkipBuild -Blender 5.0   # the same on another Blender, before a major release (with Cinema 4D 2027)
 .\tools\run_tests.ps1 -SkipBuild -Only lights,materials
@@ -69,7 +70,7 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 ## When is a change done
 
 - The plugin builds without warnings for every supported Cinema 4D version (`.\tools\build_plugin.ps1 -Version all`).
-- The tests for what changed pass (`.\tools\run_tests.ps1 -Changed` picks them from the map in that script and says why), with no Blender left running, in Cinema 4D 2027 with Blender 5.2 (the default) and also in any version the change concerns (`-C4D <year>`, `-Blender <version>`). The whole baseline on Cinema 4D 2027 with Blender 5.2 runs once per sprint (a group of items the maintainer calls done), before a commit the maintainer asks for, and before a release; before a major release it also runs on each other Cinema 4D version (2024, 2025, 2026, with Blender 5.2) and on each other Blender version (5.0, 5.1, 5.3, with Cinema 4D 2027), the commands in `docs/development.md`, "Which versions, when"; when it finds a fault that a selected run missed, connect the file to the test in the map in the same piece of work. Without the local tests: say so, and say what you checked by hand.
+- The tests relevant to the change pass, and only those are run (`.\tools\run_tests.ps1 -SkipBuild -Only <names>`: the test of the feature and of what it directly touches, not the wide selection `-Changed` makes and not tests that will pass anyway), with no Blender left running, in Cinema 4D 2027 with Blender 5.2 (the default) and also in any version the change concerns (`-C4D <year>`, `-Blender <version>`). A release is done when all tests pass: the whole baseline on Cinema 4D 2027 with Blender 5.2 runs before every version release, unless the maintainer says otherwise, and not per change or per commit; before a major release it also runs on each other Cinema 4D version (2024, 2025, 2026, with Blender 5.2) and on each other Blender version (5.0, 5.1, 5.3, with Cinema 4D 2027), the commands in `docs/development.md`, "Which versions, when"; when it finds a fault that a selected run missed, connect the file to the test in the map in the same piece of work. Without the local tests: say so, and say what you checked by hand.
 - A feature that reads the Cinema 4D scene is shown next to Cinema 4D's Standard renderer by a test. Things the Standard renderer cannot do (bounced light, depth of field) are tested on their own.
 - What you measured is written down where the rule lives (`docs/reference/`), and anything you did not run is labelled untested.
 - `docs/roadmap.md` says what is now done and what you found on the way. When a document and reality disagree, the document is corrected in the same change.

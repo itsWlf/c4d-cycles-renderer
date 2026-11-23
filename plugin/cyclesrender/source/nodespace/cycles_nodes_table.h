@@ -827,6 +827,12 @@ static const CyclesProperty OUTPUTMATERIAL_PROPERTIES[] =
 	{ "material:volume_intersection_method", "prop.material_volume_intersection_method", "Eevee Volume Intersection", 'e', "FAST|Fast;ACCURATE|Accurate", "FAST", 0.0, 500 },
 };
 
+static const CyclesSocket OUTPUTWORLD_INPUTS[] =
+{
+	{ "Surface", "in.surface", "Surface", 's', { 0.0, 0.0, 0.0, 0.0 }, "", "", 500 },
+	{ "Volume", "in.volume", "Volume", 's', { 0.0, 0.0, 0.0, 0.0 }, "", "", 500 },
+};
+
 static const CyclesSocket PARTICLEINFO_OUTPUTS[] =
 {
 	{ "Index", "out.index", "Index", 'f', { 0.0, 0.0, 0.0, 0.0 }, "", "", 500 },
@@ -1630,6 +1636,7 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeNormalMap", "com.wolfnimations.cyclesrender.node.normalmap", "Normal Map", "VECTOR", NORMALMAP_INPUTS, 2, NORMALMAP_OUTPUTS, 1, NORMALMAP_PROPERTIES, 4, 500 },
 	{ "ShaderNodeObjectInfo", "com.wolfnimations.cyclesrender.node.objectinfo", "Object Info", "INPUT", nullptr, 0, OBJECTINFO_OUTPUTS, 6, nullptr, 0, 500 },
 	{ "ShaderNodeOutputMaterial", "com.wolfnimations.cyclesrender.node.outputmaterial", "Material Output", "OUTPUT", OUTPUTMATERIAL_INPUTS, 4, nullptr, 0, OUTPUTMATERIAL_PROPERTIES, 18, 500 },
+	{ "ShaderNodeOutputWorld", "com.wolfnimations.cyclesrender.node.outputworld", "World Output", "OUTPUT", OUTPUTWORLD_INPUTS, 2, nullptr, 0, nullptr, 0, 500 },
 	{ "ShaderNodeParticleInfo", "com.wolfnimations.cyclesrender.node.particleinfo", "Particle Info", "INPUT", nullptr, 0, PARTICLEINFO_OUTPUTS, 8, nullptr, 0, 500 },
 	{ "ShaderNodePointInfo", "com.wolfnimations.cyclesrender.node.pointinfo", "Point Info", "INPUT", nullptr, 0, POINTINFO_OUTPUTS, 3, nullptr, 0, 500 },
 	{ "ShaderNodeRGB", "com.wolfnimations.cyclesrender.node.rgb", "Color", "INPUT", nullptr, 0, RGB_OUTPUTS, 1, RGB_PROPERTIES, 1, 500 },

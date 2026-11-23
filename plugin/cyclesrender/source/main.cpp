@@ -21,6 +21,10 @@
 #include "ipr/ipr_testhook.h"
 #include "lights/light_object.h"
 #include "lights/light_tag.h"
+#include "objects/environment_object.h"
+#include "objects/fog_object.h"
+#include "objects/proxy_object.h"
+#include "objects/scatter_object.h"
 #include "prefs/prefs_page.h"
 #include "prefs/settings.h"
 #include "scene/scene_dump.h"
@@ -55,8 +59,18 @@ auto cinema::PluginStart() -> cinema::Bool
 		ApplicationOutput("Cycles Render: could not register the Cycles Light object (id @).", cyclesrender::ID_LIGHT_OBJECT);
 	if (!cyclesrender::RegisterLightTag())
 		ApplicationOutput("Cycles Render: could not register the Cycles Light tag (id @).", cyclesrender::ID_LIGHT_TAG);
+	if (!cyclesrender::RegisterFogObject())
+		ApplicationOutput("Cycles Render: could not register the Cycles Fog object (id @).", cyclesrender::ID_FOG_OBJECT);
+	if (!cyclesrender::RegisterEnvironmentObject())
+		ApplicationOutput("Cycles Render: could not register the Cycles Environment object (id @).", cyclesrender::ID_ENVIRONMENT_OBJECT);
+	if (!cyclesrender::RegisterScatterObject())
+		ApplicationOutput("Cycles Render: could not register the Cycles Scatter object (id @).", cyclesrender::ID_SCATTER_OBJECT);
+	if (!cyclesrender::RegisterProxyObject())
+		ApplicationOutput("Cycles Render: could not register the Cycles Proxy object (id @).", cyclesrender::ID_PROXY_OBJECT);
 	if (!cyclesrender::RegisterCyclesMaterial())
 		ApplicationOutput("Cycles Render: could not register the Cycles Material command (id @).", cyclesrender::ID_CYCLES_MATERIAL);
+	if (!cyclesrender::RegisterCyclesWorldMaterial())
+		ApplicationOutput("Cycles Render: could not register the Cycles World Material command (id @).", cyclesrender::ID_CYCLES_WORLD_MATERIAL);
 	if (!cyclesrender::RegisterNativeMaterial())
 		ApplicationOutput("Cycles Render: could not register the Cycles Native Material (ids @ and @).", cyclesrender::ID_NATIVE_MATERIAL,
 			cyclesrender::ID_NATIVE_MATERIAL_EDITS);

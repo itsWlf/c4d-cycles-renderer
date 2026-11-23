@@ -97,6 +97,50 @@ maxon::Result<maxon::Url> ChangePathKind(const maxon::Url& url, const maxon::Url
 	return result;
 }
 
+maxon::Result<cinema::Filename> ChangeFilenameKind(const cinema::Filename& file, const cinema::BaseDocument* doc, maxon::Bool relative, maxon::String& problem)
+{
+	iferr_scope;
+	problem = maxon::String();
+	const maxon::String text = file.GetString();
+	if (text.IsEmpty())
+	{
+		problem = "no file is chosen."_s;
+		return file;
+	}
+	// A drive ("C:"), a leading backslash (a server) or a leading slash is absolute; anything else is relative to the document's folder.
+	const maxon::Bool absolute = (text.GetLength() > 1 && text[1] == ':') || text.StartsWith("\\"_s) || text.StartsWith("/"_s);
+	maxon::Url url;
+	if (absolute)
+	{
+		url = cinema::MaxonConvert(file, cinema::MAXONCONVERTMODE::NONE);
+	}
+	else
+	{
+		maxon::String path = text;
+		path.Replace("\\"_s, "/"_s) iferr_return;
+		url = maxon::Url(path);
+		if (url.GetScheme() != maxon::URLSCHEME_RELATIVE)
+		{
+			url.SetScheme(maxon::URLSCHEME_RELATIVE) iferr_return;
+		}
+	}
+	const cinema::Filename folderName = doc ? doc->GetDocumentPath() : cinema::Filename();
+	const maxon::Url folder = folderName.IsPopulated() ? cinema::MaxonConvert(folderName, cinema::MAXONCONVERTMODE::NONE) : maxon::Url();
+	const maxon::Url changed = ChangePathKind(url, folder, relative, problem) iferr_return;
+	if (problem.IsPopulated())
+		return file;
+	if (changed.GetScheme() == maxon::URLSCHEME_RELATIVE)
+	{
+		// Written as Cinema 4D writes a relative bitmap path on Windows: "tex\\wood.png", without a leading "./".
+		maxon::String path = changed.GetPath();
+		if (path.StartsWith("./"_s))
+			path = path.GetPart(2, path.GetLength() - 2);
+		path.Replace("/"_s, "\\"_s) iferr_return;
+		return cinema::Filename(path);
+	}
+	return cinema::MaxonConvert(changed);
+}
+
 // What both buttons do: every image node the command's data names gets its file's path changed.
 static maxon::Result<maxon::COMMANDRESULT> ExecutePathCommand(maxon::CommandDataRef& data, maxon::Bool relative)
 {

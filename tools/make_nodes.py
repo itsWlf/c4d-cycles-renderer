@@ -77,7 +77,6 @@ NODES_BY_VERSION = {
 # Left out, with the reason (docs/reference/cycles-nodes.md lists them).
 SKIP_NODES = {
     "ShaderNodeOutputLight": "the output of a light's node tree, not of a material's",
-    "ShaderNodeOutputWorld": "the output of the world's node tree, not of a material's",
     "ShaderNodeOutputLineStyle": "Freestyle's line styles, which the plugin does not render",
     "ShaderNodeUVAlongStroke": "Freestyle's line styles, which the plugin does not render",
     "ShaderNodeScript": "an OSL script: needs the script's text or file in Blender, which the plugin does not send",

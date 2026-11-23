@@ -2,7 +2,27 @@
 
 All notable changes to Cycles Render. Version numbers follow [Semantic Versioning](https://semver.org); a release is the Cinema 4D plugin and the Blender bridge with the same number.
 
-## 0.1.0 (in preparation)
+## 0.3.0 (in preparation)
+
+- Cycles Fog object: a box that renders as a volume, with Cinema 4D's noises for its density.
+- Cycles Environment object: a colour, Blender's Sky Texture, an HDRI or a world material of Cycles nodes; separate environments for what the camera sees and what lights the scene; a light as the sun; world fog. Among Cycles Environment, Sky and Redshift dome light, the highest in the Object Manager is used (before, a Sky always won over a dome light).
+- Cycles Scatter object: scatters the objects below it over a surface, its vertices or the places of a CSV file or sequence, with effectors, fields, a spacing radius, and copies that keep their place when a vertex map or the surface is animated.
+- Cycles Proxy object: shows a Blender file, linked, at the object's place.
+
+## 0.2.2
+
+For Cinema 4D 2024 to 2027 and Blender 5.0 to 5.3 on Windows, one package for all. Details, and what renders differently from 0.1.0, are in [docs/roadmap.md](docs/roadmap.md).
+
+- Cycles Camera tag: depth of field, orthographic and panoramic lenses.
+- Cycles Light object and Cycles Light tag; Cinema 4D's lights cast shadows by default and follow their green check.
+- An Output tab in the Render Settings and more render passes.
+- Node Editor: an image dropped becomes an Image Texture node; buttons make a path relative or absolute; the curve nodes have curve controls.
+- Redshift: 112 of 159 nodes translated; lights as bright and as coloured as in Redshift.
+- IPR: an Add menu; the picture follows drags, playback and live values while they change; only what moves is sent; camera navigation in the IPR's picture; Cinema 4D's interface stays free while the IPR follows.
+- Preferences: Blender's render devices, a default engine, switches for the IPR's live behaviours; a clear message when no usable Blender is chosen.
+- Fixed: colour with "Basic" colour management, baked textures removed and reused, the material preview's orientation, Eevee lighting through the editor camera, scenes of more than about 800 meshes.
+
+## 0.1.0
 
 The first public release. For Cinema 4D 2027 and Blender 5.2 on Windows.
 

@@ -47,6 +47,10 @@ static const cinema::Int32 ID_OBJECT_TAG = 1073899;
 /// the ID serves the command: materials/cycles_material.h.)
 static const cinema::Int32 ID_CYCLES_MATERIAL = 1073908;
 
+/// The command "Cycles World Material": a material of Cycles nodes set up as a world, for the Cycles
+/// Environment's Material type (materials/cycles_material.h). Issued by the maintainer, 2026-11-23.
+static const cinema::Int32 ID_CYCLES_WORLD_MATERIAL = 1074759;
+
 /// The "Cycles Native Material": a material edited in Blender's own Shader Editor and kept as
 /// Blender's data (materials/native_material.h). Stored in scene files. The command that
 /// makes one is registered with the same number.
@@ -66,6 +70,19 @@ static const cinema::Int32 ID_LIGHT_TAG = 1073986;
 /// The "Cycles Light" object: a light with Blender's own types and settings
 /// (lights/light_object.h). Stored in scene files.
 static const cinema::Int32 ID_LIGHT_OBJECT = 1073987;
+/// The "Cycles Fog" object: a box that renders as a volume (objects/fog_object.h). The maintainer
+/// calls it "Cycles Fog Object". Stored in scene files.
+static const cinema::Int32 ID_FOG_OBJECT = 1073988;
+/// The "Cycles Environment" object: the world's colour, sky texture or HDRI (objects/environment_object.h).
+/// Stored in scene files.
+static const cinema::Int32 ID_ENVIRONMENT_OBJECT = 1074730;
+/// The "Cycles Scatter" object: scatters the objects below it over a surface, with MoGraph's effectors
+/// (objects/scatter_object.h). Stored in scene files.
+static const cinema::Int32 ID_SCATTER_OBJECT = 1074728;
+
+/// The "Cycles Proxy" object: shows a Blender file, linked, at its place (objects/proxy_object.h).
+/// Stored in scene files.
+static const cinema::Int32 ID_PROXY_OBJECT = 1074729;
 
 /// The scene hook that tells the IPR the document was evaluated during a modal loop
 /// (ipr/ipr_scenehook.h). Stored in every scene file saved with the plugin, which is why it has a

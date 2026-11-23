@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: Apache-2.0
+STRINGTABLE Ocyclesscatter
+{
+	Ocyclesscatter                          "Cycles Scatter";
+
+	CYCLESSCATTER_GROUP_DISTRIBUTION        "Distribution";
+	CYCLESSCATTER_MODE                      "Distribution";
+	CYCLESSCATTER_MODE_VERTICES             "Vertices";
+	CYCLESSCATTER_MODE_SURFACE              "Surface";
+	CYCLESSCATTER_MODE_POISSON              "Poisson";
+	CYCLESSCATTER_MODE_FILE                 "CSV File";
+	CYCLESSCATTER_SURFACE                   "Surface";
+	CYCLESSCATTER_FILE                      "File";
+	CYCLESSCATTER_FILE_SEQUENCE             "Sequence (a File per Frame)";
+	CYCLESSCATTER_FILE_FRAME_OFFSET         "Frame Offset";
+	CYCLESSCATTER_COUNT                     "Count";
+	CYCLESSCATTER_POISSON_RADIUS            "Radius";
+	CYCLESSCATTER_POISSON_SAMPLES           "Samples";
+	CYCLESSCATTER_SEED                      "Seed";
+	CYCLESSCATTER_CHILD_ORDER               "Children";
+	CYCLESSCATTER_CHILD_ORDER_RANDOM        "Random";
+	CYCLESSCATTER_CHILD_ORDER_ITERATE       "Iterate";
+	CYCLESSCATTER_KEEP_AWAY                 "Spacing Radius";
+	CYCLESSCATTER_REMOVE_COPIES             "Restrictions Remove Copies";
+	CYCLESSCATTER_NORMAL_ALIGN              "Normal Align";
+	CYCLESSCATTER_UP_VECTOR                 "Up Vector";
+
+	CYCLESSCATTER_GROUP_RESTRICT            "Where Copies Go";
+	CYCLESSCATTER_VERTEX_MAP                "Vertex Map";
+	CYCLESSCATTER_VERTEX_MAP_LIMIT          "Limit";
+	CYCLESSCATTER_DENSITY_SHADER            "Density";
+	CYCLESSCATTER_DENSITY_MIN               "Density Min";
+	CYCLESSCATTER_DENSITY_MAX               "Density Max";
+	CYCLESSCATTER_NORMAL_THRESHOLD          "Normal Threshold";
+
+	CYCLESSCATTER_GROUP_VARY                "Vary by Shader";
+	CYCLESSCATTER_POSITION_SHADER           "Position";
+	CYCLESSCATTER_POSITION_DISTANCE         "Position Distance";
+	CYCLESSCATTER_SCALE_SHADER              "Scale";
+	CYCLESSCATTER_SCALE_MIN                 "Scale Min";
+	CYCLESSCATTER_SCALE_MAX                 "Scale Max";
+	CYCLESSCATTER_ROTATION_SHADER           "Rotation";
+	CYCLESSCATTER_ROTATION_ANGLE            "Rotation Angle";
+
+	CYCLESSCATTER_GROUP_EFFECTORS           "Effectors";
+	CYCLESSCATTER_EFFECTORS                 "Effectors";
+	CYCLESSCATTER_FIELDS_AFFECT             "Fields Weight";
+	CYCLESSCATTER_FIELDS_AFFECT_DENSITY     "Density";
+	CYCLESSCATTER_FIELDS_AFFECT_SCALE       "Scale";
+	CYCLESSCATTER_FIELDS_AFFECT_BOTH        "Density and Scale";
+	CYCLESSCATTER_FIELDS                    "Fields";
+
+	CYCLESSCATTER_GROUP_DISPLAY             "Display";
+	CYCLESSCATTER_DISPLAY                   "Display";
+	CYCLESSCATTER_DISPLAY_NONE              "None";
+	CYCLESSCATTER_DISPLAY_POINTS            "Points";
+	CYCLESSCATTER_DISPLAY_BOXES             "Boxes";
+	CYCLESSCATTER_DISPLAY_RATE              "Display Rate";
+	CYCLESSCATTER_DISPLAY_COLOR_MODE        "Color";
+	CYCLESSCATTER_DISPLAY_COLOR_COPY        "Copy Color";
+	CYCLESSCATTER_DISPLAY_COLOR_CUSTOM      "Custom";
+	CYCLESSCATTER_DISPLAY_COLOR             "Custom Color";
+}

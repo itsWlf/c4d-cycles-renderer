@@ -27,6 +27,9 @@
 #include "../materials/baked_files.h"
 #include "../platform/process_stats.h"
 #include "../platform/shared_memory.h"
+#include "../objects/scatter_object.h"
+#include "../scene/fog_export.h"
+#include "../scene/proxy_export.h"
 #include "../scene/scene_exporter.h"
 #include "../materials/material_export.h"
 #include "../materials/native_material.h"
@@ -549,6 +552,138 @@ static void MeanOfFrame(const Frame& frame, maxon::Float64* mean)
 	}
 }
 
+// The test hook's "fognoise": what the last export of a Cycles Fog with a noise measured.
+static maxon::String FogNoiseAnswer()
+{
+	const FogNoiseStats stats = GetLastFogNoiseStats();
+	JsonWriter answer;
+	answer.BeginObject();
+	answer.BeginArray("cells");
+	for (const maxon::Int32 count : stats.cells)
+		answer.Int(nullptr, count);
+	answer.EndArray();
+	answer.Float("sample_ms", stats.sampleMs);
+	answer.Float("save_ms", stats.saveMs);
+	answer.Bool("reused", stats.reused);
+	answer.Int("type", stats.type);
+	answer.Int("seed", stats.seed);
+	answer.EndObject();
+	return answer.GetText();
+}
+
+// The test hook's "scatter [name]": what the Cycles Scatter object of the active document named so (without a
+// name: the active object) computed at its last evaluation (objects/scatter_object.h). Its copies in its own
+// axes, at most SCATTER_ANSWER_COPIES of them: per copy its place, its three axes (each axis's length is the
+// scale along it), its MoGraph colour and its source.
+static const maxon::Int SCATTER_ANSWER_COPIES = 200000;
+
+static const cinema::BaseObject* FindObjectNamed(const cinema::BaseObject* op, const maxon::String& name)
+{
+	for (; op; op = op->GetNext())
+	{
+		if (maxon::String(op->GetName()) == name)
+			return op;
+		if (const cinema::BaseObject* const found = FindObjectNamed(op->GetDown(), name))
+			return found;
+	}
+	return nullptr;
+}
+
+// The test hook's "proxy [name]" and "proxyread [name]": the Cycles Proxy object of the active document named
+// so (without a name: the active object) as scene/proxy_export.h describes it (DescribeProxy); "proxyread"
+// first does what its button "Read File" does (ReadProxyFile: starts a Blender) and adds "read", the
+// sentence for the status bar, or "error".
+static maxon::String ProxyAnswer(const maxon::String& name, maxon::Bool read)
+{
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	const cinema::BaseObject* const found = !doc ? nullptr : name.IsPopulated() ? FindObjectNamed(doc->GetFirstObject(), name) : doc->GetActiveObject();
+	cinema::BaseObject* const op = const_cast<cinema::BaseObject*>(found && found->GetType() == ID_PROXY_OBJECT ? found : nullptr);
+	JsonWriter json;
+	json.BeginObject();
+	json.Bool("found", op != nullptr);
+	if (op && read)
+	{
+		iferr (const maxon::String message = ReadProxyFile(op, doc))
+			json.String("error", err.GetMessage());
+		else
+			json.String("read", message);
+	}
+	if (op)
+		json.Raw("proxy", DescribeProxy(op, doc));
+	json.EndObject();
+	return json.GetText();
+}
+
+static maxon::String ScatterAnswer(const maxon::String& name)
+{
+	const cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	const cinema::BaseObject* const op = !doc ? nullptr : name.IsPopulated() ? FindObjectNamed(doc->GetFirstObject(), name) : doc->GetActiveObject();
+	const ScatterResult* const result = GetScatterResult(op);
+	JsonWriter json;
+	json.BeginObject();
+	json.Bool("found", result != nullptr);
+	if (result)
+	{
+		const ScatterCopies& copies = result->copies;
+		const maxon::Int count = maxon::Min(copies.matrices.GetCount(), SCATTER_ANSWER_COPIES);
+		json.Int("count", copies.matrices.GetCount());
+		json.Int("candidates", result->stats.candidates);
+		json.Int("placed", result->stats.placed);
+		json.Int("hidden", result->stats.hidden);
+		json.Int("triangles", result->stats.triangles);
+		json.Int("effectors_run", result->stats.effectorsRun);
+		json.Bool("fields_sampled", result->stats.fieldsSampled);
+		json.Float("distribute_ms", result->stats.distributeMs);
+		json.Float("effector_ms", result->stats.effectorMs);
+		json.Int("evaluations", result->evaluations);
+		json.Int("builds", result->builds);
+		// Something the copies follow from changed after they were computed (GetCurrentScatterCopies computes them again).
+		json.Bool("stale", ScatterDependencies(op, doc) != result->dependencies);
+		json.BeginArray("sources");
+		for (const ScatterSource& source : result->sources)
+			json.String(nullptr, source.name);
+		json.EndArray();
+		json.BeginArray("skipped");
+		for (const maxon::String& skipped : result->skipped)
+			json.String(nullptr, skipped);
+		json.EndArray();
+		json.BeginArray("warnings");
+		for (const maxon::String& warning : result->warnings)
+			json.String(nullptr, warning);
+		json.EndArray();
+		maxon::BaseArray<maxon::Float64> positions;
+		maxon::BaseArray<maxon::Float64> axes;
+		maxon::BaseArray<maxon::Float64> colors;
+		maxon::BaseArray<maxon::Float64> sources;
+		iferr_scope_handler
+		{
+			return "{\"found\":false,\"error\":\"out of memory\"}"_s;
+		};
+		for (maxon::Int i = 0; i < count; ++i)
+		{
+			const cinema::Matrix& m = copies.matrices[i];
+			const cinema::Vector values[4] = { m.off, m.sqmat.v1, m.sqmat.v2, m.sqmat.v3 };
+			for (maxon::Int k = 0; k < 4; ++k)
+			{
+				maxon::BaseArray<maxon::Float64>& target = k == 0 ? positions : axes;
+				target.Append(values[k].x) iferr_return;
+				target.Append(values[k].y) iferr_return;
+				target.Append(values[k].z) iferr_return;
+			}
+			colors.Append(copies.colors[i].x) iferr_return;
+			colors.Append(copies.colors[i].y) iferr_return;
+			colors.Append(copies.colors[i].z) iferr_return;
+			sources.Append(maxon::Float64(copies.sources[i])) iferr_return;
+		}
+		json.Floats("positions", positions.GetFirst(), positions.GetCount());
+		json.Floats("axes", axes.GetFirst(), axes.GetCount());
+		json.Floats("colors", colors.GetFirst(), colors.GetCount());
+		json.Floats("copy_sources", sources.GetFirst(), sources.GetCount());
+	}
+	json.EndObject();
+	return json.GetText();
+}
+
 static maxon::String Execute(const maxon::String& commandLine)
 {
 	IprController& ipr = IprController::Get();
@@ -841,7 +976,7 @@ static maxon::String Execute(const maxon::String& commandLine)
 	else if (command == "add"_s)
 	{
 		// What the window's "Add" menu does, without the window: material, camera, camera_tag,
-		// object_tag, light, light_tag. "add follow" runs what the message plugin runs after a change
+		// object_tag, light, light_tag, fog, environment, world_material, scatter, proxy. "add follow" runs what the message plugin runs after a change
 		// (c4dpy has no message loop): the render view through undo and redo of "add camera".
 		if (argument == "follow"_s)
 		{
@@ -850,7 +985,9 @@ static maxon::String Execute(const maxon::String& commandLine)
 		}
 		const IPRADD what = argument == "material"_s ? IPRADD::CYCLES_MATERIAL : argument == "camera"_s ? IPRADD::CAMERA_WITH_TAG
 			: argument == "camera_tag"_s ? IPRADD::CAMERA_TAG : argument == "light"_s ? IPRADD::CYCLES_LIGHT
-			: argument == "light_tag"_s ? IPRADD::LIGHT_TAG : IPRADD::OBJECT_TAG;
+			: argument == "light_tag"_s ? IPRADD::LIGHT_TAG : argument == "fog"_s ? IPRADD::CYCLES_FOG
+			: argument == "environment"_s ? IPRADD::CYCLES_ENVIRONMENT : argument == "world_material"_s ? IPRADD::CYCLES_WORLD_MATERIAL
+			: argument == "scatter"_s ? IPRADD::CYCLES_SCATTER : argument == "proxy"_s ? IPRADD::CYCLES_PROXY : IPRADD::OBJECT_TAG;
 		maxon::String message;
 		const maxon::Int added = AddToDocument(cinema::GetActiveDocument(), what, message);
 		JsonWriter json;
@@ -1061,7 +1198,14 @@ maxon::Bool RunIprTestCommand()
 
 	cinema::BaseContainer answer;
 	answer.SetString(KEY_COMMAND, maxon::String());
-	answer.SetString(KEY_ANSWER, Execute(command));
+	// (Answered here, beside Execute(), which is at the style check's limit of length.)
+	answer.SetString(KEY_ANSWER, command == "fognoise"_s ? FogNoiseAnswer()
+		: command == "scatter"_s ? ScatterAnswer(maxon::String())
+		: command.StartsWith("scatter "_s) ? ScatterAnswer(command.GetPart(8, command.GetLength() - 8))
+		: command == "proxy"_s || command == "proxyread"_s ? ProxyAnswer(maxon::String(), command == "proxyread"_s)
+		: command.StartsWith("proxy "_s) ? ProxyAnswer(command.GetPart(6, command.GetLength() - 6), false)
+		: command.StartsWith("proxyread "_s) ? ProxyAnswer(command.GetPart(10, command.GetLength() - 10), true)
+		: Execute(command));
 	cinema::SetWorldPluginData(ID_CYCLES_VIDEOPOST, answer, true);
 	return true;
 }

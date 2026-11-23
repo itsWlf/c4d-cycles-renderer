@@ -367,7 +367,7 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 
 	const maxon::Int32 type = GetIntParameter(light, REDSHIFT_LIGHT_TYPE, REDSHIFT_LIGHT_TYPE_PHYSICAL_POINT);
 	if (type == REDSHIFT_LIGHT_TYPE_DOME)
-		return false;   // the environment: scene_exporter.cpp hands it to ExportDomeWorld
+		return false;   // the environment: scene_exporter.cpp hands it to ExportWorldItem
 	if (type == REDSHIFT_LIGHT_TYPE_PORTAL)
 	{
 		Warn(writer, FormatString("Light \"@\": Redshift portal lights are not translated; Cycles samples the environment without them.", light->GetName()));

@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: Apache-2.0
+STRINGTABLE Ocyclesfog
+{
+	Ocyclesfog                              "Cycles Fog";
+
+	CYCLESFOG_GROUP_FOG                     "Fog";
+	CYCLESFOG_SIZE                          "Size";
+	CYCLESFOG_COLOR                         "Color";
+	CYCLESFOG_DENSITY                       "Density";
+	CYCLESFOG_ANISOTROPY                    "Anisotropy";
+	CYCLESFOG_ABSORPTION_COLOR              "Absorption Color";
+	CYCLESFOG_EMISSION_STRENGTH             "Emission Strength";
+	CYCLESFOG_EMISSION_COLOR                "Emission Color";
+	CYCLESFOG_BLACKBODY_INTENSITY           "Blackbody Intensity";
+	CYCLESFOG_BLACKBODY_TINT                "Blackbody Tint";
+	CYCLESFOG_TEMPERATURE                   "Temperature (K)";
+
+	CYCLESFOG_GROUP_NOISE                   "Noise";
+	CYCLESFOG_NOISE_ENABLE                  "Vary the Density by a Noise";
+	CYCLESFOG_NOISE_TYPE                    "Noise";
+	CYCLESFOG_NOISE_SPACE                   "Space";
+	CYCLESFOG_NOISE_SPACE_OBJECT            "Object";
+	CYCLESFOG_NOISE_SPACE_WORLD             "World";
+	CYCLESFOG_NOISE_SCALE                   "Scale";
+	CYCLESFOG_NOISE_RELATIVE_SCALE          "Relative Scale";
+	CYCLESFOG_NOISE_OCTAVES                 "Octaves";
+	CYCLESFOG_NOISE_SEED                    "Seed";
+	CYCLESFOG_NOISE_ABSOLUTE                "Absolute";
+	CYCLESFOG_NOISE_LOW_CLIP                "Low Clip";
+	CYCLESFOG_NOISE_HIGH_CLIP               "High Clip";
+	CYCLESFOG_NOISE_BRIGHTNESS              "Brightness";
+	CYCLESFOG_NOISE_CONTRAST                "Contrast";
+	CYCLESFOG_NOISE_SPEED                   "Animation Speed";
+	CYCLESFOG_NOISE_RESOLUTION              "Resolution";
+}

@@ -397,7 +397,8 @@ public:
 		REFUSED = 7,							///< collecting found such a thing, or a material the last whole export did not write (SceneExporter::IsRefused)
 		LINKING = 8,							///< items came or went while a light has an include or exclude list
 		LIGHT_GONE = 9,						///< a light of the last whole export is gone
-		MESH_NOT_HELD = 10				///< a mesh kept as Blender holds it was not held (never seen)
+		MESH_NOT_HELD = 10,				///< a mesh kept as Blender holds it was not held (never seen)
+		ENVIRONMENT = 11					///< an environment the world was written from is gone, switched off, asks for other roles, or the world reads other images
 	} MAXON_ENUM_LIST_CLASS(WHOLE);
 	WHOLE GetLastWholeReason() const { const IprLocked held(_lock); return _lastWhole; }
 	/// For tests: the time after which a step that collects may run again counts from now (0: at once);
@@ -547,6 +548,13 @@ private:
 		LightLinking linking;
 	};
 	maxon::BaseArray<FollowedLight> _lights;
+	/// The world of the last whole export (SceneExporter::GetWrittenWorld) when a step can write it again by
+	/// itself: the Cycles Environments of its three roles found again through links (nullptr: the role is empty).
+	maxon::Bool _worldAlone = false;
+	cinema::BaseLink* _worldLinks[3] = { nullptr, nullptr, nullptr };
+	SceneExporter::WrittenWorld _writtenWorld;
+	/// Forgets the world's links.
+	void ForgetWorld();
 	/// An object of the document as the last whole export saw it, in the order of a walk from the top
 	/// (each object before the objects below it): what FollowStep() compares.
 	struct FollowedNode

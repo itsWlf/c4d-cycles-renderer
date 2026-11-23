@@ -207,6 +207,15 @@ IprController::~IprController()
 	DeleteObj(_watcher);
 	_reader.Close();
 	DeleteObj(_worker);	// ends the thread and Blender
+	ForgetWorld();
+}
+
+void IprController::ForgetWorld()
+{
+	for (cinema::BaseLink*& link : _worldLinks)
+		cinema::BaseLink::Free(link);
+	_worldAlone = false;
+	_writtenWorld = SceneExporter::WrittenWorld();
 }
 
 maxon::Result<void> IprController::EnsureWorker()
@@ -275,6 +284,7 @@ void IprController::Fail(const maxon::String& message)
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	ForgetWorld();
 	ForgetFollowed();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
@@ -398,6 +408,7 @@ void IprController::Stop()
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	ForgetWorld();
 	ForgetFollowed();
 	_sentView = "?"_s;
 	_sentRegion = "?"_s;
@@ -1240,6 +1251,24 @@ maxon::Result<void> IprController::NoteLights(SceneExporter& exporter)
 {
 	iferr_scope;
 	_lights.Reset();
+	// (The world of Cycles Environments follows the same way as a light: written again by every step.)
+	ForgetWorld();
+	const SceneExporter::WrittenWorld& world = exporter.GetWrittenWorld();
+	if (world.alone)
+	{
+		for (maxon::Int role = 0; role < 3; ++role)
+		{
+			if (!world.objects[role])
+				continue;
+			_worldLinks[role] = cinema::BaseLink::Alloc();
+			if (!_worldLinks[role])
+				return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
+			_worldLinks[role]->SetLink(const_cast<cinema::BaseObject*>(world.objects[role]));
+		}
+		// (Its objects are compared for being there only; the links find them again.)
+		_writtenWorld = world;
+		_worldAlone = true;
+	}
 	maxon::BaseArray<WrittenLight> written = exporter.TakeWrittenLights();
 	for (WrittenLight& light : written)
 	{
@@ -1437,7 +1466,8 @@ maxon::Result<void> IprController::NoteFollowed(cinema::BaseDocument* doc, Scene
 		node.renderMode = op->GetRenderMode();
 		const maxon::Int32 type = op->GetType();
 		// A light's values are written with the light alone, a camera's are sent by SyncCamera().
-		node.cameraOrLight = type == Olight || type == Orslight || type == ID_LIGHT_OBJECT || type == Orscamera || op->IsInstanceOf(Ocamera);
+		// (A Cycles Environment's world is written by the step too; one that is not used is noted as fixed.)
+		node.cameraOrLight = type == Olight || type == Orslight || type == ID_LIGHT_OBJECT || type == ID_ENVIRONMENT_OBJECT || type == Orscamera || op->IsInstanceOf(Ocamera);
 		node.modifier = (op->GetInfo() & OBJECT_MODIFIER) != 0;
 		node.consumed = op->GetBit(BIT_CONTROLOBJECT);
 		_nodeOf.Insert(op, maxon::Int32(_nodes.GetCount())) iferr_return;
@@ -1915,6 +1945,17 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 	}
 	if (lost)
 		return Whole(WHOLE::LIGHT_GONE);
+	// The world of Cycles Environments, written alone: their values, their places and a linked light's sun
+	// (SceneExporter::WriteWorldAlone).
+	if (_worldAlone)
+	{
+		const cinema::BaseObject* environments[3] = { nullptr, nullptr, nullptr };
+		for (maxon::Int role = 0; role < 3; ++role)
+			environments[role] = _worldLinks[role] ? static_cast<const cinema::BaseObject*>(_worldLinks[role]->GetLink(doc, Obase)) : nullptr;
+		const maxon::Bool written = SceneExporter::WriteWorldAlone(*task->scene, doc, _exportSettings, environments, _writtenWorld) iferr_return;
+		if (!written)
+			return Whole(WHOLE::ENVIRONMENT);
+	}
 	for (const maxon::String& warning : task->scene->GetWarnings())
 		ReportOnce(warning);
 

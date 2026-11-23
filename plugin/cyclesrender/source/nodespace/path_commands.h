@@ -36,6 +36,16 @@ namespace cyclesrender
 maxon::Result<maxon::Url> ChangePathKind(const maxon::Url& url, const maxon::Url& folder, maxon::Bool relative, maxon::String& problem);
 
 //----------------------------------------------------------------------------------------
+/// The same for a file parameter of an object (the HDRI of the Cycles Environment): @p file made
+/// relative to the folder of @p doc, or absolute again, by ChangePathKind(). A relative file name is
+/// one without a drive, a server or a leading slash; the exporter finds it next to the document as it
+/// finds a bitmap's (GenerateTexturePath).
+/// @param[out] problem  Why nothing changed, in words for the user, or empty.
+/// @return              The new file name, or @p file itself when nothing changed.
+//----------------------------------------------------------------------------------------
+maxon::Result<cinema::Filename> ChangeFilenameKind(const cinema::Filename& file, const cinema::BaseDocument* doc, maxon::Bool relative, maxon::String& problem);
+
+//----------------------------------------------------------------------------------------
 /// Runs a button's command as pressing it does: through maxon::CommandClasses, with @p graph
 /// and the path of @p node as its data. For the IPR test hook (a test cannot press it).
 /// @return  What the command reported: "ok", "skip" or "break".

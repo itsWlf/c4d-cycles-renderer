@@ -14,11 +14,16 @@ namespace cyclesrender
 enum class IPRADD
 {
 	CYCLES_MATERIAL,				///< a material of Cycles nodes, as the command "Cycles Material" makes it
+	CYCLES_WORLD_MATERIAL,	///< a material of Cycles nodes set up as a world, as the command "Cycles World Material" makes it
 	CAMERA_WITH_TAG,				///< a camera where the active view looks from, with a Cycles Camera tag, made the render view's camera
 	CAMERA_TAG,							///< a Cycles Camera tag on every selected camera that has none
 	OBJECT_TAG,							///< a Cycles Object tag on every selected object that has none
 	CYCLES_LIGHT,						///< a Cycles Light where Cinema 4D's own Create menu puts one (its command: at the workplane)
-	LIGHT_TAG								///< a Cycles Light tag on every selected light of Cinema 4D or Redshift that has none
+	LIGHT_TAG,							///< a Cycles Light tag on every selected light of Cinema 4D or Redshift that has none
+	CYCLES_FOG,							///< a Cycles Fog, as the Cycles Light is added (its command: at the workplane)
+	CYCLES_ENVIRONMENT,			///< a Cycles Environment, as the Cycles Light is added
+	CYCLES_SCATTER,					///< a Cycles Scatter, as the Cycles Light is added (its children and surface are the user's to give)
+	CYCLES_PROXY						///< a Cycles Proxy, as the Cycles Light is added (its file is the user's to choose)
 } MAXON_ENUM_LIST(IPRADD);
 
 //----------------------------------------------------------------------------------------

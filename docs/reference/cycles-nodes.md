@@ -102,7 +102,7 @@ Every shader node of the supported Blender versions (5.0.0, 5.1.2, 5.2.3 LTS, 5.
 | Wavelength | `ShaderNodeWavelength` | 5.0 | yes, in Color |
 | White Noise Texture | `ShaderNodeTexWhiteNoise` | 5.0 | yes, in Texture |
 | Wireframe | `ShaderNodeWireframe` | 5.0 | yes, in Input |
-| World Output | `ShaderNodeOutputWorld` | 5.0 | left out: the output of the world's node tree, not of a material's |
+| World Output | `ShaderNodeOutputWorld` | 5.0 | yes, in Output |
 | Raycast | `ShaderNodeRaycast` | 5.1 | yes, in Input |
 | Light Accumulation | `ShaderNodeLightAccumulation` | 5.3 | yes, in Shader |
 | Light Evaluation | `ShaderNodeLightEvaluation` | 5.3 | yes, in Input |

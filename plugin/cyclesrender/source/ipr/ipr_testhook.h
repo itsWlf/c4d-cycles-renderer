@@ -46,7 +46,7 @@ namespace cyclesrender
 /// its IMAGENODEPORTS; "asset", "ports", "ports_found", "node"), pathcommand relative|absolute
 /// <node id> (runs that button's command through maxon::CommandClasses: "result") and path
 /// <node id> (both also give the file's "scheme" and "path"). And add material|camera|camera_tag|
-/// object_tag|light|light_tag runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"};
+/// object_tag|light|light_tag|fog|environment|world_material|scatter|proxy runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"};
 /// add follow runs FollowAddedCameras() as the message plugin does after a change: {"views_set", "switches"}.
 /// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render
 /// Devices (prefs/devices.h; "find" starts a Blender as the page's button does) and answers with
@@ -55,7 +55,16 @@ namespace cyclesrender
 /// (ipr_trace.h) and trace hands it over {"trace": [[time, name, value], ...], "now"}; verify exports
 /// the active document whole and compares it with what Blender holds (IprController::VerifySync:
 /// {"items", "differences"}); sources lists what each mesh leaf is made from
-/// (SceneExporter::GetSourceListing). The status also has meshes_exported, meshes_kept, export_ms
+/// (SceneExporter::GetSourceListing); fognoise answers what the last export of a Cycles Fog with a noise
+/// measured ({"cells", "sample_ms", "save_ms", "reused", "type", "seed"}: scene/fog_export.h); scatter [name] answers what
+/// the Cycles Scatter object of that name in the active document (without a name: the active object) computed at its last
+/// evaluation ({"found", "count", "candidates", "placed", "hidden", "triangles", "effectors_run", "fields_sampled",
+/// "distribute_ms", "effector_ms", "evaluations", "builds", "stale", "sources", "skipped", "warnings", and per copy, in the object's axes, "positions" (x, y, z),
+/// "axes" (X, Y and Z axes, 9 numbers), "colors" (MoGraph's, r, g, b), "copy_sources" (the index into "sources")}:
+/// objects/scatter_object.h); proxy [name] answers what the Cycles Proxy object of that name holds of its file
+/// ({"found", "proxy": {"state", "status", "file", "stamp", "blender", "entries", "box", "source"}}:
+/// scene/proxy_export.h, DescribeProxy) and proxyread [name] first reads the file as its button "Read File" does
+/// (starts a Blender; adds "read" or "error"). The status also has meshes_exported, meshes_kept, export_ms
 /// and mesh_ms of the last export.
 /// Blender versions: versioned <code> exports the active document as for a Blender of
 /// that version (BlenderVersionCode(), 502 for 5.2), whatever Blender is installed, and answers

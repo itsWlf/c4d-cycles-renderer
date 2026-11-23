@@ -18,6 +18,9 @@
 #include "olight.h"
 #include "orslight.h"
 #include "customgui_inexclude.h"
+#include "ocyclesenvironment.h"
+#include "ocyclesfog.h"
+#include "ocyclesproxy.h"
 #include "ocycleslight.h"
 #include "tcompositing.h"
 #include "tcyclesobject.h"
@@ -26,11 +29,13 @@
 #include "../ids.h"
 #include "../lights/light_tag.h"
 #include "../materials/material_export.h"
+#include "../objects/scatter_object.h"
 #include "../sdk_compat.h"
 #include "camera_export.h"
 #include "curves_export.h"
 #include "lib_hair.h"
 #include "environment_export.h"
+#include "fog_export.h"
 #include "light_export.h"
 #include "mesh_export.h"
 #include "parameters.h"
@@ -150,6 +155,33 @@ maxon::Result<maxon::Bool> SceneExporter::WriteLightAlone(SceneWriter& writer, c
 	return ExportLight(writer, Coords::FromDocument(doc), colors, light, WalkMatrix(light), id, settings.lightMultiplier, linking, EeveeHidesLights(settings));
 }
 
+maxon::Result<maxon::Bool> SceneExporter::WriteWorldAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
+	const cinema::BaseObject* const environments[3], const WrittenWorld& written)
+{
+	iferr_scope;
+	if (!doc)
+		return maxon::NullptrError(MAXON_SOURCE_LOCATION);
+	WorldPart parts[3];
+	for (maxon::Int role = 0; role < 3; ++role)
+	{
+		if (!written.objects[role])
+			continue;
+		// Gone, or asking for other roles than then (switched off, a box ticked or not): which environment
+		// fills which role is the whole export's to say.
+		if (!environments[role] || GetEnvironmentRoles(environments[role]) != written.roles[role])
+			return false;
+		parts[role].kind = WORLDPART::ENVIRONMENT;
+		parts[role].object = environments[role];
+		parts[role].mg = WalkMatrix(environments[role]);
+	}
+	MaterialExporter materials(writer, doc, settings.bakeResolution);
+	materials.SetBlenderVersion(settings.blenderVersion, settings.blenderVersionText);
+	maxon::String read;
+	ExportWorldItem(materials, parts[0], parts[1], parts[2], settings.worldColor, settings.worldStrength, &read) iferr_return;
+	// Another image read (another type, file or colour space): what Blender holds of the old one is to go.
+	return read == written.images;
+}
+
 cinema::Matrix SceneExporter::WalkMatrix(const cinema::BaseObject* op)
 {
 	// The same product, in the same order, as Collect() and Walk() form on the way down: Collect() starts
@@ -169,6 +201,8 @@ SceneExporter::~SceneExporter()
 		DeleteObj(_ocio);
 	for (maxon::BaseArray<cinema::Matrix>*& matrices : _ownedMatrices)
 		DeleteObj(matrices);
+	for (maxon::BaseArray<maxon::Color64>*& colors : _ownedColors)
+		DeleteObj(colors);
 }
 
 maxon::Result<void> SceneExporter::Collect()
@@ -218,6 +252,12 @@ maxon::Result<void> SceneExporter::GetMotionSample(MotionSample& sample) const
 
 	for (const Leaf& leaf : _leaves)
 	{
+		// A fog's box only moves: its matrix is all it needs.
+		if (leaf.kind == LEAF::FOG)
+		{
+			sample.matrices.Insert(leaf.key, leaf.mg) iferr_return;
+			continue;
+		}
 		if (leaf.kind != LEAF::MESH)
 			continue;
 		sample.matrices.Insert(leaf.key, leaf.mg) iferr_return;
@@ -499,6 +539,98 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 	return true;
 }
 
+maxon::Result<void> SceneExporter::WalkScatter(cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited, const maxon::String& path,
+	maxon::UInt64 key, maxon::Bool inCache)
+{
+	iferr_scope;
+
+	const maxon::String name = op->GetName();
+	// Its copies follow from other objects (the surface, the effectors, the fields) that a step of the IPR does not
+	// look at: only a whole export writes them right.
+	NoteFixed(inherited.ownerObject) iferr_return;
+	if (inherited.instanceSet != NOTOK)
+	{
+		_notes.Append(FormatString("Scatter \"@\": a Cycles Scatter inside a multi-instance is not exported.", name)) iferr_return;
+		return maxon::OK;
+	}
+	const ScatterResult* const result = GetScatterResult(op);
+	if (!result)
+	{
+		_notes.Append(FormatString(inCache ? "Scatter \"@\": a copy of a Cycles Scatter made by a generator is not exported."_s
+			: "Scatter \"@\": its copies were not computed (the document was not evaluated); it renders nothing."_s, name)) iferr_return;
+		return maxon::OK;
+	}
+	// The copies as the scene is now (a surface below the scatter in the Object Manager reaches it one evaluation late).
+	ScatterCopies fresh;
+	maxon::BaseArray<maxon::String> freshWarnings;
+	const ScatterCopies* const current = GetCurrentScatterCopies(op, _doc, fresh, freshWarnings) iferr_return;
+	for (const maxon::String& warning : current == &fresh ? freshWarnings : result->warnings)
+	{
+		_notes.Append(FormatString("Scatter \"@\": @", name, warning)) iferr_return;
+	}
+	for (const maxon::String& skipped : result->skipped)
+	{
+		_notes.Append(FormatString("Scatter \"@\": \"@\" below it is a light or a camera; it is not scattered.", name, skipped)) iferr_return;
+	}
+	if (inherited.instanceDepth >= MAX_INSTANCE_DEPTH)
+		return maxon::OK;
+
+	// Each source walked once, its axis at each copy that shows it; the copies' MoGraph colours as a multi-instance's.
+	const ScatterCopies& copies = current ? *current : result->copies;
+	for (maxon::Int k = 0; k < result->sources.GetCount(); ++k)
+	{
+		const ScatterSource& source = result->sources[k];
+		maxon::BaseArray<cinema::Matrix>* matrices = NewObj(maxon::BaseArray<cinema::Matrix>) iferr_return;
+		iferr (_ownedMatrices.Append(matrices))
+		{
+			DeleteObj(matrices);
+			return err;
+		}
+		maxon::BaseArray<maxon::Color64>* colors = NewObj(maxon::BaseArray<maxon::Color64>) iferr_return;
+		iferr (_ownedColors.Append(colors))
+		{
+			DeleteObj(colors);
+			return err;
+		}
+		for (maxon::Int i = 0; i < copies.matrices.GetCount(); ++i)
+		{
+			if (copies.sources[i] != k)
+				continue;
+			matrices->Append(mg * copies.matrices[i]) iferr_return;
+			const cinema::Vector& c = copies.colors[i];
+			colors->Append(maxon::Color64(c.x, c.y, c.z)) iferr_return;
+		}
+		if (matrices->IsEmpty())
+			continue;
+
+		InstanceSet set;
+		set.matrices = matrices;
+		set.colors = colors;
+		_instanceSets.Append(set) iferr_return;
+		Inherited forSource = inherited;
+		forSource.instanceSet = _instanceSets.GetCount() - 1;
+		forSource.followable = false;
+		forSource.hasColor = false;
+		forSource.clones = nullptr;
+		forSource.forceVisible = false;
+		++forSource.instanceDepth;
+		// A change below the child in the document makes the scatter's copies anew as well.
+		for (const cinema::BaseObject* child = op->GetDown(); child; child = child->GetNext())
+		{
+			if (child->GetGUID() == source.guid)
+			{
+				NoteReference(inherited.ownerObject, child) iferr_return;
+				break;
+			}
+		}
+		// The clone is the scatter's, not the document's; it is keyed by the child's GUID, so its items keep
+		// their ids when the clone is made anew.
+		Walk(const_cast<cinema::BaseObject*>(source.clone), cinema::Matrix(), forSource, path, true, MixKeys(MixKeys(key, source.guid), maxon::UInt64(k + 1)), true)
+			iferr_return;
+	}
+	return maxon::OK;
+}
+
 maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Matrix& mg, Inherited inherited, const maxon::String& parentPath,
 	maxon::Bool instanceRoot, maxon::UInt64 key, maxon::Bool inCache)
 {
@@ -650,12 +782,14 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		const maxon::Bool shines = (type == Orslight ? (inherited.visible && layerVisible) : renders) && IsLightSwitchedOn(op);
 		if (shines && type == Orslight && GetIntParameter(op, REDSHIFT_LIGHT_TYPE, 0) == REDSHIFT_LIGHT_TYPE_DOME)
 		{
-			// A dome light is the environment, not a lamp.
-			if (!_dome)
-			{
-				_dome = op;
-				_domeMg = mg;
-			}
+			// A dome light is the environment, not a lamp: a candidate for the world, in the walk's order.
+			WorldSource source;
+			source.kind = WORLDPART::DOME;
+			source.roles.camera = source.roles.lighting = true;
+			source.object = op;
+			source.mg = mg;
+			source.owner = inherited.ownerObject;
+			_worlds.Append(std::move(source)) iferr_return;
 			NoteFixed(inherited.ownerObject) iferr_return;
 		}
 		else if (shines && inherited.instanceSet == NOTOK)
@@ -672,6 +806,107 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		else if (shines)
 		{
 			_notes.Append(FormatString("Light \"@\": lights inside a multi-instance are not exported.", op->GetName())) iferr_return;
+		}
+	}
+	else if (type == ID_ENVIRONMENT_OBJECT)
+	{
+		// The plugin's environment: a candidate for the world, in the walk's order, when it renders and
+		// its green check is on. Whether it is noted as fixed is decided in Write(), when the one used is known.
+		if (renders && IsEnvironmentSwitchedOn(op))
+		{
+			WorldSource source;
+			source.kind = WORLDPART::ENVIRONMENT;
+			source.roles = GetEnvironmentRoles(op);
+			source.object = op;
+			source.mg = mg;
+			source.owner = inherited.ownerObject;
+			source.own = !inCache && !instanceRoot && key == op->GetGUID() && inherited.followable;
+			_worlds.Append(std::move(source)) iferr_return;
+		}
+	}
+	else if (type == ID_FOG_OBJECT)
+	{
+		// The plugin's fog (objects/fog_object.h): no cache, a box of its own. Its green check counts
+		// for it alone, as a light's does; its children are walked below as any.
+		if (renders && IsFogSwitchedOn(op) && inherited.instanceSet != NOTOK)
+		{
+			_notes.Append(FormatString("Fog \"@\": a Cycles Fog inside a multi-instance is not exported.", op->GetName())) iferr_return;
+		}
+		else if (renders && IsFogSwitchedOn(op))
+		{
+			Leaf leaf;
+			leaf.kind = LEAF::FOG;
+			leaf.object = op;
+			leaf.mg = mg;
+			leaf.path = path;
+			leaf.key = key;
+			leaf.owner = inherited.owner;
+			leaf.generated = inCache;
+			leaf.ownerObject = inherited.ownerObject;
+			leaf.tail = inherited.tail;
+			leaf.followable = inherited.followable;
+			leaf.linkTag = inherited.linkTag;
+			leaf.visibility = inherited.visibility;
+			_leaves.Append(std::move(leaf)) iferr_return;
+		}
+		// What the fog does not take from its own tags.
+		for (const cinema::BaseTag* tag = op->GetFirstTag(); tag && renders && !passing; tag = tag->GetNext())
+		{
+			if (tag->IsInstanceOf(Ttexture))
+			{
+				_notes.Append(FormatString("Fog \"@\": its material is not used; a Cycles Fog renders with its own volume values.", op->GetName())) iferr_return;
+				break;
+			}
+		}
+		for (const cinema::BaseTag* tag = op->GetFirstTag(); tag && renders && !passing; tag = tag->GetNext())
+		{
+			if (tag->GetType() == ID_OBJECT_TAG && GetBoolParameter(tag, CYCLESOBJECT_VOLUME_ENABLE, false))
+			{
+				_notes.Append(FormatString("Fog \"@\": the Volume tab of its Cycles Object tag does nothing; the fog has these values itself.", op->GetName())) iferr_return;
+				break;
+			}
+		}
+	}
+	else if (type == ID_PROXY_OBJECT)
+	{
+		// The plugin's proxy (objects/proxy_object.h): no cache; Blender shows the file it names at its place.
+		// Its green check counts for it alone, as a fog's; its children are walked below as any. Inside a
+		// multi-instance (and below a Cycles Scatter) it is shown once per copy.
+		if (renders && IsProxySwitchedOn(op))
+		{
+			Leaf leaf;
+			leaf.kind = LEAF::PROXY;
+			leaf.object = op;
+			leaf.mg = mg;
+			leaf.path = path;
+			leaf.key = key;
+			leaf.owner = inherited.owner;
+			leaf.generated = inCache;
+			leaf.instanceSet = inherited.instanceSet;
+			leaf.ownerObject = inherited.ownerObject;
+			leaf.tail = inherited.tail;
+			leaf.followable = inherited.followable;
+			leaf.linkTag = inherited.linkTag;
+			leaf.visibility = inherited.visibility;
+			_leaves.Append(std::move(leaf)) iferr_return;
+			// What the proxy does not take from its own tags.
+			for (const cinema::BaseTag* tag = op->GetFirstTag(); tag && !passing; tag = tag->GetNext())
+			{
+				if (tag->IsInstanceOf(Ttexture))
+				{
+					_notes.Append(FormatString("Proxy \"@\": its material is not used; what a Cycles Proxy shows renders with the materials of its Blender file.", op->GetName())) iferr_return;
+					break;
+				}
+			}
+		}
+	}
+	else if (type == ID_SCATTER_OBJECT && IsScatterSwitchedOn(op))
+	{
+		// The plugin's scatter (objects/scatter_object.h): its children are its sources, shown at its copies. Like
+		// every generator with a cache it carries the "used by a generator" mark itself, so that does not hide it.
+		if (inherited.visible && layerVisible)
+		{
+			WalkScatter(op, mg, inherited, path, key, inCache) iferr_return;
 		}
 	}
 	else if (type == Ovolume)
@@ -714,11 +949,16 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	}
 	else if (type == Osky)
 	{
-		if (renders && !_sky)
+		if (renders)
 		{
-			_sky = op;
-			_skyMg = mg;
-			_skyMaterial = GetStackMaterial(inherited.stack);
+			WorldSource source;
+			source.kind = WORLDPART::SKY;
+			source.roles.camera = source.roles.lighting = true;
+			source.object = op;
+			source.mg = mg;
+			source.material = GetStackMaterial(inherited.stack);
+			source.owner = inherited.ownerObject;
+			_worlds.Append(std::move(source)) iferr_return;
 		}
 		if (renders)
 		{
@@ -817,6 +1057,11 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			AddMeshLeaf(op, mg, inherited, path, key, inCache) iferr_return;
 		}
 	}
+
+	// A Cycles Scatter's children are its sources, shown only at its copies (WalkScatter), in every mode of the
+	// walk: also while it is only passed through.
+	if (type == ID_SCATTER_OBJECT && IsScatterSwitchedOn(op))
+		return maxon::OK;
 
 	// Children inherit the visibility and material, but not a layer: a layer hides only the
 	// objects assigned to it.
@@ -1350,12 +1595,104 @@ maxon::Result<void> SceneExporter::WriteObject(SceneWriter& writer, const Leaf& 
 	return maxon::OK;
 }
 
+// The fields of a `proxy` item but its place (protocol/protocol.md). Write() and WriteObjectAlone() both come
+// here, so that the two agree byte for byte.
+static void WriteProxyFields(JsonWriter& json, const ProxySource& source, const ObjectVisibility& visibility)
+{
+	json.String("path", source.path);
+	json.String("stamp", source.stamp);
+	if (source.kind == CYCLESPROXY_TAKE_KIND_COLLECTION)
+		json.String("collection", source.name);
+	else if (source.kind == CYCLESPROXY_TAKE_KIND_SCENE)
+		json.String("scene", source.name);
+	json.Bool("lights", source.lights);
+	json.Int("frame", source.frame);
+	json.String("name", source.label);
+	WriteVisibility(json, visibility);
+}
+
+// One `proxy` item with one place. A point of the file (Blender's axes, metres) lies at the object's
+// (x, z, y) in metres, so the object's matrix as a mesh's object has it is the proxy's (coords.h).
+static void WriteProxyItem(SceneWriter& writer, const Coords& coords, const cinema::Matrix& mg, const maxon::String& id, const ProxySource& source,
+	const ObjectVisibility& visibility)
+{
+	maxon::Float64 matrix[16];
+	coords.ObjectMatrix(mg, matrix);
+	JsonWriter& json = writer.BeginItem("proxy", id);
+	json.Floats("matrix", matrix, 16);
+	WriteProxyFields(json, source, visibility);
+	writer.EndItem();
+}
+
+maxon::Result<maxon::String> SceneExporter::WriteProxy(SceneWriter& writer, const Leaf& leaf)
+{
+	iferr_scope;
+	ProxySource source;
+	maxon::String problem;
+	if (!ReadProxySource(leaf.object, _doc, source, problem))
+	{
+		writer.Warn(problem);
+		return maxon::String();
+	}
+	const maxon::String id = KeyId("proxy_", leaf.key);
+	NoteOwned(leaf.ownerObject, id) iferr_return;
+	if (leaf.instanceSet != NOTOK)
+	{
+		// Inside a multi-instance: the file once per copy, as one item. The leaf's matrix is relative to a copy.
+		const InstanceSet& set = _instanceSets[leaf.instanceSet];
+		const maxon::Int count = set.matrices->GetCount();
+		maxon::Int matricesBlob = 0;
+		maxon::Float32* const matrices = writer.AllocFloats(count * 16, matricesBlob) iferr_return;
+		for (maxon::Int i = 0; i < count; ++i)
+		{
+			maxon::Float64 matrix[16];
+			_coords.ObjectMatrix((*set.matrices)[i] * leaf.mg, matrix);
+			for (maxon::Int k = 0; k < 16; ++k)
+				matrices[i * 16 + k] = maxon::Float32(matrix[k]);
+		}
+		JsonWriter& json = writer.BeginItem("proxy", id);
+		json.Int("matrices", matricesBlob);
+		WriteProxyFields(json, source, leaf.visibility);
+		writer.EndItem();
+		NoteUnfollowed(leaf.ownerObject) iferr_return;
+		return id;
+	}
+	WriteProxyItem(writer, _coords, leaf.mg, id, source, leaf.visibility);
+	if (!_settings.noteFollowed)
+		return id;
+	if (!leaf.followable || !leaf.ownerObject)
+	{
+		NoteUnfollowed(leaf.ownerObject) iferr_return;
+		return id;
+	}
+	WrittenObject written;
+	written.owner = leaf.ownerObject;
+	written.id = id;
+	written.visibility = leaf.visibility;
+	written.proxy = true;
+	written.source = std::move(source);
+	for (maxon::Int node = leaf.tail; node != NOTOK; node = _tails[node].parent)
+	{
+		written.tail.Append(_tails[node].ml) iferr_return;
+	}
+	// Collected from the leaf upwards; the walk multiplied from the owner downwards.
+	for (maxon::Int i = 0, j = written.tail.GetCount() - 1; i < j; ++i, --j)
+		std::swap(written.tail[i], written.tail[j]);
+	_writtenObjects.Append(std::move(written)) iferr_return;
+	return id;
+}
+
 void SceneExporter::WriteObjectAlone(SceneWriter& writer, const Coords& coords, const WrittenObject& object, const cinema::Matrix& ownerMg)
 {
 	// The product in the walk's order: the owner's matrix times each matrix below it, one after the other.
 	cinema::Matrix mg = ownerMg;
 	for (const cinema::Matrix& ml : object.tail)
 		mg = mg * ml;
+	if (object.proxy)
+	{
+		WriteProxyItem(writer, coords, mg, object.id, object.source, object.visibility);
+		return;
+	}
 	WriteObjectItem(writer, coords, mg, object.id, object.meshId, object.materialIds, object.visibility, object.objectKeys, object.nameKey, object.objectId, nullptr);
 }
 
@@ -1475,12 +1812,13 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	state.materials.SetBlenderVersion(_settings.blenderVersion, _settings.blenderVersionText);
 	if (_partial)
 	{
-		// Only meshes and the items that show them, with the materials the last whole export wrote. A light
-		// that is an object of the document is the caller's (WriteLightAlone); anything else is refused.
+		// Only meshes and the items that show them, with the materials the last whole export wrote, fog
+		// boxes, whose material is their own, and proxies, which have none. A light that is an object of the document is the caller's
+		// (WriteLightAlone); anything else is refused.
 		state.materials.SetKnownIds(_settings.materials);
-		_refused = _sky || _dome;
+		_refused = !_worlds.IsEmpty();
 		for (const Leaf& leaf : _leaves)
-			_refused = _refused || (leaf.kind != LEAF::MESH && !(leaf.kind == LEAF::LIGHT && leaf.key == leaf.object->GetGUID()));
+			_refused = _refused || (leaf.kind != LEAF::MESH && leaf.kind != LEAF::FOG && leaf.kind != LEAF::PROXY && !(leaf.kind == LEAF::LIGHT && leaf.key == leaf.object->GetGUID()));
 		if (_refused)
 			return maxon::OK;
 	}
@@ -1534,6 +1872,46 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			}
 			ExportParticles(writer, _coords, leaf.object, leaf.mg, KeyId("particles_", leaf.key), materialId) iferr_return;
 			NoteFixed(leaf.ownerObject) iferr_return;
+			continue;
+		}
+		if (leaf.kind == LEAF::FOG)
+		{
+			// With a noise: the noise's grid as a `volume`, which only a whole export writes (as other volumes).
+			if (HasFogNoise(leaf.object))
+			{
+				if (_partial)
+				{
+					_refused = true;
+					return maxon::OK;
+				}
+				const maxon::String volumeId = KeyId("fog_", leaf.key);
+				const maxon::Bool written = ExportFogNoise(writer, _coords, _colors, _doc, leaf.object, leaf.mg, volumeId, volumeId + ".material"_s) iferr_return;
+				if (written)
+				{
+					NoteOwned(leaf.ownerObject, volumeId) iferr_return;
+					NoteOwned(leaf.ownerObject, volumeId + ".material"_s) iferr_return;
+				}
+				NoteFixed(leaf.ownerObject) iferr_return;
+				continue;
+			}
+			// Its box, its material and the object that shows them; it moves like a mesh's object.
+			Resolved resolved;
+			resolved.meshId = KeyId("fog_", leaf.key);
+			const maxon::String materialId = resolved.meshId + ".material"_s;
+			const maxon::Bool written = ExportFog(writer, _coords, _colors, leaf.object, resolved.meshId, materialId) iferr_return;
+			if (!written)
+				continue;
+			resolved.materialIds.Append(materialId) iferr_return;
+			NoteOwned(leaf.ownerObject, resolved.meshId) iferr_return;
+			NoteOwned(leaf.ownerObject, resolved.meshId + ".points"_s) iferr_return;
+			NoteOwned(leaf.ownerObject, materialId) iferr_return;
+			WriteObject(writer, leaf, resolved) iferr_return;
+			itemIds[index] = KeyId("object_", leaf.key);
+			continue;
+		}
+		if (leaf.kind == LEAF::PROXY)
+		{
+			itemIds[index] = WriteProxy(writer, leaf) iferr_return;
 			continue;
 		}
 		if (leaf.kind == LEAF::VOLUME)
@@ -1709,15 +2087,60 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee && _settings.blenderVersion < EEVEE_PANORAMA_VERSION, CameraFraming::Full(_settings.width, _settings.height, _settings.pixelAspect),
 			moves ? cameraMotion : nullptr) iferr_return;
 	}
-	// A Sky object comes first; then a Redshift dome light; then the plain world of the render settings.
-	if (!_sky && _dome)
+	// The world, per role (the maintainer's rules of 2026-11-23 and 24: "The top environment wins", per role):
+	// what the camera sees, what lights the scene and the world's fog each come from the highest Sky object,
+	// Redshift dome light or Cycles Environment in the Object Manager that renders and asks for that role.
+	// Without one for the camera and none for the light, the plain world of the render settings.
+	_writtenWorld = WrittenWorld();
+	const WorldSource* used[3] = { nullptr, nullptr, nullptr };
+	for (const WorldSource& source : _worlds)
 	{
-		ExportDomeWorld(state.materials, _dome, _domeMg) iferr_return;
+		const maxon::Bool wants[3] = { source.roles.camera, source.roles.lighting, source.roles.fog };
+		for (maxon::Int role = 0; role < 3; ++role)
+		{
+			if (!used[role] && wants[role])
+				used[role] = &source;
+		}
 	}
-	else
+	static const maxon::Char* const KIND_NAMES[] = { "", "Sky object", "Redshift dome light", "Cycles Environment" };
+	maxon::Bool alone = used[0] || used[1];
+	for (const WorldSource& source : _worlds)
 	{
-		ExportWorld(state.materials, _sky, _skyMg, _skyMaterial, _settings.worldColor, _settings.worldStrength) iferr_return;
+		const maxon::Bool isUsed = &source == used[0] || &source == used[1] || &source == used[2];
+		// One that asks for a role and fills none is named; one that asks for none is passed over silently.
+		if (!isUsed && (source.roles.camera || source.roles.lighting || source.roles.fog))
+		{
+			writer.Warn(FormatString("Environment: the @ \"@\" is not used: environments above it in the Object Manager fill each of its roles.",
+				maxon::String(KIND_NAMES[maxon::Int(source.kind)]), source.object->GetName()));
+		}
+		// (A Material type's world is its node graph's: its images and its values only a whole export follows.)
+		if (isUsed && (source.kind != WORLDPART::ENVIRONMENT || !source.own || GetIntParameter(source.object, CYCLESENV_TYPE, CYCLESENV_TYPE_SKY) == CYCLESENV_TYPE_MATERIAL))
+			alone = false;
 	}
+	// The world can be written again by itself (WriteWorldAlone) when every role is a Cycles Environment of the
+	// document or nothing; then those are followed and every other environment is the whole export's.
+	for (const WorldSource& source : _worlds)
+	{
+		const maxon::Bool isUsed = &source == used[0] || &source == used[1] || &source == used[2];
+		if (source.kind == WORLDPART::ENVIRONMENT && !(isUsed && alone))
+		{
+			NoteFixed(source.owner) iferr_return;
+		}
+	}
+	WorldPart parts[3];
+	for (maxon::Int role = 0; role < 3; ++role)
+	{
+		if (!used[role])
+			continue;
+		parts[role].kind = used[role]->kind;
+		parts[role].object = used[role]->object;
+		parts[role].mg = used[role]->mg;
+		parts[role].material = used[role]->material;
+		_writtenWorld.objects[role] = used[role]->object;
+		_writtenWorld.roles[role] = used[role]->roles;
+	}
+	ExportWorldItem(state.materials, parts[0], parts[1], parts[2], _settings.worldColor, _settings.worldStrength, &_writtenWorld.images) iferr_return;
+	_writtenWorld.alone = alone;
 	if (_settings.noteFollowed)
 	{
 		state.materials.TakeIds(_materialIds) iferr_return;
@@ -1750,6 +2173,21 @@ maxon::Result<maxon::String> SceneExporter::GetListing() const
 			text += FormatString("volume \"@\" pos=@\n", leaf.path, VectorText(leaf.mg.off));
 			continue;
 		}
+		if (leaf.kind == LEAF::PROXY)
+		{
+			maxon::String extra;
+			if (leaf.instanceSet != NOTOK)
+				extra = FormatString(" instances=@", _instanceSets[leaf.instanceSet].matrices->GetCount());
+			text += FormatString("proxy \"@\" pos=@ file=\"@\"@\n", leaf.path, VectorText(leaf.mg.off),
+				leaf.object->GetDataInstanceRef().GetFilename(CYCLESPROXY_FILE).GetFileString(), extra);
+			continue;
+		}
+		if (leaf.kind == LEAF::FOG)
+		{
+			text += FormatString("fog \"@\" pos=@ size=@\n", leaf.path, VectorText(leaf.mg.off),
+				VectorText(GetVectorParameter(leaf.object, CYCLESFOG_SIZE, cinema::Vector(FOG_DEFAULT_SIZE))));
+			continue;
+		}
 		const cinema::PolygonObject* const mesh = static_cast<const cinema::PolygonObject*>(leaf.object);
 		const cinema::BaseMaterial* const material = GetStackMaterial(leaf.stack);
 		maxon::String extra;
@@ -1758,8 +2196,16 @@ maxon::Result<maxon::String> SceneExporter::GetListing() const
 		text += FormatString("mesh \"@\" points=@ polygons=@ pos=@ size=@ material=\"@\"@\n", leaf.path, mesh->GetPointCount(), mesh->GetPolygonCount(),
 			VectorText(leaf.mg.off), VectorText(mesh->GetRad() * 2.0), material ? material->GetName() : maxon::String(), extra);
 	}
-	if (_sky)
-		text += FormatString("sky \"@\" material=\"@\"\n", _sky->GetName(), _skyMaterial ? _skyMaterial->GetName() : maxon::String());
+	// Every candidate for the world, the one used first (Write()).
+	for (const WorldSource& source : _worlds)
+	{
+		if (source.kind == WORLDPART::SKY)
+			text += FormatString("sky \"@\" material=\"@\"\n", source.object->GetName(), source.material ? source.material->GetName() : maxon::String());
+		else if (source.kind == WORLDPART::DOME)
+			text += FormatString("dome \"@\"\n", source.object->GetName());
+		else
+			text += FormatString("environment \"@\" type=@\n", source.object->GetName(), GetIntParameter(source.object, CYCLESENV_TYPE, 0));
+	}
 	if (_camera)
 		text += FormatString("camera \"@\" pos=@\n", _camera->GetName(), VectorText(_camera->GetMg().off));
 	for (const maxon::String& note : _notes)

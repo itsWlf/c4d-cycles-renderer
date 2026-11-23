@@ -28,12 +28,16 @@ class Scene:
         self.curves = {}
         self.pointclouds = {}
         self.light_links = {}
+        self.proxies = {}           # proxy items by id (proxies.py)
+        self.proxy_files = {}       # the .blend files they link
         self.warnings = []
 
     def clear(self):
         """Remove everything in the file that renders, including Blender's start-up scene."""
         # ... except what an open material editor shows (native.py).
         keep = native.protected()
+        # Linked files first: a library goes with everything linked from it (proxies.py).
+        proxies.clear(self)
         for name in _OWNED_COLLECTIONS:
             bpy.data.batch_remove([data for data in getattr(bpy.data, name) if data not in keep])
         native.after_clear()
@@ -54,6 +58,8 @@ class Scene:
             self.clear()
         self.remove(header.get("remove", ()))
         items = header.get("items", [])
+        # The scene's frame, which linked files play by, before anything is keyed around it.
+        proxies.set_frame(self, header)
         for item in items:
             builder = BUILDERS.get(item.get("kind"))
             if builder is None:
@@ -66,6 +72,7 @@ class Scene:
                 raise RequestError("bad_request",
                                    f"{item.get('kind')} {item.get('id')!r} lacks the field {missing}") from missing
         lights.apply_links(self)
+        proxies.after_items(self, header)
         return len(items), self.warnings
 
     def warn(self, message):
@@ -77,6 +84,7 @@ class Scene:
         # Objects first: removing a mesh that an object still uses would take the object along.
         for item_id in item_ids:
             instancers.remove_instancer(self, item_id)
+            proxies.remove_proxy(self, item_id)
             self._remove_object(item_id)
         for item_id in item_ids:
             native.forget(item_id)
@@ -117,13 +125,14 @@ class Scene:
         return obj
 
 
-from . import cameras, curves, instancers, lights, materials, meshes, native, objects, pointclouds, volumes, world  # noqa: E402
+from . import cameras, curves, instancers, lights, materials, meshes, native, objects, pointclouds, proxies, volumes, world  # noqa: E402
 
 BUILDERS = {
     "mesh": meshes.build_mesh,
     "points": meshes.build_points,
     "object": objects.build_object,
     "instancer": instancers.build_instancer,
+    "proxy": proxies.build_proxy,
     "volume": volumes.build_volume,
     "curves": curves.build_curves,
     "pointcloud": pointclouds.build_pointcloud,

@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: Apache-2.0
+STRINGTABLE Ocyclesproxy
+{
+	Ocyclesproxy                            "Cycles Proxy";
+
+	CYCLESPROXY_GROUP_PROXY                 "Proxy";
+	CYCLESPROXY_FILE                        "Blender File";
+	CYCLESPROXY_MAKE_RELATIVE               "Make Relative";
+	CYCLESPROXY_MAKE_ABSOLUTE               "Make Absolute";
+	CYCLESPROXY_READ_FILE                   "Read File";
+	CYCLESPROXY_STATUS                      "";
+	CYCLESPROXY_TAKE                        "Show";
+	CYCLESPROXY_TAKE_FILE_SCENE             "The File's Scene";
+	CYCLESPROXY_LIGHTS                      "Lights from File";
+	CYCLESPROXY_FRAME_OFFSET                "Frame Offset";
+}

@@ -9,6 +9,7 @@
 
 #include "../ids.h"
 #include "../lights/light_tag.h"
+#include "../materials/cycles_material.h"
 #include "../nodespace/cycles_nodes.h"
 #include "ipr_add.h"
 
@@ -55,6 +56,23 @@ static maxon::Int AddCyclesMaterial(cinema::BaseDocument* doc, maxon::String& me
 	return 1;
 }
 
+// A material of Cycles nodes set up as a world (materials/cycles_material.h).
+static maxon::Int AddCyclesWorldMaterial(cinema::BaseDocument* doc, maxon::String& message)
+{
+	iferr (cinema::BaseMaterial* const material = CreateCyclesWorldMaterial())
+	{
+		message = FormatString("The new world material could not be made: @", err.GetMessage());
+		return 0;
+	}
+	doc->StartUndo();
+	doc->InsertMaterial(material);
+	doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, material);
+	doc->SetActiveMaterial(material);
+	doc->EndUndo();
+	message = "Added a Cycles World Material; drag it onto a Cycles Environment of the type Material."_s;
+	return 1;
+}
+
 // The camera the render view looks through: its scene camera, or its editor camera.
 static const cinema::BaseObject* RenderViewCamera(cinema::BaseDocument* doc, cinema::BaseDraw*& view)
 {
@@ -65,39 +83,43 @@ static const cinema::BaseObject* RenderViewCamera(cinema::BaseDocument* doc, cin
 	return looking;
 }
 
-// A Cycles Light (lights/light_object.h, Blender's defaults: a point light of 10 W) as Cinema 4D's
-// own Create menu makes it: through the object's command (its plugin id), so that it lands where
-// Cinema 4D's light lands, at the workplane's origin and turned as the workplane, with Cinema 4D's
-// preferences for new objects, selected, in one undo step (measured in 2024 and 2027:
-// Cinema 4D's light and the Cycles Light from their commands land alike). The command works on the
-// active document; for another one (not seen: the IPR shows the active document) the light is
-// inserted at the world's origin.
-static maxon::Int AddCyclesLight(cinema::BaseDocument* doc, maxon::String& message)
+// One of the plugin's objects (@p type, named by the string @p nameId): a Cycles Light
+// (lights/light_object.h, Blender's defaults: a point light of 10 W) or a Cycles Fog
+// (objects/fog_object.h), a Cycles Environment (objects/environment_object.h), a Cycles Scatter
+// (objects/scatter_object.h) or a Cycles Proxy (objects/proxy_object.h), as Cinema 4D's own Create
+// menu makes an object: through the object's
+// command (its plugin id), so that it lands where Cinema 4D's light lands, at the workplane's origin
+// and turned as the workplane, with Cinema 4D's preferences for new objects, selected, in one undo
+// step (measured in 2024 and 2027: Cinema 4D's light and the Cycles Light from their commands land
+// alike). The command works on the active document; for another one (not seen: the IPR shows the
+// active document) the object is inserted at the world's origin.
+static maxon::Int AddPluginObject(cinema::BaseDocument* doc, cinema::Int32 type, cinema::Int32 nameId, maxon::String& message)
 {
+	const maxon::String name = cinema::GeLoadString(nameId);
 	if (doc == cinema::GetActiveDocument())
 	{
 		const cinema::BaseObject* const before = doc->GetActiveObject();
-		cinema::CallCommand(ID_LIGHT_OBJECT);
+		cinema::CallCommand(type);
 		const cinema::BaseObject* const made = doc->GetActiveObject();
-		if (made && made != before && made->GetType() == ID_LIGHT_OBJECT)
+		if (made && made != before && made->GetType() == type)
 		{
-			message = "Added a Cycles Light."_s;
+			message = FormatString("Added a @.", name);
 			return 1;
 		}
 	}
-	cinema::BaseObject* const light = cinema::BaseObject::Alloc(ID_LIGHT_OBJECT);
-	if (!light)
+	cinema::BaseObject* const object = cinema::BaseObject::Alloc(type);
+	if (!object)
 	{
-		message = "The Cycles Light could not be made."_s;
+		message = FormatString("The @ could not be made.", name);
 		return 0;
 	}
-	light->SetName(cinema::GeLoadString(IDS_LIGHT_OBJECT_NAME));
+	object->SetName(name);
 	doc->StartUndo();
-	doc->InsertObject(light, nullptr, nullptr);
-	doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, light);
-	doc->SetActiveObject(light, SELECTION_NEW);
+	doc->InsertObject(object, nullptr, nullptr);
+	doc->AddUndo(cinema::UNDOTYPE::NEWOBJ, object);
+	doc->SetActiveObject(object, SELECTION_NEW);
 	doc->EndUndo();
-	message = "Added a Cycles Light."_s;
+	message = FormatString("Added a @.", name);
 	return 1;
 }
 
@@ -353,11 +375,16 @@ maxon::Int AddToDocument(cinema::BaseDocument* doc, IPRADD what, maxon::String& 
 	switch (what)
 	{
 		case IPRADD::CYCLES_MATERIAL: added = AddCyclesMaterial(doc, message); break;
+		case IPRADD::CYCLES_WORLD_MATERIAL: added = AddCyclesWorldMaterial(doc, message); break;
 		case IPRADD::CAMERA_WITH_TAG: added = AddCameraWithTag(doc, message); break;
 		case IPRADD::CAMERA_TAG: added = AddTagToSelection(doc, ID_CAMERA_TAG, TAGGED::CAMERAS, message); break;
 		case IPRADD::OBJECT_TAG: added = AddTagToSelection(doc, ID_OBJECT_TAG, TAGGED::ANY, message); break;
-		case IPRADD::CYCLES_LIGHT: added = AddCyclesLight(doc, message); break;
+		case IPRADD::CYCLES_LIGHT: added = AddPluginObject(doc, ID_LIGHT_OBJECT, IDS_LIGHT_OBJECT_NAME, message); break;
 		case IPRADD::LIGHT_TAG: added = AddTagToSelection(doc, ID_LIGHT_TAG, TAGGED::LIGHTS, message); break;
+		case IPRADD::CYCLES_FOG: added = AddPluginObject(doc, ID_FOG_OBJECT, IDS_FOG_OBJECT_NAME, message); break;
+		case IPRADD::CYCLES_ENVIRONMENT: added = AddPluginObject(doc, ID_ENVIRONMENT_OBJECT, IDS_ENVIRONMENT_OBJECT_NAME, message); break;
+		case IPRADD::CYCLES_SCATTER: added = AddPluginObject(doc, ID_SCATTER_OBJECT, IDS_SCATTER_OBJECT_NAME, message); break;
+		case IPRADD::CYCLES_PROXY: added = AddPluginObject(doc, ID_PROXY_OBJECT, IDS_PROXY_OBJECT_NAME, message); break;
 	}
 	cinema::EventAdd();
 	return added;
