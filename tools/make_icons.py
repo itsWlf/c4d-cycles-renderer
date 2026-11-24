@@ -92,35 +92,35 @@ def pause_active(x, y):
 
 
 def reload_icon(x, y):
-    """Two arrows chasing each other around a circle."""
-    dx, dy = x - 0.5, y - 0.5
-    radius, angle = math.hypot(dx, dy), math.degrees(math.atan2(dy, dx)) % 360
-    ring = 0.25 <= radius <= 0.37 and ((20 <= angle <= 170) or (200 <= angle <= 350))
-    heads = False
-    for tip_angle in (10.0, 190.0):
-        a = math.radians(tip_angle)
-        tip = (0.5 + 0.31 * math.cos(a) - 0.17 * math.sin(a) * -1, 0.5 + 0.31 * math.sin(a) - 0.17 * math.cos(a))
-        inner = (0.5 + 0.14 * math.cos(a + 0.5), 0.5 + 0.14 * math.sin(a + 0.5))
-        outer = (0.5 + 0.48 * math.cos(a + 0.5), 0.5 + 0.48 * math.sin(a + 0.5))
-        heads = heads or triangle(x, y, tip, inner, outer)
-    return ring or heads
+    """Two arrows chasing each other around a circle, with a little space between the tip of each and the
+    tail of the other."""
+    def at(angle, radius):
+        return (0.5 + radius * math.cos(math.radians(angle)), 0.5 + radius * math.sin(math.radians(angle)))
+    radius, angle = math.hypot(x - 0.5, y - 0.5), math.degrees(math.atan2(y - 0.5, x - 0.5)) % 360
+    for start in (10.0, 190.0):
+        # The shaft over 115 degrees, then the head, whose tip ends 22 degrees before the other arrow's tail.
+        if 0.24 <= radius <= 0.36 and start <= angle <= start + 116:
+            return True
+        if triangle(x, y, at(start + 115, 0.14), at(start + 115, 0.46), at(start + 158, 0.30)):
+            return True
+    return False
 
 
 def lock(closed):
-    """A padlock whose body is a film camera: a box with a lens, and the viewfinder cone at its side."""
+    """A padlock whose body is a camera seen from the front, as the Cycles Camera tag's icon shows one: the
+    ring around its lens and the small window beside it are cut out."""
     def inside(x, y):
-        left = 0.17 if closed else 0.08
-        box = rounded_box(x, y, left, 0.44, left + 0.48, 0.86, 0.07)
-        cone = triangle(x, y, (left + 0.47, 0.65), (left + 0.66, 0.51), (left + 0.66, 0.79))
-        lens = math.hypot(x - (left + 0.24), y - 0.65)
-        camera = (box and not 0.05 <= lens <= 0.11) or cone
+        left = 0.17 if closed else 0.06
+        lens = math.hypot(x - (left + 0.33), y - 0.65)
+        camera = (rounded_box(x, y, left, 0.42, left + 0.66, 0.88, 0.06) and not 0.075 <= lens < 0.14
+                  and not rounded_box(x, y, left + 0.5, 0.48, left + 0.6, 0.54, 0.015))
         if closed:
-            dx, dy = x - (left + 0.24), y - 0.44
-            shackle = (0.13 <= math.hypot(dx, dy) <= 0.21 and dy <= 0) or (0.13 <= abs(dx) <= 0.21 and 0 <= dy <= 0.02)
+            dx, dy = x - (left + 0.33), y - 0.42
+            shackle = (0.15 <= math.hypot(dx, dy) <= 0.23 and dy <= 0) or (0.15 <= abs(dx) <= 0.23 and 0 <= dy <= 0.02)
         else:
             # Swung open: the shackle stands to the right, held by one leg only.
-            dx, dy = x - (left + 0.52), y - 0.26
-            shackle = (0.13 <= math.hypot(dx, dy) <= 0.21 and dy <= 0) or (-0.21 <= dx <= -0.13 and 0 <= dy <= 0.2)
+            dx, dy = x - (left + 0.7), y - 0.24
+            shackle = (0.15 <= math.hypot(dx, dy) <= 0.23 and dy <= 0) or (-0.23 <= dx <= -0.15 and 0 <= dy <= 0.2)
         return camera or shackle
     return inside
 
@@ -173,31 +173,44 @@ def app_grey(x, y):
     return (grey, grey, grey)
 
 
-def camera_tag(x, y):
-    """The Cycles Camera tag's icon: the plugin's hexagon in grey, a dark background with a
-    lighter circle, so it reads as the plugin's but not as a colour."""
+def hexagon(x, y):
+    """The plugin's hexagon, which every object's and tag's icon is drawn in."""
     dx, dy = abs(x - 0.5), abs(y - 0.5)
-    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
-    if not hexagon:
+    return dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
+
+
+def camera_tag(x, y):
+    """The Cycles Camera tag's icon: the plugin's hexagon in a dark grey (so it reads as the plugin's but
+    not as a colour) with a camera seen from the front, as large as the hexagon takes: a body with the
+    viewfinder's hump on top, a lens in its middle and a small window beside it."""
+    if not hexagon(x, y):
         return None
-    if math.hypot(x - 0.5, y - 0.5) < 0.24:
-        shade = max(0.0, 1.0 - math.hypot(x - 0.42, y - 0.42) * 1.6)
-        grey = int(170 + 80 * shade)
-        return (grey, grey, grey)
-    return (72, 72, 72)
+    dark = (62, 62, 62)
+    body = rounded_box(x, y, 0.21, 0.36, 0.79, 0.72, 0.05) or rounded_box(x, y, 0.39, 0.28, 0.61, 0.40, 0.03)
+    if not body:
+        return dark
+    lens = math.hypot(x - 0.5, y - 0.54)
+    if lens < 0.075:
+        return (190, 190, 190)
+    if lens < 0.135 or rounded_box(x, y, 0.66, 0.41, 0.74, 0.46, 0.015):
+        return dark
+    return (244, 244, 244)
 
 
 def light(x, y):
-    """The icon of the Cycles Light object and of the Cycles Light tag: the camera tag's kind of
-    variant in yellow, the plugin's hexagon in a dark yellow with a lighter, shaded yellow circle."""
-    dx, dy = abs(x - 0.5), abs(y - 0.5)
-    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
-    if not hexagon:
+    """The icon of the Cycles Light object and of the Cycles Light tag: the plugin's hexagon in a dark
+    yellow with a sun as large as the hexagon takes: a bright disc with eight rays."""
+    if not hexagon(x, y):
         return None
-    if math.hypot(x - 0.5, y - 0.5) < 0.24:
-        shade = max(0.0, 1.0 - math.hypot(x - 0.42, y - 0.42) * 1.6)
-        return (255, int(200 + 50 * shade), int(40 + 150 * shade))
-    return (150, 112, 12)
+    distance = math.hypot(x - 0.5, y - 0.5)
+    if distance < 0.14:
+        shade = max(0.0, 1.0 - math.hypot(x - 0.46, y - 0.46) / 0.17)
+        return (255, int(236 + 19 * shade), int(150 + 90 * shade))
+    # A ray: a short bar pointing away from the centre, every 45 degrees.
+    turn = (math.atan2(y - 0.5, x - 0.5) + math.pi / 8) % (math.pi / 4) - math.pi / 8
+    if 0.185 <= distance * math.cos(turn) <= 0.3 and abs(distance * math.sin(turn)) < 0.026:
+        return (255, 240, 170)
+    return (132, 92, 8)
 
 
 def fog(x, y):
@@ -231,52 +244,43 @@ def environment(x, y):
     return (28, 46, 98)
 
 
-# Where the scatter icon's dots sit in its circle (x, y, radius): a few stones of different sizes, placed
-# by hand so that they look strewn and none touches another or the circle's edge.
-SCATTER_DOTS = ((0.40, 0.40, 0.045), (0.55, 0.36, 0.035), (0.62, 0.50, 0.05), (0.44, 0.56, 0.04), (0.53, 0.64, 0.03),
-                (0.36, 0.49, 0.025), (0.66, 0.62, 0.025), (0.50, 0.47, 0.025))
+# Where the scatter icon's dots sit (x, y, radius): a few stones of different sizes, placed by hand so that
+# they look strewn and none touches another or the hexagon's edge.
+SCATTER_DOTS = ((0.36, 0.36, 0.065), (0.57, 0.30, 0.05), (0.67, 0.50, 0.07), (0.42, 0.58, 0.055), (0.55, 0.70, 0.045),
+                (0.30, 0.49, 0.035), (0.72, 0.67, 0.035), (0.50, 0.46, 0.035))
 
 
 def scatter(x, y):
-    """The icon of the Cycles Scatter object: the light's kind of variant in greens, the plugin's hexagon in a
-    deep green with copies strewn over a lighter ground in the circle."""
-    dx, dy = abs(x - 0.5), abs(y - 0.5)
-    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
-    if not hexagon:
+    """The icon of the Cycles Scatter object: the plugin's hexagon in a deep green with copies strewn over
+    it, as large as the hexagon takes."""
+    if not hexagon(x, y):
         return None
-    if math.hypot(x - 0.5, y - 0.5) < 0.24:
-        for cx, cy, r in SCATTER_DOTS:
-            d = math.hypot(x - cx, y - cy)
-            if d < r:
-                shade = max(0.0, 1.0 - math.hypot(x - cx + r * 0.3, y - cy + r * 0.3) / r)
-                return (int(200 + 55 * shade), int(225 + 30 * shade), int(150 + 80 * shade))
-        return (78, 128, 70)
-    return (30, 72, 40)
+    for cx, cy, r in SCATTER_DOTS:
+        if math.hypot(x - cx, y - cy) < r:
+            shade = max(0.0, 1.0 - math.hypot(x - cx + r * 0.3, y - cy + r * 0.3) / r)
+            return (int(200 + 55 * shade), int(225 + 30 * shade), int(150 + 80 * shade))
+    return (34, 84, 46)
 
 
 # The proxy icon's box, seen from a corner: the six corners around its outline (clockwise from the top) and
 # the corner in the middle that faces the viewer.
-PROXY_OUTLINE = ((0.50, 0.335), (0.64, 0.415), (0.64, 0.585), (0.50, 0.665), (0.36, 0.585), (0.36, 0.415))
+PROXY_OUTLINE = ((0.50, 0.24), (0.725, 0.37), (0.725, 0.63), (0.50, 0.76), (0.275, 0.63), (0.275, 0.37))
 PROXY_FRONT = (0.50, 0.50)
 
 
 def proxy(x, y):
-    """The icon of the Cycles Proxy object: the light's kind of variant in violets, the plugin's hexagon in a
-    deep violet with a box drawn as lines in the circle: what stands in for a file's content in the viewport."""
-    dx, dy = abs(x - 0.5), abs(y - 0.5)
-    hexagon = dy <= 0.44 and dx <= 0.4 and dx * 0.55 + dy <= 0.46
-    if not hexagon:
+    """The icon of the Cycles Proxy object: the plugin's hexagon in a deep violet with a box drawn as lines,
+    as large as the hexagon takes: what stands in for a file's content in the viewport."""
+    if not hexagon(x, y):
         return None
-    if math.hypot(x - 0.5, y - 0.5) < 0.24:
-        edges = [(PROXY_OUTLINE[i], PROXY_OUTLINE[(i + 1) % 6]) for i in range(6)]
-        edges += [(PROXY_FRONT, PROXY_OUTLINE[i]) for i in (1, 3, 5)]
-        for (ax, ay), (bx, by) in edges:
-            length = math.hypot(bx - ax, by - ay)
-            along = min(1.0, max(0.0, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / (length * length)))
-            if math.hypot(x - ax - along * (bx - ax), y - ay - along * (by - ay)) < 0.014:
-                return (236, 226, 255)
-        return (112, 92, 168)
-    return (58, 40, 104)
+    edges = [(PROXY_OUTLINE[i], PROXY_OUTLINE[(i + 1) % 6]) for i in range(6)]
+    edges += [(PROXY_FRONT, PROXY_OUTLINE[i]) for i in (1, 3, 5)]
+    for (ax, ay), (bx, by) in edges:
+        length = math.hypot(bx - ax, by - ay)
+        along = min(1.0, max(0.0, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / (length * length)))
+        if math.hypot(x - ax - along * (bx - ax), y - ay - along * (by - ay)) < 0.022:
+            return (236, 226, 255)
+    return (66, 46, 118)
 
 
 if __name__ == "__main__":
