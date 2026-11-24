@@ -56,12 +56,12 @@ Kept on the developer's machine only (git-ignored), so do not expect them in a f
 
 ## Rules
 
-- **The licence boundary.** `bridge/` is GPL-3.0-or-later (`bridge/LICENSE`); everything else is Apache-2.0 (`LICENSE`), except the two scripts in `tools/` that import `bpy`. Every source file starts with its `SPDX-License-Identifier` line. `plugin/` talks to the bridge only through the socket protocol, shared memory, and files the bridge writes. Keep GPL code out of `plugin/`, and keep knowledge of Cinema 4D out of the bridge.
+- **The licence boundary.** `bridge/` is GPL-3.0-or-later (`bridge/LICENSE`); everything else is Apache-2.0 (`LICENSE`), except the three scripts in `tools/` that import `bpy`. Every source file starts with its `SPDX-License-Identifier` line. `plugin/` talks to the bridge only through the socket protocol, shared memory, and files the bridge writes. Keep GPL code out of `plugin/`, and keep knowledge of Cinema 4D out of the bridge.
 - **Plugin ids are issued, not invented.** They are in `plugin/cyclesrender/source/ids.h`, which also says which hooks may share one. For a new hook that needs its own, ask the maintainer for an id.
 - **End only the Blender processes the plugin or a test started.** The user may have a Blender of their own open: never stop processes by name.
 - **Tests in the regular Cinema 4D run with a preferences folder of their own** (`g_prefsPath`, as `tools/run_tests.ps1` does): the user's own preferences and layout are never touched.
 - **Tell the user what is not translated.** Anything in the scene the exporter cannot translate is named in the console (`SceneWriter::Warn`), never dropped silently.
-- **Never edit generated files by hand.** The Render Settings page comes from `tools/make_settings.py` (its defaults are Blender's own), the Cycles nodes from `tools/make_nodes.py`. The list is in `docs/development.md`, "Generated files".
+- **Never edit generated files by hand.** The Render Settings page comes from `tools/make_settings.py` (its defaults are Blender's own), the Cycles nodes from `tools/make_nodes.py`, the Imager tab's effects from `tools/make_effects.py`. The list is in `docs/development.md`, "Generated files".
 - **Parameter ids are stored in scene files.** Never renumber one and never reuse a retired number.
 - **The protocol document and both implementations change together.**
 - **Licensing questions, account choices, pushing and publishing belong to the maintainer.** Commit only when asked.

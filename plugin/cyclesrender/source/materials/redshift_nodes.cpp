@@ -472,8 +472,26 @@ maxon::Result<NodeOutput> RedshiftNodes::Translate(const Source& source, maxon::
 		const maxon::Bool color = name == "rscolorsplitter"_s;
 		if (source.output == "outa"_s)
 		{
-			Warn(FormatString("the alpha output of a Color Splitter plugged into @ is not translated (Blender's colours have none); the value set on the input is used.", maxon::String(what)));
-			return NodeOutput();
+			// Blender's colours carry no alpha along a wire: it is followed only to a node that reads one
+			// from the scene (a Color User Data, a Vertex or Point Attribute node), else the colour's own
+			// value on the input counts.
+			const maxon::GraphNode input = InputPort(rs, RS_NODE "rscolorsplitter"_s, "input") iferr_return;
+			const Source from = Find(input) iferr_return;
+			if (!from.node.IsValid())
+			{
+				const PortValue value = ReadValue(input);
+				return Output(Term::Number(value.found ? value.alpha : 1.0), true);
+			}
+			maxon::Bool known = false;
+			const Term alpha = AlphaOf(from, what, known) iferr_return;
+			if (!known)
+			{
+				Warn(FormatString("the alpha output of a Color Splitter plugged into @ is translated only for a colour that comes straight from a "
+					"Color User Data, Vertex Attribute or Point Attribute node (Blender's colours have no alpha); the value set on the input is used.",
+					maxon::String(what)));
+				return NodeOutput();
+			}
+			return Output(alpha, true);
 		}
 		const maxon::Int node = _graph.Add(color ? "ShaderNodeSeparateColor" : "ShaderNodeSeparateXYZ") iferr_return;
 		Feed(rs, "input", node, color ? "Color" : "Vector", colorData, what, depth) iferr_return;
@@ -525,6 +543,10 @@ maxon::Result<NodeOutput> RedshiftNodes::Translate(const Source& source, maxon::
 	}
 	if (!handled)
 	{
+		result = SceneDataNodes(source, name, what, handled) iferr_return;
+	}
+	if (!handled)
+	{
 		result = LookAlikes(source, name, colorData, what, depth, handled) iferr_return;
 	}
 	if (handled)
@@ -541,8 +563,9 @@ maxon::Result<NodeOutput> RedshiftNodes::Translate(const Source& source, maxon::
 // above, k = 1/a - 2; 0.5 changes nothing); hue is a turn of the HSV hue in degrees; saturation
 // multiplies the HSV saturation; level multiplies the colour; in this order. Written with Blender's
 // nodes as one expression per channel: (x + k max(2x - 1, 0)) / (1 + k |2x - 1|). Blender clamps
-// the saturation at 1 where Redshift does not. The settings count with their values; what is wired
-// into them is named and left out.
+// the saturation at 1 where Redshift does not. Gamma, hue, saturation and level may be wired (0.3.0: a
+// hue and a level that follow a particle's alpha); the contrast counts with its value, and what is
+// wired into it is named and left out.
 //----------------------------------------------------------------------------------------
 maxon::Result<NodeOutput> RedshiftNodes::ColorCorrection(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth)
 {
@@ -557,15 +580,33 @@ maxon::Result<NodeOutput> RedshiftNodes::ColorCorrection(const maxon::GraphNode&
 		const PortValue value = ReadValue(port);
 		return value.found ? value.number : fallback;
 	};
-	const maxon::Float64 gamma = setting("gamma", 1.0) iferr_return;
+	// A setting that may be wired: its value, or what is wired into it.
+	auto wirable = [&](const maxon::Char* id, maxon::Float64 fallback) -> maxon::Result<Term>
+	{
+		iferr_scope;
+		const maxon::GraphNode port = InputPort(node, RS_NODE "rscolorcorrection"_s, id) iferr_return;
+		const Term term = Input(node, id, false, what, depth) iferr_return;
+		if (!term.IsConstant() || ReadValue(port).found)
+			return term;
+		return Term::Number(fallback);
+	};
+	const Term gamma = wirable("gamma", 1.0) iferr_return;
 	const maxon::Float64 contrast = setting("contrast", 0.5) iferr_return;
-	const maxon::Float64 hue = setting("hue", 0.0) iferr_return;
-	const maxon::Float64 saturation = setting("saturation", 1.0) iferr_return;
-	const maxon::Float64 level = setting("level", 1.0) iferr_return;
+	const Term hue = wirable("hue", 0.0) iferr_return;
+	const Term saturation = wirable("saturation", 1.0) iferr_return;
+	const Term level = wirable("level", 1.0) iferr_return;
 
 	// The input, through a Gamma node that may change nothing (it holds the input).
 	const maxon::Int gammaNode = _graph.Add("ShaderNodeGamma") iferr_return;
-	_graph.SetInput(gammaNode, "Gamma", gamma > 0.0 ? 1.0 / gamma : 1.0);
+	if (gamma.IsConstant())
+	{
+		_graph.SetInput(gammaNode, "Gamma", gamma.value.x > 0.0 ? 1.0 / gamma.value.x : 1.0);
+	}
+	else
+	{
+		const Term inverse = Math("DIVIDE", Term::Number(1.0), gamma) iferr_return;
+		Set(gammaNode, "Gamma", inverse, true) iferr_return;
+	}
 	Feed(node, "input", gammaNode, "Color", colorData, what, depth) iferr_return;
 	NodeOutput color { gammaNode, "Color"_s };
 
@@ -602,14 +643,24 @@ maxon::Result<NodeOutput> RedshiftNodes::ColorCorrection(const maxon::GraphNode&
 		_graph.Link(NodeOutput { denominator, "Vector"_s }, divide, "Vector_001") iferr_return;
 		color = NodeOutput { divide, "Vector"_s };
 	}
-	if (hue != 0.0 || saturation != 1.0 || level != 1.0)
+	if (!hue.IsConstant() || !saturation.IsConstant() || !level.IsConstant() || hue.value.x != 0.0 || saturation.value.x != 1.0 || level.value.x != 1.0)
 	{
-		if (saturation > 1.0)
-			Warn(FormatString("a Color Correct node plugged into @ raises the saturation above 1, which Blender clamps at 1.", maxon::String(what)));
+		if (!saturation.IsConstant() || saturation.value.x > 1.0)
+			Warn(FormatString("a Color Correct node plugged into @ @, which Blender clamps at 1.", maxon::String(what),
+				saturation.IsConstant() ? "raises the saturation above 1"_s : "has a wired saturation: where that is above 1"_s));
 		const maxon::Int hsv = _graph.Add("ShaderNodeHueSaturation") iferr_return;
-		_graph.SetInput(hsv, "Hue", 0.5 + hue / 360.0 - maxon::Floor(0.5 + hue / 360.0));
-		_graph.SetInput(hsv, "Saturation", saturation);
-		_graph.SetInput(hsv, "Value", level);
+		if (hue.IsConstant())
+		{
+			_graph.SetInput(hsv, "Hue", 0.5 + hue.value.x / 360.0 - maxon::Floor(0.5 + hue.value.x / 360.0));
+		}
+		else
+		{
+			// Degrees as a share of the turn, around the node's 0.5 for "no turn"; the node wraps it.
+			const Term turn = Math("MULTIPLY_ADD", hue, Term::Number(1.0 / 360.0), Term::Number(0.5)) iferr_return;
+			Set(hsv, "Hue", turn, true) iferr_return;
+		}
+		Set(hsv, "Saturation", saturation, true) iferr_return;
+		Set(hsv, "Value", level, true) iferr_return;
 		_graph.SetInput(hsv, "Fac", 1.0);
 		_graph.Link(color, hsv, "Color") iferr_return;
 		color = NodeOutput { hsv, "Color"_s };
@@ -631,28 +682,40 @@ maxon::Result<maxon::String> RedshiftNodes::FileImage(const maxon::GraphNode& no
 	{
 		pathPort = bundle.FindChild(maxon::Id("path")) iferr_return;
 	}
+	// The file as a path Blender can open (MaterialExporter::ResolveImageUrl): an image of the Asset Browser
+	// (a URL of the scheme "asset") is copied out of its database, a relative path is joined to the document's
+	// folder, and a name is looked for as Cinema 4D looks for a bitmap's.
 	maxon::String path;
+	maxon::String problem;
+	maxon::Bool named = false;
 	if (pathPort.IsValid())
 	{
 		ifnoerr (const maxon::Opt<const maxon::Url&> url = pathPort.GetEffectivePortValue<maxon::Url>())
 		{
 			if (url && url->IsPopulated())
 			{
-				path = url->GetSystemPath() iferr_return;
+				named = true;
+				path = _exporter.ResolveImageUrl(*url, problem) iferr_return;
 			}
 		}
-		if (path.IsEmpty())
+		if (!named)
 		{
 			ifnoerr (const maxon::Opt<const maxon::String&> text = pathPort.GetEffectivePortValue<maxon::String>())
 			{
-				if (text)
-					path = *text;
+				if (text && text->IsPopulated())
+				{
+					named = true;
+					path = _exporter.ResolveImagePath(*text, problem) iferr_return;
+				}
 			}
 		}
 	}
+	if (problem.IsPopulated())
+		Warn(FormatString("the @ node plugged into @: @", maxon::String(label), maxon::String(what), problem));
 	if (path.IsEmpty())
 	{
-		Warn(FormatString("the @ node plugged into @ names no file.", maxon::String(label), maxon::String(what)));
+		if (!named)
+			Warn(FormatString("the @ node plugged into @ names no file.", maxon::String(label), maxon::String(what)));
 		return maxon::String();
 	}
 	return _exporter.GetFileImageId(path, colorData);
@@ -1752,30 +1815,7 @@ maxon::Result<NodeOutput> RedshiftNodes::UtilityNodes(const Source& source, cons
 		return Output(result, false);
 	}
 
-	// Vertex Attribute: a vertex map or vertex colour tag of the object, by the tag's name, as the
-	// mesh exporter names them. Where the object has none Blender gives 0, Redshift the default.
-	if (name == "vertexattributelookup"_s)
-	{
-		maxon::String attribute;
-		const maxon::GraphNode port = InputPort(rs, RS_NODE "vertexattributelookup"_s, "attribute") iferr_return;
-		if (port.IsValid())
-		{
-			ifnoerr (const maxon::Opt<const maxon::String&> text = port.GetEffectivePortValue<maxon::String>())
-			{
-				if (text)
-					attribute = *text;
-			}
-		}
-		if (attribute.IsEmpty())
-		{
-			Warn(FormatString("a Vertex Attribute node plugged into @ names no attribute; the value set on the input is used.", maxon::String(what)));
-			return NodeOutput();
-		}
-		const maxon::Int node = _graph.Add("ShaderNodeAttribute") iferr_return;
-		_graph.SetProperty(node, "attribute_type", "GEOMETRY"_s);
-		_graph.SetProperty(node, "attribute_name", attribute);
-		return NodeOutput { node, source.output == "outscalar"_s ? "Fac"_s : "Color"_s };
-	}
+	// (The Vertex Attribute node is with the other nodes that read the scene: redshift_scene_data.cpp.)
 
 	// Ray Switch: the camera colour (its back colour on back faces when switched so), replaced for
 	// reflection (glossy), refraction (transmission) and GI (diffuse) rays when their switch is on.

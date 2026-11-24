@@ -246,7 +246,7 @@ maxon::Result<maxon::Bool> ExportHair(SceneWriter& writer, const Coords& coords,
 }
 
 maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& coords, const cinema::BaseObject* op, const cinema::Matrix& mg,
-	const maxon::String& id, const maxon::String& materialId)
+	const maxon::String& id, const maxon::String& materialId, const maxon::BaseArray<maxon::String>* reads, ElementReader& elements)
 {
 	iferr_scope;
 
@@ -311,12 +311,50 @@ maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& co
 		}
 	}
 
+	// What the material reads per particle besides the colour (which is `colors`).
+	struct Sent
+	{
+		ELEMENT which = ELEMENT::COUNT;
+		maxon::Int blob = NOTOK;
+	};
+	maxon::BaseArray<Sent> sent;
+	for (maxon::Int n = 0; reads && n < reads->GetCount(); ++n)
+	{
+		const ELEMENT which = FindElementAttribute((*reads)[n]);
+		if (which == ELEMENT::COUNT || which == ELEMENT::PARTICLE_COLOR)
+			continue;
+		const maxon::Int size = ELEMENT_ATTRIBUTES[maxon::Int(which)].size;
+		maxon::Float32 first[4];
+		if (!elements.Read(ElementRef { op, 0 }, which, first))
+			continue;   // the group has no such data (or it is a clone's): the attribute reads as 0
+		Sent entry;
+		entry.which = which;
+		maxon::Float32* const values = writer.AllocFloats(count * size, entry.blob) iferr_return;
+		for (maxon::Int i = 0; i < count; ++i)
+			elements.Read(ElementRef { op, maxon::Int32(i) }, which, values + i * size);
+		sent.Append(entry) iferr_return;
+	}
+
 	JsonWriter& json = writer.BeginItem("pointcloud", id);
 	WriteWorldMatrix(json, coords);
 	json.Int("points", pointsBlob);
 	json.Int("radii", radiiBlob);
 	if (colorsBlob != NOTOK)
 		json.Int("colors", colorsBlob);
+	if (!sent.IsEmpty())
+	{
+		json.BeginArray("attributes");
+		for (const Sent& entry : sent)
+		{
+			const ElementAttribute& attribute = ELEMENT_ATTRIBUTES[maxon::Int(entry.which)];
+			json.BeginObject();
+			json.String("name", maxon::String(attribute.name));
+			json.String("type", maxon::String(attribute.type));
+			json.Int("data", entry.blob);
+			json.EndObject();
+		}
+		json.EndArray();
+	}
 	WriteMaterialList(json, usedMaterial);
 	writer.EndItem();
 	return true;

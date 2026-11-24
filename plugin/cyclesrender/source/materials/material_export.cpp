@@ -21,8 +21,10 @@
 #include "redshift_material.h"
 #include "shader_translate.h"
 
+#include "../nodespace/object_link.h"
 #include "../scene/coords.h"
 #include "../scene/parameters.h"
+#include "../scene/scene_exporter.h"
 #include "../sdk_compat.h"
 #include "baked_files.h"
 #include "material_export.h"
@@ -743,6 +745,18 @@ maxon::Result<maxon::String> MaterialExporter::GetImageId(cinema::BaseShader* sh
 	cinema::Filename resolved;
 	if (!cinema::GenerateTexturePath(_doc ? _doc->GetDocumentPath() : cinema::Filename(), name, cinema::Filename(), &resolved) || !resolved.IsPopulated())
 		resolved = name;
+	// An image of the Asset Browser (the name is then a URL, "asset:///..."): copied out, so that Blender can open it.
+	maxon::Int urlMark = 0;
+	if (resolved.GetString().Find("://"_s, &urlMark))
+	{
+		maxon::String problem;
+		const maxon::String copied = ResolveImagePath(resolved.GetString(), problem) iferr_return;
+		if (problem.IsPopulated())
+			Warn(FormatString("Bitmap shader: @", problem));
+		if (copied.IsEmpty())
+			return maxon::String();
+		resolved = cinema::Filename(copied);
+	}
 
 	// With "Basic" colour management the bitmap's own colour profile says what its values are.
 	const maxon::Int32 profile = GetIntParameter(shader, BITMAPSHADER_COLORPROFILE, BITMAPSHADER_COLORPROFILE_EMBEDDED);
@@ -864,7 +878,26 @@ maxon::Result<maxon::String> MaterialExporter::ResolveImageUrl(const maxon::Url&
 			problem = "the plugin's folder for texture files could not be made."_s;
 			return maxon::String();
 		}
-		copy.SetSuffix(url.GetSuffix());
+		// Blender chooses the reader by the file's suffix: the URL's own ("file_...~.png"), or failing that the
+		// one of the name the URL carries ("?name=wood.png&db=...").
+		maxon::String suffix = url.GetSuffix();
+		if (suffix.IsEmpty())
+		{
+			const maxon::String text = url.ToString(nullptr);
+			maxon::Int start = 0;
+			if (text.Find("name="_s, &start))
+			{
+				maxon::Int end = text.GetLength();
+				maxon::Int ampersand = 0;
+				if (text.Find("&"_s, &ampersand, start))
+					end = ampersand;
+				const maxon::String named = text.GetPart(start + 5, end - start - 5);
+				const maxon::Int dot = named.FindLastIndex('.');
+				if (dot >= 0)
+					suffix = named.GetPart(dot + 1, named.GetLength() - dot - 1);
+			}
+		}
+		copy.SetSuffix(suffix);
 		const maxon::Url target = cinema::MaxonConvert(copy, cinema::MAXONCONVERTMODE::WRITE);
 		iferr (maxon::FileUtilities::WriteArray(target, maxon::Block<maxon::Char>(bytes.GetFirst(), bytes.GetCount())))
 		{
@@ -881,6 +914,19 @@ maxon::Result<maxon::String> MaterialExporter::ResolveImageUrl(const maxon::Url&
 	const maxon::String path = file.GetSystemPath() iferr_return;
 	cinema::Filename resolved;
 	if (cinema::GenerateTexturePath(documentFolder, cinema::Filename(path), cinema::Filename(), &resolved) && resolved.IsPopulated())
+		return resolved.GetString();
+	return path;
+}
+
+maxon::Result<maxon::String> MaterialExporter::ResolveImagePath(const maxon::String& path, maxon::String& problem)
+{
+	iferr_scope;
+	problem = maxon::String();
+	maxon::Int position = 0;
+	if (path.Find("://"_s, &position))
+		return ResolveImageUrl(maxon::Url(path), problem);
+	cinema::Filename resolved;
+	if (cinema::GenerateTexturePath(_doc ? _doc->GetDocumentPath() : cinema::Filename(), cinema::Filename(path), cinema::Filename(), &resolved) && resolved.IsPopulated())
 		return resolved.GetString();
 	return path;
 }
@@ -1240,6 +1286,17 @@ maxon::Result<void> MaterialExporter::WriteLayers(const maxon::BaseArray<Materia
 	}
 
 	JsonWriter& json = _writer.BeginItem("material", id);
+	if (_itemNames)
+	{
+		maxon::String name;
+		for (const MaterialLayer& layer : layers)
+		{
+			if (name.IsPopulated())
+				name += " + "_s;
+			name += maxon::String(layer.material->GetName());
+		}
+		json.String("name", name);
+	}
 	graph.Write(json);
 	// A material of Cycles nodes brings Blender's own material settings.
 	if (!settings.names.IsEmpty())
@@ -1269,10 +1326,10 @@ maxon::Result<void> MaterialExporter::TakeIds(MaterialIdTable& table)
 {
 	iferr_scope;
 	table.ids = std::move(_materials);
-	table.keyed = std::move(_keyedMaterials);
+	table.reads = std::move(_reads);
 	table.hasDefault = _defaultId.IsPopulated();
 	_materials.Reset();
-	_keyedMaterials.Reset();
+	_reads.Reset();
 	return maxon::OK;
 }
 
@@ -1362,13 +1419,61 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseAr
 
 	const maxon::String id = FormatString("material_@", _materials.GetCount());
 	_materials.Insert(key, id) iferr_return;
-	const maxon::Int keyUses = _objectKeyUses;
+	// (Materials are written one after the other, never one inside another: a list of its own suffices.)
+	_currentReads.Reset();
 	WriteLayers(layers, id) iferr_return;
-	if (_objectKeyUses != keyUses)
+	if (!_currentReads.IsEmpty())
 	{
-		_keyedMaterials.Insert(id, true) iferr_return;
+		_reads.Insert(id, std::move(_currentReads)) iferr_return;
+		_currentReads.Reset();
 	}
 	return id;
+}
+
+void MaterialExporter::UseAttribute(const maxon::String& name, maxon::Bool announce)
+{
+	if (name.IsEmpty())
+		return;
+	if (announce && !_announced.Contains(name))
+	{
+		_announced.Append(name) iferr_ignore("Out of memory: a missing attribute is not named.");
+	}
+	if (_currentReads.Contains(name))
+		return;
+	_currentReads.Append(name) iferr_ignore("Out of memory: the attribute is not sent, and reads as 0.");
+}
+
+void MaterialExporter::UseObjectKeys()
+{
+	UseAttribute(maxon::String(OBJECT_NAME_KEY));
+	UseAttribute(maxon::String(OBJECT_ID_KEY));
+}
+
+const maxon::BaseArray<maxon::String>* MaterialExporter::GetReads(const maxon::String& materialId) const
+{
+	const auto* const entry = (_known ? _known->reads : _reads).Find(materialId);
+	return entry ? &entry->GetValue() : nullptr;
+}
+
+maxon::Result<maxon::String> MaterialExporter::UseObject(const cinema::BaseMaterial* material, const maxon::Uuid& link)
+{
+	iferr_scope;
+	// Through the material's own link, in the document the material is in: for a final frame the render's
+	// copy, whose objects the link finds as it finds them in the original (docs/reference/c4d-sdk.md, "A node
+	// port that links an object of the scene"). An object of another document is none.
+	cinema::BaseObject* const object = FindLinkedObject(material, link) iferr_return;
+	if (!object || object->GetDocument() != _doc)
+		return maxon::String();
+	for (const NamedObject& named : _namedObjects)
+	{
+		if (named.object == object)
+			return named.id;
+	}
+	NamedObject named;
+	named.object = object;
+	named.id = NamedObjectId(object);
+	_namedObjects.Append(named) iferr_return;
+	return named.id;
 }
 
 } // namespace cyclesrender

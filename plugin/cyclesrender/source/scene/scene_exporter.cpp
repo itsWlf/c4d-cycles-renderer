@@ -8,6 +8,8 @@
 // instancers, and writes the lights last, because their include and exclude lists name the
 // items the other leaves became.
 
+#include <cstdio>
+
 #include "c4d.h"
 #include "c4d_baseeffectordata.h"
 #include "ddoc.h"
@@ -36,6 +38,7 @@
 #include "lib_hair.h"
 #include "environment_export.h"
 #include "fog_export.h"
+#include "imager_export.h"
 #include "light_export.h"
 #include "mesh_export.h"
 #include "parameters.h"
@@ -84,6 +87,11 @@ static maxon::String KeyId(const maxon::Char* prefix, maxon::UInt64 key)
 	return maxon::String(prefix) + maxon::String::HexToString(key, false);
 }
 
+maxon::String NamedObjectId(const cinema::BaseObject* op)
+{
+	return KeyId("empty_", ObjectKey(op));
+}
+
 // A path of names joined by "/" ("Cloner/Null/Cube 0").
 static maxon::String JoinPath(const maxon::String& parent, const maxon::String& name)
 {
@@ -128,7 +136,8 @@ static maxon::String VectorText(const cinema::Vector& v)
 }
 
 // MoGraph's colour and position of every visible clone of a generator such as the Cloner.
-static maxon::Result<maxon::Bool> ReadCloneColors(cinema::BaseObject* op, maxon::BaseArray<cinema::Vector>& colors, maxon::BaseArray<cinema::Vector>& offsets)
+static maxon::Result<maxon::Bool> ReadCloneColors(cinema::BaseObject* op, maxon::BaseArray<cinema::Vector>& colors, maxon::BaseArray<cinema::Vector>& offsets,
+	maxon::BaseArray<maxon::Int32>& indices)
 {
 	iferr_scope;
 
@@ -151,6 +160,7 @@ static maxon::Result<maxon::Bool> ReadCloneColors(cinema::BaseObject* op, maxon:
 			continue;
 		colors.Append(colorArray[i]) iferr_return;
 		offsets.Append(matrixArray[i].off) iferr_return;
+		indices.Append(maxon::Int32(i)) iferr_return;
 	}
 	return !colors.IsEmpty();
 }
@@ -208,7 +218,7 @@ cinema::Matrix SceneExporter::WalkMatrix(const cinema::BaseObject* op)
 }
 
 SceneExporter::SceneExporter(cinema::BaseDocument* doc, const ExportSettings& settings)
-	: _doc(doc), _colors(doc), _settings(settings), _coords(Coords::FromDocument(doc))
+	: _doc(doc), _colors(doc), _settings(settings), _coords(Coords::FromDocument(doc)), _elements(Coords::FromDocument(doc))
 {
 }
 
@@ -220,6 +230,8 @@ SceneExporter::~SceneExporter()
 		DeleteObj(matrices);
 	for (maxon::BaseArray<maxon::Color64>*& colors : _ownedColors)
 		DeleteObj(colors);
+	for (maxon::BaseArray<maxon::Int32>*& indices : _ownedIndices)
+		DeleteObj(indices);
 }
 
 maxon::Result<void> SceneExporter::Collect()
@@ -367,6 +379,7 @@ maxon::Result<void> SceneExporter::AddMeshLeaf(cinema::BaseObject* object, const
 	leaf.visibility = inherited.visibility;
 	leaf.nameKey = NameKey(inherited.keyPath);
 	leaf.objectId = inherited.objectId;
+	leaf.element = inherited.element;
 	_leaves.Append(std::move(leaf)) iferr_return;
 	if (_settings.noteFollowed && inherited.deformed && inherited.ownerObject &&
 		(_deformedOwners.IsEmpty() || _deformedOwners[_deformedOwners.GetCount() - 1] != inherited.ownerObject))
@@ -482,6 +495,7 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 	// Where the copies go: one matrix per particle or per matrix, in the object's own axes.
 	const maxon::Float64 scale = GetFloatParameter(tag, CYCLESOBJECT_INSTANCES_SCALE, 1.0);
 	maxon::BaseArray<cinema::Matrix> placements;
+	maxon::BaseArray<maxon::Int32> placementIndices;   // the particle or MoData entry of each placement
 	if (op->GetType() == Ofpgroup)
 	{
 		const cinema::ParticleGroupObject* const group = static_cast<const cinema::ParticleGroupObject*>(op);
@@ -498,6 +512,7 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 			m.sqmat = m.sqmat * (scale * (useRadius ? maxon::Float64(radii[i]) : 1.0));
 			m.off = positions[i];
 			placements.Append(m) iferr_return;
+			placementIndices.Append(maxon::Int32(i)) iferr_return;
 		}
 	}
 	else
@@ -517,6 +532,7 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 				cinema::Matrix m = matrixArray[i];
 				m.sqmat = m.sqmat * scale;
 				placements.Append(m) iferr_return;
+				placementIndices.Append(maxon::Int32(i)) iferr_return;
 			}
 		}
 	}
@@ -532,17 +548,27 @@ maxon::Result<maxon::Bool> SceneExporter::WalkTagInstances(cinema::BaseObject* o
 			DeleteObj(matrices);
 			return err;
 		}
+		maxon::BaseArray<maxon::Int32>* indices = NewObj(maxon::BaseArray<maxon::Int32>) iferr_return;
+		iferr (_ownedIndices.Append(indices))
+		{
+			DeleteObj(indices);
+			return err;
+		}
 		for (maxon::Int i = k; i < placements.GetCount(); i += objects.GetCount())
 		{
 			matrices->Append(mg * placements[i]) iferr_return;
+			indices->Append(placementIndices[i]) iferr_return;
 		}
 		if (matrices->IsEmpty())
 			continue;
 
 		InstanceSet set;
 		set.matrices = matrices;
+		set.source = op;
+		set.indices = indices;
 		_instanceSets.Append(set) iferr_return;
 		Inherited forObject = inherited;
+		forObject.element = ElementRef();
 		forObject.instanceSet = _instanceSets.GetCount() - 1;
 		forObject.followable = false;
 		NoteReference(inherited.ownerObject, objects[k]) iferr_return;
@@ -628,6 +654,7 @@ maxon::Result<void> SceneExporter::WalkScatter(cinema::BaseObject* op, const cin
 		forSource.instanceSet = _instanceSets.GetCount() - 1;
 		forSource.followable = false;
 		forSource.hasColor = false;
+		forSource.element = ElementRef();
 		forSource.clones = nullptr;
 		forSource.forceVisible = false;
 		++forSource.instanceDepth;
@@ -1032,6 +1059,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 				_instanceSets.Append(set) iferr_return;
 				forReference.instanceSet = _instanceSets.GetCount() - 1;
 				forReference.hasColor = false;
+				forReference.element = ElementRef();   // which clone a copy is, is not known for a multi-instance
 				Walk(reference, cinema::Matrix(), forReference, path, true, MixKeys(key, reference->GetGUID()), true) iferr_return;
 			}
 		}
@@ -1057,7 +1085,8 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			CloneColors cloneColors;
 			if (type == Omgcloner && !cacheIsDeformed)
 			{
-				const maxon::Bool found = ReadCloneColors(op, cloneColors.colors, cloneColors.offsets) iferr_return;
+				const maxon::Bool found = ReadCloneColors(op, cloneColors.colors, cloneColors.offsets, cloneColors.indices) iferr_return;
+				cloneColors.generator = op;
 				if (found)
 					forCache.clones = &cloneColors;
 			}
@@ -1123,6 +1152,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			{
 				forChild.hasColor = true;
 				forChild.color = clones->colors[clone];
+				forChild.element = ElementRef { clones->generator, clones->indices[clone] };
 			}
 		}
 		// An object of the document is the owner of what it shows; inside a cache the child's matrix
@@ -1143,7 +1173,10 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 class SceneExporter::WriteState
 {
 public:
-	WriteState(SceneWriter& w, cinema::BaseDocument* doc, maxon::Int32 bakeResolution) : writer(w), materials(w, doc, bakeResolution) { }
+	WriteState(SceneWriter& w, cinema::BaseDocument* doc, const ExportSettings& settings) : writer(w), materials(w, doc, settings.bakeResolution)
+	{
+		materials.SetItemNames(settings.itemNames);    // names for a Cryptomatte manifest (ExportSettings::itemNames)
+	}
 
 	SceneWriter& writer;
 	MaterialExporter materials;
@@ -1359,9 +1392,172 @@ maxon::Result<void> SceneExporter::Resolve(const Leaf& leaf, WriteState& state, 
 		}
 		const maxon::String materialId = state.materials.GetMaterialId(layers) iferr_return;
 		resolved.materialIds.Append(materialId) iferr_return;
-		resolved.objectKeys = resolved.objectKeys || state.materials.ReadsObjectKeys(materialId);
+		if (const maxon::BaseArray<maxon::String>* const reads = state.materials.GetReads(materialId))
+		{
+			for (const maxon::String& name : *reads)
+			{
+				if (!resolved.reads.Contains(name))
+				{
+					resolved.reads.Append(name) iferr_return;
+				}
+				if (state.materials.IsAnnounced(name) && !resolved.announce.Contains(name))
+				{
+					resolved.announce.Append(name) iferr_return;
+				}
+			}
+		}
+	}
+	resolved.objectKeys = resolved.reads.Contains(maxon::String(OBJECT_NAME_KEY)) || resolved.reads.Contains(maxon::String(OBJECT_ID_KEY));
+	return maxon::OK;
+}
+
+// A number as JSON text, as JsonWriter writes one.
+static maxon::String NumberText(maxon::Float64 value)
+{
+	if (value != value || value > 1e300 || value < -1e300)
+		value = 0.0;
+	maxon::Char buffer[40];
+	snprintf(buffer, sizeof(buffer), "%.9g", value);
+	for (maxon::Char* c = buffer; *c; ++c)
+	{
+		if (*c == ',')
+			*c = '.';
+	}
+	return maxon::String(buffer);
+}
+
+maxon::Result<void> SceneExporter::NoteUnserved(SceneWriter& writer, const maxon::String& name, const cinema::BaseObject* object)
+{
+	iferr_scope;
+	if (_unserved.Contains(name))
+		return maxon::OK;
+	_unserved.Append(name) iferr_return;
+	writer.Warn(FormatString("Object \"@\": its material reads the attribute \"@\", which the object does not have (no particle or clone data, "
+		"user data, vertex map or vertex colour of that name); it reads as 0 there, where Redshift uses the node's default. "
+		"Other objects without it are not named.", object ? object->GetName() : maxon::String(), name));
+	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::NoteParticleReads(SceneWriter& writer, const maxon::BaseArray<maxon::String>* reads, const MaterialExporter& materials,
+	const cinema::BaseObject* group)
+{
+	iferr_scope;
+	for (maxon::Int n = 0; reads && n < reads->GetCount(); ++n)
+	{
+		const maxon::String& name = (*reads)[n];
+		const ELEMENT which = FindElementAttribute(name);
+		if ((which == ELEMENT::COUNT || !ELEMENT_ATTRIBUTES[maxon::Int(which)].particle) && materials.IsAnnounced(name))
+		{
+			NoteUnserved(writer, name, group) iferr_return;
+		}
 	}
 	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::JoinReads(SceneWriter& writer, const maxon::BaseArray<Resolved>& parts, const InstanceSet& set, const Leaf& first,
+	Resolved& joined, maxon::BaseArray<ElementRef>& elements, CopyData& copies)
+{
+	iferr_scope;
+	for (const Resolved& part : parts)
+	{
+		for (const maxon::String& name : part.reads)
+		{
+			if (!joined.reads.Contains(name))
+			{
+				joined.reads.Append(name) iferr_return;
+			}
+		}
+		for (const maxon::String& name : part.announce)
+		{
+			if (!joined.announce.Contains(name))
+			{
+				joined.announce.Append(name) iferr_return;
+			}
+		}
+	}
+	if (joined.reads.IsEmpty())
+		return maxon::OK;
+	const maxon::Int copyCount = set.matrices->GetCount();
+	elements.EnsureCapacity(copyCount) iferr_return;
+	for (maxon::Int i = 0; i < copyCount; ++i)
+	{
+		elements.Append(set.source ? ElementRef { set.source, set.indices ? (*set.indices)[i] : maxon::Int32(i) } : first.element) iferr_return;
+	}
+	copies.reads = &joined.reads;
+	copies.announce = &joined.announce;
+	copies.elements = &elements;
+	copies.object = first.object;
+	copies.properties = LeafProperties(writer, first, joined, true) iferr_return;
+	return maxon::OK;
+}
+
+maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy)
+{
+	iferr_scope;
+	maxon::String text;
+	const auto add = [&text](const maxon::String& name, const maxon::String& value)
+	{
+		text += (text.IsEmpty() ? "{"_s : ","_s) + JsonQuoted(name) + ":"_s + value;
+	};
+	for (const maxon::String& name : resolved.reads)
+	{
+		// The keys of Redshift's random nodes (per copy in an instancer: its `floats`).
+		if (name == maxon::String(OBJECT_NAME_KEY))
+		{
+			if (!perCopy)
+				add(name, NumberText(leaf.nameKey));
+			continue;
+		}
+		if (name == maxon::String(OBJECT_ID_KEY))
+		{
+			if (!perCopy)
+				add(name, FormatString("@", leaf.objectId));
+			continue;
+		}
+		// What is known per particle and per clone (per copy in an instancer: its `attributes`).
+		const ELEMENT which = FindElementAttribute(name);
+		if (which != ELEMENT::COUNT)
+		{
+			if (perCopy)
+				continue;
+			maxon::Float32 numbers[4];
+			if (_elements.Read(leaf.element, which, numbers))
+			{
+				const maxon::Int size = ELEMENT_ATTRIBUTES[maxon::Int(which)].size;
+				maxon::String value = size > 1 ? "["_s : maxon::String();
+				for (maxon::Int i = 0; i < size; ++i)
+					value += (i ? ","_s : maxon::String()) + NumberText(maxon::Float64(numbers[i]));
+				add(name, size > 1 ? value + "]"_s : value);
+			}
+			else if (resolved.announce.Contains(name))
+			{
+				NoteUnserved(writer, name, leaf.object) iferr_return;
+			}
+			continue;
+		}
+		// (MoGraph's colour is the instancer's `colors`, sent whenever the copies have one.)
+		if (name == "mograph_color"_s)
+			continue;
+		// The user's own: user data of that name on the object or above it. (A vertex map or vertex
+		// colour of that name is the mesh's; the material reads it from there.)
+		maxon::Float64 values[4];
+		maxon::Int count = 0;
+		maxon::Bool whole = false;
+		if (FindUserData(leaf.object, name, _colors.IsOcio() ? DEFAULT_GREY_OCIO : 0.604, values, count, whole))
+		{
+			if (count == 1)
+				add(name, whole ? FormatString("@", maxon::Int64(values[0])) : NumberText(values[0]));
+			else
+				add(name, "["_s + NumberText(values[0]) + ","_s + NumberText(values[1]) + ","_s + NumberText(values[2]) + "]"_s);
+		}
+		else if (resolved.announce.Contains(name) && !HasVertexData(leaf.object, name))
+		{
+			NoteUnserved(writer, name, leaf.object) iferr_return;
+		}
+	}
+	if (text.IsPopulated())
+		text += "}"_s;
+	return text;
 }
 
 // The mesh items of a leaf follow from its polygon object (all that ExportMesh reads), the material
@@ -1544,26 +1740,24 @@ static void WriteMaterialIds(JsonWriter& json, const maxon::BaseArray<maxon::Str
 
 // One `object` item. Write() and WriteObjectAlone() both come here, so that the two agree byte for byte.
 // @param[in] motion  The matrices at shutter open and close (32 numbers), or nullptr.
+// @param[in] name    The item's `name` (ExportSettings::itemNames), or empty.
 static void WriteObjectItem(SceneWriter& writer, const Coords& coords, const cinema::Matrix& mg, const maxon::String& id, const maxon::String& meshId,
-	const maxon::BaseArray<maxon::String>& materialIds, const ObjectVisibility& visibility, maxon::Bool objectKeys, maxon::Float64 nameKey, maxon::Int32 objectId,
-	const maxon::Float64* motion)
+	const maxon::BaseArray<maxon::String>& materialIds, const ObjectVisibility& visibility, const maxon::String& properties, const maxon::Float64* motion,
+	const maxon::String& name = maxon::String())
 {
 	maxon::Float64 matrix[16];
 	coords.ObjectMatrix(mg, matrix);
 	JsonWriter& json = writer.BeginItem("object", id);
+	if (name.IsPopulated())
+		json.String("name", name);
 	json.String("mesh", meshId);
 	json.Floats("matrix", matrix, 16);
 	if (motion)
 		json.Floats("motion", motion, 32);
 	WriteMaterialIds(json, materialIds);
 	WriteVisibility(json, visibility);
-	if (objectKeys)
-	{
-		json.BeginObject("properties");
-		json.Float(OBJECT_NAME_KEY, nameKey);
-		json.Int(OBJECT_ID_KEY, objectId);
-		json.EndObject();
-	}
+	if (properties.IsPopulated())
+		json.Raw("properties", properties);
 	writer.EndItem();
 }
 
@@ -1584,8 +1778,12 @@ maxon::Result<void> SceneExporter::WriteObject(SceneWriter& writer, const Leaf& 
 			moves = true;
 		}
 	}
-	WriteObjectItem(writer, _coords, leaf.mg, id, resolved.meshId, resolved.materialIds, leaf.visibility, resolved.objectKeys, leaf.nameKey, leaf.objectId,
-		moves ? motion : nullptr);
+	// What the object's materials read of it: the keys, its clone's numbers, its user data (LeafProperties).
+	const maxon::String properties = LeafProperties(writer, leaf, resolved, false) iferr_return;
+	// For Cryptomatte's manifest: the name of the object the mesh is, as the walk met it (a generator's
+	// cache object carries the generator's name).
+	const maxon::String name = _settings.itemNames && leaf.object ? leaf.object->GetName() : maxon::String();
+	WriteObjectItem(writer, _coords, leaf.mg, id, resolved.meshId, resolved.materialIds, leaf.visibility, properties, moves ? motion : nullptr, name);
 
 	if (!_settings.noteFollowed)
 		return maxon::OK;
@@ -1598,9 +1796,7 @@ maxon::Result<void> SceneExporter::WriteObject(SceneWriter& writer, const Leaf& 
 	written.meshId = resolved.meshId;
 	written.materialIds.CopyFrom(resolved.materialIds) iferr_return;
 	written.visibility = leaf.visibility;
-	written.objectKeys = resolved.objectKeys;
-	written.nameKey = leaf.nameKey;
-	written.objectId = leaf.objectId;
+	written.properties = properties;
 	for (maxon::Int node = leaf.tail; node != NOTOK; node = _tails[node].parent)
 	{
 		written.tail.Append(_tails[node].ml) iferr_return;
@@ -1710,12 +1906,28 @@ void SceneExporter::WriteObjectAlone(SceneWriter& writer, const Coords& coords, 
 		WriteProxyItem(writer, coords, mg, object.id, object.source, object.visibility);
 		return;
 	}
-	WriteObjectItem(writer, coords, mg, object.id, object.meshId, object.materialIds, object.visibility, object.objectKeys, object.nameKey, object.objectId, nullptr);
+	WriteObjectItem(writer, coords, mg, object.id, object.meshId, object.materialIds, object.visibility, object.properties, nullptr);
+}
+
+// One `empty` item: the place of an object a node names (protocol/protocol.md). Write() and WriteEmptyAlone()
+// both come here.
+static void WriteEmptyItem(SceneWriter& writer, const Coords& coords, const maxon::String& id, const cinema::Matrix& mg)
+{
+	maxon::Float64 matrix[16];
+	coords.ObjectMatrix(mg, matrix);
+	JsonWriter& json = writer.BeginItem("empty", id);
+	json.Floats("matrix", matrix, 16);
+	writer.EndItem();
+}
+
+void SceneExporter::WriteEmptyAlone(SceneWriter& writer, const Coords& coords, const maxon::String& id, const cinema::BaseObject* op)
+{
+	WriteEmptyItem(writer, coords, id, WalkMatrix(op));
 }
 
 maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
 	const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
-	const Visibility& visibility, const maxon::BaseArray<InstancerPart>* parts)
+	const Visibility& visibility, const CopyData& copies, const maxon::BaseArray<InstancerPart>* parts)
 {
 	iferr_scope;
 
@@ -1794,7 +2006,47 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 		}
 	}
 
+	// What the materials read per copy: the numbers of the particle or clone each copy is (element_data.h).
+	struct Sent
+	{
+		ELEMENT which = ELEMENT::COUNT;
+		maxon::Int blob = NOTOK;
+	};
+	maxon::BaseArray<Sent> sent;
+	for (maxon::Int n = 0; copies.reads && n < copies.reads->GetCount(); ++n)
+	{
+		const maxon::String& name = (*copies.reads)[n];
+		const ELEMENT which = FindElementAttribute(name);
+		if (which == ELEMENT::COUNT)
+			continue;
+		const maxon::Int size = ELEMENT_ATTRIBUTES[maxon::Int(which)].size;
+		// Sent only when a copy has such data (the copies of one instancer are of one kind: the first tells).
+		maxon::Float32 first[4];
+		maxon::Bool any = false;
+		if (copies.elements && copies.elements->GetCount() == count)
+		{
+			for (maxon::Int i = 0; i < count && !any; ++i)
+				any = _elements.Read((*copies.elements)[i], which, first);
+		}
+		if (!any)
+		{
+			if (copies.announce && copies.announce->Contains(name))
+			{
+				NoteUnserved(writer, name, copies.object) iferr_return;
+			}
+			continue;
+		}
+		Sent entry;
+		entry.which = which;
+		maxon::Float32* const values = writer.AllocFloats(count * size, entry.blob) iferr_return;
+		for (maxon::Int i = 0; i < count; ++i)
+			_elements.Read((*copies.elements)[i], which, values + i * size);
+		sent.Append(entry) iferr_return;
+	}
+
 	JsonWriter& json = writer.BeginItem("instancer", id);
+	if (copies.name.IsPopulated())
+		json.String("name", copies.name);
 	if (parts)
 	{
 		// The meshes of one copy, each with its place in the copy (the conversion of a matrix is a change
@@ -1833,6 +2085,22 @@ maxon::Result<void> SceneExporter::WriteInstancer(SceneWriter& writer, const max
 		json.EndObject();
 		json.EndArray();
 	}
+	if (!sent.IsEmpty())
+	{
+		json.BeginArray("attributes");
+		for (const Sent& entry : sent)
+		{
+			const ElementAttribute& attribute = ELEMENT_ATTRIBUTES[maxon::Int(entry.which)];
+			json.BeginObject();
+			json.String("name", maxon::String(attribute.name));
+			json.String("type", maxon::String(attribute.type));
+			json.Int("data", entry.blob);
+			json.EndObject();
+		}
+		json.EndArray();
+	}
+	if (copies.properties.IsPopulated())
+		json.Raw("properties", copies.properties);
 	WriteVisibility(json, visibility);
 	writer.EndItem();
 	return maxon::OK;
@@ -1845,7 +2113,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	for (const maxon::String& note : _notes)
 		writer.Warn(note);
 
-	WriteState state(writer, _doc, _settings.bakeResolution);
+	WriteState state(writer, _doc, _settings);
 	state.materials.SetBlenderVersion(_settings.blenderVersion, _settings.blenderVersionText);
 	if (_partial)
 	{
@@ -1972,7 +2240,10 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			{
 				materialId = state.materials.GetMaterialId(material) iferr_return;
 			}
-			ExportParticles(writer, _coords, leaf.object, leaf.mg, KeyId("particles_", leaf.key), materialId) iferr_return;
+			// What the material reads per particle goes with the points; a name particles do not have is said.
+			const maxon::BaseArray<maxon::String>* const reads = materialId.IsPopulated() ? state.materials.GetReads(materialId) : nullptr;
+			NoteParticleReads(writer, reads, state.materials, leaf.object) iferr_return;
+			ExportParticles(writer, _coords, leaf.object, leaf.mg, KeyId("particles_", leaf.key), materialId, reads, _elements) iferr_return;
 			NoteFixed(leaf.ownerObject) iferr_return;
 			continue;
 		}
@@ -2125,8 +2396,16 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				colors.Append(cinema::Vector(color.r, color.g, color.b)) iferr_return;
 			}
 		}
+		// What any of the parts' materials reads per copy: every copy carries it, whatever part shows it.
+		Resolved joined;
+		maxon::BaseArray<ElementRef> elements;
+		CopyData copies;
+		JoinReads(writer, group.resolved, set, first, joined, elements, copies) iferr_return;
+		// (A copy made of several meshes is named after the first of them.)
+		if (_settings.itemNames && first.object)
+			copies.name = first.object->GetName();
 		const maxon::String instancerId = KeyId("instancer_", first.key);
-		WriteInstancer(writer, instancerId, group.resolved[0], *set.matrices, set.colors ? &colors : nullptr, nullptr, first.visibility, &parts) iferr_return;
+		WriteInstancer(writer, instancerId, group.resolved[0], *set.matrices, set.colors ? &colors : nullptr, nullptr, first.visibility, copies, &parts) iferr_return;
 		NoteOwned(first.ownerObject, instancerId) iferr_return;
 		for (maxon::Int index : group.leaves)
 		{
@@ -2150,6 +2429,9 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		maxon::BaseArray<cinema::Matrix> matrices;
 		maxon::BaseArray<cinema::Vector> colors;
 		maxon::BaseArray<maxon::Vector2d> keys;
+		// The particle or clone each copy is, when a material reads something per copy.
+		maxon::BaseArray<ElementRef> elements;
+		const maxon::Bool reading = !group.resolved.reads.IsEmpty();
 		matrices.EnsureCapacity(group.count) iferr_return;
 		colors.EnsureCapacity(group.count) iferr_return;
 		for (maxon::Int index : group.leaves)
@@ -2166,6 +2448,10 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				{
 					keys.Append(key) iferr_return;
 				}
+				if (reading)
+				{
+					elements.Append(leaf.element) iferr_return;
+				}
 				continue;
 			}
 			// A multi-instance: the mesh once per copy. The leaf's matrix is relative to a copy.
@@ -2178,11 +2464,27 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				{
 					keys.Append(key) iferr_return;
 				}
+				if (reading)
+				{
+					elements.Append(set.source ? ElementRef { set.source, set.indices ? (*set.indices)[i] : maxon::Int32(i) } : leaf.element) iferr_return;
+				}
 			}
 		}
+		CopyData copies;
+		if (reading)
+		{
+			copies.reads = &group.resolved.reads;
+			copies.announce = &group.resolved.announce;
+			copies.elements = &elements;
+			copies.object = _leaves[group.leaves[0]].object;
+			// (User data is read from the first copy's object and what is above it: one value for the instancer.)
+			copies.properties = LeafProperties(writer, _leaves[group.leaves[0]], group.resolved, true) iferr_return;
+		}
+		if (_settings.itemNames && _leaves[group.leaves[0]].object)
+			copies.name = _leaves[group.leaves[0]].object->GetName();
 		const maxon::String instancerId = KeyId("instancer_", _leaves[group.leaves[0]].key);
 		WriteInstancer(writer, instancerId, group.resolved, matrices, group.hasColor ? &colors : nullptr, group.resolved.objectKeys ? &keys : nullptr,
-			_leaves[group.leaves[0]].visibility) iferr_return;
+			_leaves[group.leaves[0]].visibility, copies) iferr_return;
 		NoteOwned(_leaves[group.leaves[0]].ownerObject, instancerId) iferr_return;
 		for (maxon::Int index : group.leaves)
 		{
@@ -2240,6 +2542,10 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		}
 		ExportCamera(writer, _coords, camera, _settings.depthOfField, _settings.eevee && _settings.blenderVersion < EEVEE_PANORAMA_VERSION, CameraFraming::Full(_settings.width, _settings.height, _settings.pixelAspect),
 			moves ? cameraMotion : nullptr) iferr_return;
+		// The camera's effects (the Imager tab of its Cycles Camera tag). Without any there is no item,
+		// and Blender's compositor stays off.
+		const ImagerChain imager = ImagerChain::Read(_camera) iferr_return;
+		ExportImager(writer, imager, _colors, _settings.blenderVersion) iferr_return;
 	}
 	// The world, per role (the maintainer's rules of 2026-11-23 and 24: "The top environment wins", per role):
 	// what the camera sees, what lights the scene and the world's fog each come from the highest Sky object,
@@ -2295,6 +2601,21 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	}
 	ExportWorldItem(state.materials, parts[0], parts[1], parts[2], _settings.worldColor, _settings.worldStrength, &_writtenWorld.images) iferr_return;
 	_writtenWorld.alone = alone;
+	return FinishWrite(writer, state);
+}
+
+maxon::Result<void> SceneExporter::FinishWrite(SceneWriter& writer, WriteState& state)
+{
+	iferr_scope;
+	// The objects nodes of the materials and the world named (0.3.0, F12): an `empty` at each one's place, once however
+	// many nodes name it, whatever the object is (it may render nothing itself: a null, a camera, a hidden object). The
+	// bridge resolves the nodes' references after the whole request, so the items may come after the materials.
+	_namedObjects.Reset();
+	for (const NamedObject& named : state.materials.GetNamedObjects())
+	{
+		WriteEmptyAlone(writer, _coords, named.id, named.object);
+		_namedObjects.Append(named) iferr_return;
+	}
 	if (_settings.noteFollowed)
 	{
 		state.materials.TakeIds(_materialIds) iferr_return;

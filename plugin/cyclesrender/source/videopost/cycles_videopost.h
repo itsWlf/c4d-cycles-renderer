@@ -70,6 +70,7 @@ private:
 
 	maxon::BaseArray<PassBuffer> _passes;
 	maxon::Bool _passesMissingReported = false;
+	maxon::Bool _writesFile = false;        ///< this job writes Blender's own file (file_output.h)
 	BridgeClient* _client = nullptr;
 	SyncState _sync;                        ///< what the job's Blender holds
 	maxon::Int _framesRendered = 0;

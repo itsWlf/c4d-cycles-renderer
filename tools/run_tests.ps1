@@ -139,7 +139,7 @@ $bridgeTests = @(
   @{ Name = "test_protocol"; Covers = @("${B}protocol.py", "${B}server.py", "${B}main.py") },
   @{ Name = "test_render"; Covers = @("${B}final/__init__.py", "${B}scene/meshes.py", "${B}scene/cameras.py", "${B}scene/lights.py") },
   @{ Name = "test_scene"; Covers = @("${B}scene/*", "${B}render/*") },
-  @{ Name = "test_geometry"; Covers = @("${B}scene/meshes.py", "${B}scene/instancers.py", "${B}scene/objects.py", "${B}scene/pointclouds.py", "${B}scene/curves.py", "${B}scene/materials.py") },
+  @{ Name = "test_geometry"; Covers = @("${B}scene/meshes.py", "${B}scene/instancers.py", "${B}scene/objects.py", "${B}scene/pointclouds.py", "${B}scene/curves.py", "${B}scene/materials.py", "${B}scene/common.py") },
   @{ Name = "test_viewport"; Covers = @("${B}viewport/*") },
   @{ Name = "test_native"; OnHold = "the Cycles Native Material is on hold"; Covers = @("${B}scene/native.py") },
   @{ Name = "test_preview"; Covers = @("${B}final/preview.py") },
@@ -154,7 +154,20 @@ $bridgeTests = @(
                                         "tools/make_nodes.py") },
   # The `proxy` item and `blend_info` (0.3.0, F7): a .blend linked, instanced, moved, removed, linked anew,
   # the scene cleared, in a background and in a windowed Blender; no library left behind.
-  @{ Name = "test_proxy"; Covers = @("${B}scene/proxies.py", "${B}scene/__init__.py", "${B}server.py", "tests/bridge/make_proxy_blend.py") }
+  @{ Name = "test_proxy"; Covers = @("${B}scene/proxies.py", "${B}scene/__init__.py", "${B}server.py", "tests/bridge/make_proxy_blend.py") },
+  # The `compositor` item (0.3.0, F10): effects on and off, opacity, two effects in both orders, Blender's
+  # presets, the passes and the picture before the compositor, values set without another tree, removal and
+  # nothing left behind, in final frames and in the viewport (which must agree), Cycles and Eevee.
+  @{ Name = "test_compositor"; Covers = @("${B}scene/compositor.py", "${B}scene/__init__.py", "${B}scene/materials.py", "${B}server.py", "${B}final/__init__.py",
+                                          "${B}viewport/__init__.py") },
+  # The file Blender writes itself (0.3.0, F6): exactly the passes asked for, Cryptomatte with its
+  # manifest and the items' names, half and full float, the picture unchanged by it, the composite in
+  # the file, the path taken literally, nothing left behind; Cycles and Eevee.
+  @{ Name = "test_files"; Covers = @("${B}final/files.py", "${B}final/__init__.py", "${B}scene/common.py", "${B}scene/objects.py", "${B}scene/instancers.py",
+                                     "${B}scene/materials.py", "${B}render/settings.py", "tests/bridge/exr_info.py") },
+  # A node that names an object (0.3.0, F12): the `empty` item and a node's `object`, whatever the order of the items,
+  # the empty moved alone, removed, a name not held; Cycles and Eevee.
+  @{ Name = "test_node_objects"; Covers = @("${B}scene/objects.py", "${B}scene/materials.py", "${B}scene/__init__.py", "${B}scene/world.py", "${B}scene/common.py") }
 )
 
 # Plugin inside Cinema 4D (c4dpy). Settings: for the start ("<file>" is a file of the start, emptied
@@ -186,6 +199,12 @@ $c4dTests = @(
   @{ Name = "motion_blur"; Covers = @("${P}scene/mesh_export.*", "${P}scene/camera_export.*", "${P}videopost/*", "${B}render/settings.py", "${B}scene/objects.py") },
   @{ Name = "passes"; Covers = @("${P}scene/light_export.*", "${P}videopost/*","${B}final/__init__.py", "${B}render/settings.py", "${B}scene/objects.py", "tools/make_settings.py", "${R}description/vpcyclesrender.*") },
   @{ Name = "region"; Covers = @("${P}videopost/cycles_videopost.*", "${B}final/__init__.py") },
+  # The Output tab's "Files Written by Blender" (0.3.0, F6): the settings, a still from a saved document
+  # (tokens, a relative path, Cryptomatte named as in Cinema 4D, the passes chosen for the file, the
+  # picture unchanged), no file for other renders, an animation through Commandline.exe named per frame.
+  @{ Name = "file_output"; Settings = @{ g_cyclesRenderLogCalls = "true" }; Covers = @("${P}videopost/file_output.*", "${P}videopost/cycles_videopost.*", "${P}videopost/render_settings_map.*",
+                                      "${P}scene/scene_exporter.*", "${P}materials/material_export.*", "${R}description/vpcyclesrender.*",
+                                      "${R}strings_en-US/description/vpcyclesrender.str", "tools/make_settings.py", "${B}final/*", "tests/bridge/exr_info.py") },
   @{ Name = "volumes"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "hair_particles"; Settings = @{ g_cyclesRenderCapture = "<file>" }
@@ -201,15 +220,29 @@ $c4dTests = @(
   @{ Name = "fire_vdb"; Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
-  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py") },
+  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_scene_data.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py") },
   @{ Name = "redshift_lookalikes"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_lookalikes.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/material_export.*",
                 "${P}scene/scene_exporter.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/materials.py", "${P}scene/redshift_ids.h") },
+  # Data of the scene a material reads by name (0.3.0, F12 and F13): per particle on a point cloud and on instances, per
+  # MoGraph clone, an object's user data, vertex maps and vertex colours, through Redshift's user data and attribute
+  # nodes and a Cycles graph's Attribute node, each next to Redshift's own render.
+  @{ Name = "scene_data"; Settings = @{ g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}scene/element_data.*", "${P}materials/redshift_scene_data.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_lookalikes.*",
+                "${P}materials/material_export.*", "${P}materials/cycles_node_material.*", "${P}scene/curves_export.*", "${P}scene/scene_exporter.*",
+                "${B}scene/pointclouds.py", "${B}scene/instancers.py", "${B}scene/objects.py", "${B}scene/common.py") },
   @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${B}scene/world.py") },
   # Every Redshift light case against Redshift's own render (units, shapes, scale, spread,
   # decay, temperature in two render spaces), Eevee beside it, the IPR's light-only update, "Take Values".
   @{ Name = "redshift_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${P}scene/document_colors.*", "${P}lights/light_tag.*", "${P}lights/light_settings.*", "${B}scene/lights.py") },
+  # Objects as sources (0.3.0, F12): the Texture Coordinate node's link to an object of the scene, its axes in the picture
+  # (a null, moved, turned, through its parent, a camera, a hidden cube, named twice, deleted, saved and loaded, Eevee),
+  # nothing more sent without one, and the IPR sending the `empty` alone while the object moves, Cycles and Eevee.
+  @{ Name = "node_objects"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}nodespace/object_link.*", "${P}nodespace/cycles_nodespace.*", "${P}nodespace/cycles_nodes_table.h", "${P}materials/cycles_node_material.*",
+                "${P}materials/material_export.*", "${P}scene/scene_exporter.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_testhook.*", "${R}nodes/*",
+                "tools/make_nodes.py", "${B}scene/objects.py", "${B}scene/materials.py", "${B}scene/__init__.py") },
   @{ Name = "cycles_nodes"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}nodespace/*", "${P}materials/cycles_*", "${R}nodes/*", "tools/make_nodes.py", "tools/dump_blender_nodes.py", "${B}scene/materials.py", "${P}ipr/ipr_testhook.*") },
   @{ Name = "native_material"; OnHold = "the Cycles Native Material is on hold"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderNativeMaterial = "true" }
@@ -217,6 +250,14 @@ $c4dTests = @(
   @{ Name = "camera_tag"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}tags/camera_tag.*", "${R}description/tcyclescamera.*", "${R}strings_en-US/description/tcyclescamera.str", "${P}scene/camera_export.*",
                 "${B}scene/cameras.py", "${P}ipr/ipr_controller.*", "${R}icons/*", "tools/make_icons.py") },
+  # The Imager tab of the Cycles Camera tag (0.3.0, F10): the layers set as the Attribute Manager sets them,
+  # the item sent, the picture with and without effects, opacity, order, Eevee, an effect the Blender in use
+  # lacks, another camera, saving, copying, undo, and the IPR (its picture the final frame's, a value alone).
+  @{ Name = "imager"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}tags/imager_*", "${P}tags/camera_tag.*", "${P}scene/imager_export.*", "${P}materials/node_graph.*", "${R}description/tcyclescamera.*",
+                "${R}strings_en-US/description/tcyclescamera.str", "${P}ipr/ipr_controller.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}sdk_compat.h",
+                "${B}scene/compositor.py", "${B}final/__init__.py",
+                "${B}viewport/__init__.py", "${B}server.py", "tools/make_effects.py", "tools/dump_blender_effects.py") },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}ipr/ipr_trace.*", "${P}platform/process_stats*", "${B}viewport/*") },
   @{ Name = "ipr_reuse"; Settings = @{ g_cyclesRenderIprTest = "true" }

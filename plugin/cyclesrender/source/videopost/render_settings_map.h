@@ -60,6 +60,11 @@ maxon::Bool IsSettingEnabled(const cinema::BaseContainer& data, maxon::Int32 id)
 /// (prefs/settings.h, GetDefaultEngine), as the renderer has them when it is added.
 cinema::BaseContainer GetDocumentRenderSettings(cinema::BaseDocument* doc);
 
+/// Blender's name of the option a setting that chooses one (a CYCLES_..._ choice of the generated
+/// table) has in @p data, its default where the value is missing or out of range; nullptr for an
+/// id that is no such setting.
+const maxon::Char* GetChoiceName(const cinema::BaseContainer& data, maxon::Int32 id);
+
 /// The settings that steer the scene export rather than a Blender render property.
 ExportSettings GetExportSettings(const cinema::BaseContainer& data, maxon::Int32 width, maxon::Int32 height);
 

@@ -11,6 +11,7 @@
 #include "maxon/hashmap.h"
 #include "maxon/nodesgraph.h"
 #include "maxon/url.h"
+#include "maxon/uuid.h"
 
 #include "../nodespace/cycles_nodes.h"
 #include "../session/blender_install.h"
@@ -101,6 +102,65 @@ static maxon::Result<maxon::GraphNode> WiredOutput(const maxon::GraphNode& port)
 			return false;
 		}) iferr_return;
 	return output;
+}
+
+// Cinema 4D's own Wire Rerouter: a node of no kind that hands its one input ("in") on to its output ("out").
+// It can stand in a Cycles graph (docs/reference/c4d-sdk.md, "Node space"); a wire is followed through it.
+static maxon::Result<maxon::Bool> IsReroute(const maxon::GraphNode& node)
+{
+	iferr_scope;
+	if (!node.IsValid())
+		return false;
+	const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
+	return asset.Get<0>() == maxon::Id("net.maxon.node.reroute");
+}
+
+// A group of the Node Editor: a node that holds other nodes (measured: it has no asset id, its inner nodes
+// keep their ids, and GetInnerNodes of the graph's root yields them too, with paths like "group/node";
+// docs/reference/c4d-sdk.md, "Node space"). Nothing of Blender's graph stands for it: its inner nodes are
+// written as if they stood in the graph, and the wires across its border are followed (ThroughBorders).
+static maxon::Result<maxon::Bool> IsGroup(const maxon::GraphNode& node)
+{
+	iferr_scope;
+	if (!node.IsValid())
+		return false;
+	maxon::Bool holds = false;
+	node.GetChildren([&holds](const maxon::GraphNode&) -> maxon::Result<maxon::Bool>
+		{
+			holds = true;
+			return false;
+		}, maxon::NODE_KIND::NODE) iferr_return;
+	return holds;
+}
+
+// The output a wire really comes from. @p port is what is wired into an input: the output of a node, or
+// - a Wire Rerouter's output: then what is wired into the rerouter counts;
+// - a group's own input port (for a node inside the group): then what is wired into that port from outside;
+// - a group's own output port (for a node outside): then what is wired into that port from inside;
+// through any number of them. Invalid when the chain ends at a port nothing is wired into (a group's input
+// that holds a value: the inner input's effective value is then that value, measured).
+static maxon::Result<maxon::GraphNode> ThroughBorders(maxon::GraphNode port)
+{
+	iferr_scope;
+	for (maxon::Int guard = 0; port.IsValid() && guard < 1024; ++guard)
+	{
+		const maxon::GraphNode owner = port.GetAncestor(maxon::NODE_KIND::NODE) iferr_return;
+		const maxon::Bool reroute = IsReroute(owner) iferr_return;
+		if (reroute)
+		{
+			const maxon::GraphNode inputs = owner.GetInputs() iferr_return;
+			const maxon::GraphNode in = inputs.FindChild(maxon::Id("in")) iferr_return;
+			if (!in.IsValid())
+				return maxon::GraphNode();
+			port = WiredOutput(in) iferr_return;
+			continue;
+		}
+		const maxon::Bool group = IsGroup(owner) iferr_return;
+		if (!group)
+			return port;
+		port = WiredOutput(port) iferr_return;
+	}
+	return maxon::GraphNode();
 }
 
 // Whether a wire leads into or out of @p node.
@@ -346,7 +406,7 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 	const maxon::nodes::NodesGraphModelRef model = nodeMaterial->GetGraph(space) iferr_return;
 	if (!model)
 		return false;
-	return BuildCyclesNodeSurface(exporter, graph, model, material->GetName(), surface, displacement, settings, world);
+	return BuildCyclesNodeSurface(exporter, graph, model, material->GetName(), surface, displacement, settings, world, material);
 }
 
 maxon::Result<void> WriteCyclesGraphMaterial(MaterialExporter& exporter, const maxon::GraphModelRef& model, const maxon::String& id)
@@ -385,7 +445,8 @@ maxon::Result<void> WriteCyclesGraphMaterial(MaterialExporter& exporter, const m
 }
 
 maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, NodeGraph& graph, const maxon::GraphModelRef& model,
-	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world)
+	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world,
+	const cinema::BaseMaterial* material)
 {
 	iferr_scope;
 
@@ -401,7 +462,13 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 			entry.definition = DefinitionOf(node) iferr_return;
 			if (!entry.definition)
 			{
-				// Not a node of the table (a reroute, a group, one of Cinema 4D's own): left out with
+				// A Wire Rerouter and a group are no nodes of Blender's graph: the wires through a rerouter and
+				// across a group's border are followed (source()), and a group's inner nodes come by themselves.
+				const maxon::Bool reroute = IsReroute(node) iferr_return;
+				const maxon::Bool group = IsGroup(node) iferr_return;
+				if (reroute || group)
+					return true;
+				// Not a node of the table (one of Cinema 4D's own): left out with
 				// its wires. One without wires changes nothing (a scaffold has none) and is not named.
 				const maxon::Bool wired = IsWired(node) iferr_return;
 				if (wired)
@@ -427,7 +494,8 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 					entry.index = graph.Add(entry.definition->type) iferr_return;
 				}
 			}
-			byName.Insert(node.GetId().ToString(), placed.GetCount()) iferr_return;
+			// (By its path: the ids of nodes in two groups can be the same, measured.)
+			byName.Insert(node.GetPath().ToString(), placed.GetCount()) iferr_return;
 			placed.Append(std::move(entry)) iferr_return;
 			return true;
 		}) iferr_return;
@@ -441,11 +509,12 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 	{
 		iferr_scope;
 		versionDropped = false;
-		const maxon::GraphNode output = WiredOutput(port) iferr_return;
+		const maxon::GraphNode wired = WiredOutput(port) iferr_return;
+		const maxon::GraphNode output = ThroughBorders(wired) iferr_return;
 		if (!output.IsValid())
 			return NodeOutput();
 		const maxon::GraphNode owner = output.GetAncestor(maxon::NODE_KIND::NODE) iferr_return;
-		const auto* const known = owner.IsValid() ? byName.Find(owner.GetId().ToString()) : nullptr;
+		const auto* const known = owner.IsValid() ? byName.Find(owner.GetPath().ToString()) : nullptr;
 		if (!known)
 			return NodeOutput();
 		const PlacedNode& from = placed[known->GetValue()];
@@ -668,6 +737,23 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 				}
 				continue;
 			}
+			if (property.kind == 'o')
+			{
+				// An object of the scene (nodespace/object_link.h): the node names the `empty` the scene export
+				// writes at its place (MaterialExporter::UseObject). An empty field sends nothing, as before 0.3.0.
+				const maxon::Uuid link = port.GetEffectivePortValue<maxon::Uuid>().GetValueOr(maxon::Uuid()) iferr_return;
+				if (link.IsEmpty())
+					continue;
+				const maxon::String emptyId = exporter.UseObject(material, link) iferr_return;
+				if (emptyId.IsEmpty())
+				{
+					exporter.Warn(FormatString("Material \"@\": the @ node names an object that is not in the document; it is rendered as if it named none.",
+						materialName, maxon::String(definition.label)));
+					continue;
+				}
+				graph.SetProperty(entry.index, property.identifier, emptyId);
+				continue;
+			}
 			const maxon::String value = PropertyJson(port, property) iferr_return;
 			if (Lacks(exporter, property.since))
 			{
@@ -689,6 +775,14 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 						maxon::String(property.label), maxon::String(definition.label), NeedsNewer(exporter, optionSince)));
 					continue;
 				}
+			}
+			// What an Attribute node names is sent with what wears the material, where there is such data
+			// (per particle, per clone, user data of that name: MaterialExporter::UseAttribute).
+			if (maxon::CString(definition.type) == "ShaderNodeAttribute"_cs && maxon::CString(property.identifier) == "attribute_name"_cs)
+			{
+				const maxon::GraphNode namePort = inputs.FindChild(id) iferr_return;
+				const maxon::String attributeName = namePort.GetEffectivePortValue<maxon::String>().GetValueOr(maxon::String(property.text)) iferr_return;
+				exporter.UseAttribute(attributeName);
 			}
 			if (maxon::CString(property.identifier) == "image.colorspace"_cs)
 				imageIsColor = value != "\"DATA\""_s;

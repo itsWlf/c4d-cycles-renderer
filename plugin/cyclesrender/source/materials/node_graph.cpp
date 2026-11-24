@@ -21,6 +21,11 @@ maxon::Result<maxon::Int> NodeGraph::Add(const maxon::Char* type)
 	return _nodes.GetCount() - 1;
 }
 
+void NodeGraph::SetGroup(maxon::Int node, const maxon::String& name)
+{
+	_nodes[node].group = name;
+}
+
 void NodeGraph::SetProperty(maxon::Int node, const maxon::Char* name, const maxon::String& value)
 {
 	_nodes[node].properties.String(name, value);
@@ -90,6 +95,8 @@ void NodeGraph::Write(JsonWriter& json) const
 		json.BeginObject();
 		json.String("name", NodeName(i));
 		json.String("type", node.type);
+		if (!node.group.IsEmpty())
+			json.String("group", node.group);
 		// The three writers hold an object that is still open.
 		json.Raw("props", node.properties.GetText() + "}"_s);
 		json.Raw("inputs", node.inputs.GetText() + "}"_s);

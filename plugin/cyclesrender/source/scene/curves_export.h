@@ -7,6 +7,7 @@
 #include "c4d.h"
 
 #include "coords.h"
+#include "element_data.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -46,14 +47,19 @@ maxon::Result<maxon::Bool> ExportHair(SceneWriter& writer, const Coords& coords,
 //----------------------------------------------------------------------------------------
 /// Exports a particle group (Ofpgroup) as points with a radius and, when the group has
 /// colours, a colour each. A material reads the colour with an Attribute node named
-/// `particle_color`; without @p materialId a plain material doing that is written.
+/// `particle_color`; without @p materialId a plain material doing that is written. What else the
+/// material reads per particle (@p reads: the particle names of element_data.h, such as
+/// `particle_id` and `particle_age`) is sent as the item's `attributes`; a group whose material
+/// reads nothing is sent as before.
 ///
 /// @param[in] mg          Global matrix of the group.
 /// @param[in] materialId  The material of the group's texture tag, or empty.
+/// @param[in] reads       The attributes that material reads (MaterialExporter::GetReads), or nullptr.
+/// @param[in] elements    Reads the particles' data.
 /// @return                False when the group holds no particles and nothing was written.
 //----------------------------------------------------------------------------------------
 maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& coords, const cinema::BaseObject* op, const cinema::Matrix& mg,
-	const maxon::String& id, const maxon::String& materialId);
+	const maxon::String& id, const maxon::String& materialId, const maxon::BaseArray<maxon::String>* reads, ElementReader& elements);
 
 } // namespace cyclesrender
 

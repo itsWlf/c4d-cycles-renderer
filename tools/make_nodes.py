@@ -37,6 +37,9 @@ Blender's labels, and the node sits in the folder of Blender's Add menu.
 
 Ids of ports in Cinema 4D are derived from Blender's identifiers ("Base Color" -> "in.base_color")
 and are stored in scene files: a socket Blender renames in a later version becomes a new port.
+
+A property that names an object of Blender's scene (OBJECT_LINKS: the Texture Coordinate node's
+"object") is a link field to an object of the Cinema 4D scene, kind 'o' in the table.
 """
 
 import json
@@ -101,6 +104,16 @@ PATH_COMMANDS = [("com.wolfnimations.cyclesrender.command.path.relative", "Make 
 # Light Evaluation (5.3). Script and IES Texture, the only other nodes with a "mode", are left out
 # as a whole.
 SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash"}
+# A property that names an object of Blender's scene becomes a link field to an object of Cinema 4D's
+# (since 0.3.0, F12): a port of type maxon::Uuid shown as a link, as Redshift's own nodes link a scene
+# object (docs/reference/c4d-sdk.md, "A node port that links an object of the scene"). The exporter
+# writes an `empty` item at the linked object's place and the node names it (materials/
+# cycles_node_material.cpp). Of the nodes in the table only Texture Coordinate has such a property
+# (Point Density, the other node with an object in Blender's manual, is in no dump of the supported Blenders).
+# node type -> [(Blender's property, label)]; the port is "prop.<property>" like every setting's.
+OBJECT_LINKS = {"ShaderNodeTexCoord": [("object", "Object")]}
+# What the link field accepts, as Cinema 4D's symbols: any object.
+OBJECT_ACCEPT = ["Obase"]
 
 # The settings Blender keeps on a material next to its node tree. Cinema 4D lets only its own
 # material type carry a node graph, so they cannot be parameters of a material type of ours:
@@ -263,7 +276,9 @@ PORT_TYPES = {"f": ("float", "float64", "net.maxon.ui.number"), "i": ("int", "in
               "t": ("net.maxon.interface.string-C", "net.maxon.interface.string-C", "net.maxon.ui.string"),
               "u": ("net.maxon.interface.url-C", None, "net.maxon.ui.url"),
               "e": ("net.maxon.datatype.id", "net.maxon.datatype.id", "net.maxon.ui.enum"),
-              "k": ("net.maxon.interface.splinemapper-C", "net.maxon.interface.splinemapper-C", "net.maxon.ui.splinemapper")}
+              "k": ("net.maxon.interface.splinemapper-C", "net.maxon.interface.splinemapper-C", "net.maxon.ui.splinemapper"),
+              # A link to an object of the scene (OBJECT_LINKS): no default, the field starts empty.
+              "o": ("net.maxon.interface.uuid-C", None, "net.maxon.ui.baselink")}
 
 # A knot of a spline (maxon::SplineMapperKnot) as Cinema 4D writes it: interpolation 0 is Bezier,
 # 1 linear, 2 cubic; the flags hold the knot's id in their upper 16 bits.
@@ -395,6 +410,9 @@ class Description:
               D + "ui.base.guitypeid": value("net.maxon.datatype.id", widget)}
         if show:
             ui[D + "ui.base.show"] = value("net.maxon.interface.cstring-C", show)
+        if kind == "o":
+            # What can be dropped into the link field (DESCRIPTION::UI::BASE::BASELINK_ACCEPT).
+            ui[D + "ui.base.baselink.accept"] = value("net.maxon.datatype.id", OBJECT_ACCEPT, array=True)
         self.ui.append(entry("attribute", identifier, ui))
         self.strings.append(entry("attribute", identifier, name_string(label)))
         for name, option_label in options or []:
@@ -759,6 +777,11 @@ def main():
             # are not sent (the exporter names a dropped sequence in the console).
             setting("image:frame_start", "prop.image_frame_start", "Start Frame", "i", "", 0, "false")
             setting("image:frame_end", "prop.image_frame_end", "End Frame", "i", "", 0, "false")
+        # An object of the scene the node names (OBJECT_LINKS), first among the settings, as Blender's
+        # node shows it above the others.
+        for index, (identifier, label) in enumerate(OBJECT_LINKS.get(node["type"], [])):
+            properties.insert(index, property_row(identifier, port_id("prop.", identifier), label, "o", "", "", node_since))
+            prop_ports.insert(index, (identifier, port_id("prop.", identifier), label, "o", "", None, None))
 
         # ---- the description. As on a Blender node: outputs, the node's settings, then the inputs.
         by_property = {identifier: (port, kind) for identifier, port, _label, kind, _items, _default, _group in prop_ports}

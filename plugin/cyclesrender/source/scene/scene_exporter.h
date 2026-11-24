@@ -11,6 +11,7 @@
 #include "../materials/material_export.h"
 #include "coords.h"
 #include "document_colors.h"
+#include "element_data.h"
 #include "environment_export.h"
 #include "light_export.h"
 #include "proxy_export.h"
@@ -56,6 +57,10 @@ struct ExportSettings
 	/// Judge every mesh that is not judged by its identity by a pass over its data, as before Cinema 4D's
 	/// data hashes were used (MESHHASH::BYTES): for comparisons (prefs/settings.h, IsIprUnoptimized).
 	maxon::Bool hashBytes = false;
+	/// Send `object`, `instancer` and `material` items with the Cinema 4D object's or material's name,
+	/// which Blender then gives the datablock: for a file whose Cryptomatte manifest lists those names
+	/// (final frames only, videopost/file_output.h). Off, the items are the same as before 0.3.0.
+	maxon::Bool itemNames = false;
 };
 
 /// What one Write() did with the meshes, for tests and measurements.
@@ -101,9 +106,7 @@ struct WrittenObject
 	maxon::String meshId;
 	maxon::BaseArray<maxon::String> materialIds;
 	ObjectVisibility visibility;
-	maxon::Bool objectKeys = false;                 ///< the item carries the keys of Redshift's random nodes
-	maxon::Float64 nameKey = 0.0;
-	maxon::Int32 objectId = 0;
+	maxon::String properties;                       ///< the item's `properties` as JSON text ("{...}"), or empty: what its materials read of the object
 	maxon::BaseArray<cinema::Matrix> tail;          ///< local matrices below the owner, outermost first
 	maxon::Bool proxy = false;                      ///< the item is a `proxy`, not an `object`: the mesh, the materials and the keys do not count
 	ProxySource source;                             ///< a proxy's file and what is taken from it, as the whole export read them
@@ -270,6 +273,19 @@ public:
 	/// After a whole Write(): a light was written with an include or exclude list, which names items.
 	maxon::Bool HasLightLinking() const { return _lightLinking; }
 
+	//----------------------------------------------------------------------------------------
+	/// After a whole Write(): the objects of the document that nodes of its materials name (the Texture
+	/// Coordinate node's "Object", MaterialExporter::UseObject), each once, with the id of the `empty` item
+	/// Write() wrote at its place. Empty when no node names one (and then nothing was written for them).
+	//----------------------------------------------------------------------------------------
+	const maxon::BaseArray<NamedObject>& GetNamedObjects() const { return _namedObjects; }
+	//----------------------------------------------------------------------------------------
+	/// Writes the `empty` item @p id at the place of @p op, an object of the document, as Write() does: the
+	/// IPR's update of an object a node names. Its matrix is formed as the walk forms it (WalkMatrix), so
+	/// that the item equals a whole export's to the last bit.
+	//----------------------------------------------------------------------------------------
+	static void WriteEmptyAlone(SceneWriter& writer, const Coords& coords, const maxon::String& id, const cinema::BaseObject* op);
+
 	/// The world of a whole Write(), as far as a step can write it again by itself (WriteWorldAlone).
 	struct WrittenWorld
 	{
@@ -395,6 +411,11 @@ private:
 	{
 		const maxon::BaseArray<cinema::Matrix>* matrices = nullptr;       ///< global
 		const maxon::BaseArray<maxon::Color64>* colors = nullptr;
+		/// The particle group or MoGraph generator the copies stand on, and which of its particles or
+		/// clones each copy is (WalkTagInstances): what a material reads per copy (element_data.h).
+		/// nullptr: nothing is known per copy (a multi-instance, a Cycles Scatter).
+		const cinema::BaseObject* source = nullptr;
+		const maxon::BaseArray<maxon::Int32>* indices = nullptr;
 	};
 
 	/// MoGraph's colour per clone, and where each clone sits relative to its generator.
@@ -402,6 +423,8 @@ private:
 	{
 		maxon::BaseArray<cinema::Vector> colors;
 		maxon::BaseArray<cinema::Vector> offsets;
+		maxon::BaseArray<maxon::Int32> indices;          ///< the clone's index in the generator's MoData
+		const cinema::BaseObject* generator = nullptr;
 	};
 
 	struct Leaf
@@ -430,6 +453,7 @@ private:
 		/// Object tag that overrides it (0 without one).
 		maxon::Float64 nameKey = 0.0;
 		maxon::Int32 objectId = 0;
+		ElementRef element;                  ///< the MoGraph clone the leaf is (a Cloner's), for what a material reads per clone
 	};
 
 	/// What an object hands down to its children and to the objects it generates.
@@ -442,6 +466,7 @@ private:
 		maxon::UInt64 owner = 0;
 		maxon::Bool hasColor = false;
 		cinema::Vector color;
+		ElementRef element;                  ///< Leaf::element of what is being walked
 		maxon::Int instanceSet = NOTOK;
 		const CloneColors* clones = nullptr; ///< set for the root of a Cloner's cache only
 		const cinema::BaseObject* ownerObject = nullptr;
@@ -471,6 +496,21 @@ private:
 		maxon::String meshId;                ///< empty: nothing to show
 		maxon::BaseArray<maxon::String> materialIds;
 		maxon::Bool objectKeys = false;      ///< one of the materials reads the object keys (Leaf::nameKey)
+		/// The attributes its materials read (MaterialExporter::GetReads), each once: what the item that
+		/// shows the mesh is sent with, where the leaf has such data.
+		maxon::BaseArray<maxon::String> reads;
+		maxon::BaseArray<maxon::String> announce;    ///< those of them whose absence on the object is named (MaterialExporter::IsAnnounced)
+	};
+
+	/// What a material reads of each copy of an instancer (WriteInstancer).
+	struct CopyData
+	{
+		const maxon::BaseArray<maxon::String>* reads = nullptr;       ///< the attributes read, or nullptr
+		const maxon::BaseArray<ElementRef>* elements = nullptr;      ///< the particle or clone each copy is, or nullptr
+		maxon::String properties;                                    ///< the item's `properties` as JSON text, or empty
+		const maxon::BaseArray<maxon::String>* announce = nullptr;   ///< Resolved::announce
+		const cinema::BaseObject* object = nullptr;                  ///< what the copies show, for a note
+		maxon::String name;                                          ///< the item's `name` (ExportSettings::itemNames), or empty
 	};
 
 	/// One mesh of an instancer whose copies each show several meshes (WriteInstancer).
@@ -500,6 +540,9 @@ private:
 	cinema::BaseMaterial* GetStackMaterial(maxon::Int stack) const;
 
 	class WriteState;
+	/// What a whole Write() does last, once every material and the world are written: the `empty` items of the
+	/// objects their nodes name (GetNamedObjects), and with ExportSettings::noteFollowed the material ids.
+	maxon::Result<void> FinishWrite(SceneWriter& writer, WriteState& state);
 	maxon::Result<void> Resolve(const Leaf& leaf, WriteState& state, Resolved& resolved);
 	/// Everything the mesh items of @p leaf are made from (ExportSettings::reuse), as one hash.
 	/// @param[in] count  Count the leaf in the statistics (false for the second reading after its export).
@@ -531,9 +574,27 @@ private:
 	/// @param[in] parts     With it, every copy shows all of these meshes, each at its place in the copy, and
 	///                      @p resolved is not used: one item for an object made of several meshes, so that
 	///                      Blender has one instance per copy and not one per copy and mesh.
+	/// @param[in] copies    What a material reads of each copy besides (the protocol's `attributes`), and of all of them (`properties`).
 	maxon::Result<void> WriteInstancer(SceneWriter& writer, const maxon::String& id, const Resolved& resolved,
 		const maxon::BaseArray<cinema::Matrix>& matrices, const maxon::BaseArray<cinema::Vector>* colors, const maxon::BaseArray<maxon::Vector2d>* keys,
-		const Visibility& visibility, const maxon::BaseArray<InstancerPart>* parts = nullptr);
+		const Visibility& visibility, const CopyData& copies, const maxon::BaseArray<InstancerPart>* parts = nullptr);
+	/// The `properties` of the item that shows @p leaf, as JSON text: of the attributes its materials read
+	/// (@p reads) those that are one value for the whole object. With @p perCopy false (an `object`) these
+	/// are the object keys, the numbers of the clone it is, and user data of that name on the object or
+	/// above it; with true (an `instancer`, whose keys and clone numbers go per copy) the user data alone.
+	/// Empty when there are none. A name nothing serves is noted once (NoteUnserved).
+	maxon::Result<maxon::String> LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy);
+	/// Says in the console which of the attributes a particle group's material reads (@p reads, or nullptr) particles do
+	/// not have: a clone's, or the user's own (a point cloud carries no object properties).
+	maxon::Result<void> NoteParticleReads(SceneWriter& writer, const maxon::BaseArray<maxon::String>* reads, const MaterialExporter& materials,
+		const cinema::BaseObject* group);
+	/// For an instancer whose copies show several meshes (@p parts, the copies of @p set, @p first its first leaf): what any
+	/// of the parts' materials reads (@p joined), which particle or clone each copy is (@p elements), and both as @p copies
+	/// for WriteInstancer, which then refers to the other two. Nothing is filled in when no material reads anything.
+	maxon::Result<void> JoinReads(SceneWriter& writer, const maxon::BaseArray<Resolved>& parts, const InstanceSet& set, const Leaf& first,
+		Resolved& joined, maxon::BaseArray<ElementRef>& elements, CopyData& copies);
+	/// Says in the console, once per name, that the material of @p object reads an attribute the object has no data for.
+	maxon::Result<void> NoteUnserved(SceneWriter& writer, const maxon::String& name, const cinema::BaseObject* object);
 
 	cinema::BaseDocument* _doc;
 	DocumentColors _colors;                    ///< the document's colour settings, for colours written here (lights, MoGraph)
@@ -544,6 +605,9 @@ private:
 	maxon::BaseArray<InstanceSet> _instanceSets;
 	maxon::BaseArray<maxon::BaseArray<cinema::Matrix>*> _ownedMatrices;   ///< matrices of the instance sets made here (WalkTagInstances, WalkScatter)
 	maxon::BaseArray<maxon::BaseArray<maxon::Color64>*> _ownedColors;     ///< colours of the instance sets made here (WalkScatter)
+	maxon::BaseArray<maxon::BaseArray<maxon::Int32>*> _ownedIndices;      ///< InstanceSet::indices of the sets made here (WalkTagInstances)
+	ElementReader _elements;                   ///< what a material reads per particle and per clone
+	maxon::BaseArray<maxon::String> _unserved; ///< attribute names already noted as read where there is no data (NoteUnserved)
 	maxon::BaseArray<maxon::String> _notes;   ///< things skipped on purpose, reported as warnings
 	cinema::BaseObject* _camera = nullptr;
 	/// What can be the world, in the order of the walk: the highest in the Object Manager first. Per role
@@ -574,6 +638,7 @@ private:
 	maxon::BaseArray<ObjectReference> _references;
 	maxon::BaseArray<OwnedItem> _ownedItems;
 	MaterialIdTable _materialIds;
+	maxon::BaseArray<NamedObject> _namedObjects;   ///< GetNamedObjects()
 	/// CollectOwners(): the objects of the document to look at, and the objects above them.
 	maxon::Bool _partial = false;
 	maxon::HashSet<const cinema::BaseObject*> _only;
@@ -588,6 +653,11 @@ public:
 	/// more meshes is sent as one instancer per mesh, as before 0.3.0. Each part is a few nodes in Blender.
 	static const maxon::Int INSTANCER_PARTS_MAXIMUM = 256;
 };
+
+/// The id of the `empty` item that stands for @p op, an object of the document a node of a material names
+/// (NamedObject): "empty_" and the key the walk gives the object (its GUID, a particle group's marker), so the
+/// same from one export to the next and in the render's copy of the document.
+maxon::String NamedObjectId(const cinema::BaseObject* op);
 
 } // namespace cyclesrender
 

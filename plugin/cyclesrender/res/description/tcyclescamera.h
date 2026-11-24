@@ -18,6 +18,8 @@ enum
 	CYCLESCAMERA_GROUP_LENS = 2001,
 	CYCLESCAMERA_GROUP_APERTURE = 2002,        // a group inside the Depth of Field tab
 	CYCLESCAMERA_GROUP_PANORAMA = 2003,        // a group inside the Lens tab
+	CYCLESCAMERA_GROUP_IMAGER = 2004,
+	CYCLESCAMERA_GROUP_IMAGER_BUTTONS = 2005,  // the row of buttons below the list
 
 	// Depth of field (Blender's camera, Depth of Field panel)
 	// Checked: on, with this tab's values, whatever the render settings say. Unchecked (the
@@ -62,7 +64,48 @@ enum
 	CYCLESCAMERA_LENS_CYLINDER_U_MAX = 1115,
 	CYCLESCAMERA_LENS_CYLINDER_V_MIN = 1116,   // heights on a cylinder of the radius below (Blender's numbers)
 	CYCLESCAMERA_LENS_CYLINDER_V_MAX = 1117,
-	CYCLESCAMERA_LENS_CYLINDER_RADIUS = 1118
+	CYCLESCAMERA_LENS_CYLINDER_RADIUS = 1118,
+
+	// The Imager tab: effects on the rendered picture, made by Blender's compositor, as a list of
+	// layers like Cinema 4D's field lists: each layer is one effect with a name, a switch and an
+	// opacity; the top layer is applied last; the selected layer's settings show below the list.
+	CYCLESCAMERA_IMAGER_ENABLE = 1200,         // the tab's switch: off, the picture is the render
+	// The list itself: a container that holds the layers' numbers under 0, 1, 2, ..., the top layer
+	// first. A layer's number is given once and never again in the same tag (CYCLESCAMERA_IMAGER_NEXT).
+	CYCLESCAMERA_IMAGER_LAYERS = 1201,
+	CYCLESCAMERA_IMAGER_LIST = 1202,           // what the Attribute Manager shows of it (a view; kept in line with the layers)
+	CYCLESCAMERA_IMAGER_SELECTED = 1203,       // the number of the layer whose settings show below the list
+	CYCLESCAMERA_IMAGER_ADD = 1204,            // a menu: choosing an effect adds a layer of it; holds nothing
+	CYCLESCAMERA_IMAGER_REMOVE = 1205,         // buttons: they act on the selected layer
+	CYCLESCAMERA_IMAGER_UP = 1206,
+	CYCLESCAMERA_IMAGER_DOWN = 1207,
+	CYCLESCAMERA_IMAGER_NEXT = 1208,           // the number the next new layer gets
+
+	// What a layer stores lies in the tag's own container, each field under
+	//     IMAGERLAYER_BASE + layer * IMAGERLAYER_STRIDE + field
+	// which is also the field's parameter id (for scripts, animation tracks and takes). Layers are
+	// numbered from 1 to IMAGERLAYER_MAXIMUM. This formula and the fields below are stored in scene
+	// files: never change them, and never give a retired field's number to another.
+	IMAGERLAYER_BASE = 0x01000000,
+	IMAGERLAYER_STRIDE = 0x00010000,
+	IMAGERLAYER_MAXIMUM = 32000,
+		IMAGERLAYER_GROUP = 0,                   // nothing stored: the group of the layer's settings in the Attribute Manager
+		IMAGERLAYER_EFFECT = 1,                  // text: Blender's own name of the effect ("Vignette"); the layer is what this names
+		IMAGERLAYER_SOURCE = 2,                  // where the effect comes from
+			IMAGERLAYER_SOURCE_BLENDER = 0,        // a compositor node group of Blender's bundled asset library
+			IMAGERLAYER_SOURCE_FILE = 1,           // reserved: a node group of a .blend file (custom presets), named by IMAGERLAYER_FILE
+			IMAGERLAYER_SOURCE_NODE = 2,           // reserved: a plain compositor node, IMAGERLAYER_EFFECT its Blender type
+		IMAGERLAYER_NAME = 3,                    // text: the layer's name in the list
+		IMAGERLAYER_ENABLED = 4,                 // the layer's switch
+		IMAGERLAYER_OPACITY = 5,                 // 0 to 1: how much of the effect is mixed over what is below it
+		IMAGERLAYER_FILE = 6,                    // reserved: the .blend file of IMAGERLAYER_SOURCE_FILE
+		IMAGERLAYER_INFO = 7,                    // reserved: what a Blender said the group of a file takes (as the Cycles Proxy keeps its file's content)
+		IMAGERLAYER_PANELS = 100,                // nothing stored: 100 to 199 are the groups of an effect's panels in the Attribute Manager
+		// From here on the effect's settings, each under the number the table gives it
+		// (tags/imager_effects_table.h, generated: 1000 + n for Blender's socket "Socket_<n>", 10000 and
+		// up for a socket of another name). A menu's value is a number made from the option's name
+		// (tags/imager_effects.cpp, GetImagerOptionValue), so that an option Blender adds moves nothing.
+		IMAGERLAYER_SETTINGS = 1000
 };
 
 #endif // TCYCLESCAMERA_H__

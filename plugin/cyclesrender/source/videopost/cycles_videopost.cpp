@@ -26,6 +26,7 @@
 #include "../session/json.h"
 #include "../sdk_compat.h"
 #include "cycles_videopost.h"
+#include "file_output.h"
 #include "output_settings.h"
 #include "render_settings_map.h"
 
@@ -303,6 +304,16 @@ maxon::Result<void> CyclesVideoPost::OpenSession(const cinema::BaseContainer& se
 	maxon::BaseArray<maxon::String> warnings;
 	SendRenderSettings(*_client, settings, vps->doc, vps->thread, warnings) iferr_return;
 	Report(warnings);
+
+	// What only the file Blender writes needs: its passes and Cryptomatte (file_output.h).
+	_writesFile = WritesBlenderFile(settings, vps->renderflags);
+	if (_writesFile)
+	{
+		JsonWriter request;
+		WriteBlenderFileSettings(request, settings);
+		const BridgeMessage reply = _client->Request(request, BlobViews(), vps->thread) iferr_return;
+		Report(GetJsonStrings(reply.header, "warnings"_s));
+	}
 	return maxon::OK;
 }
 
@@ -323,6 +334,7 @@ void CyclesVideoPost::CloseSession(maxon::Bool cleanly)
 		ApplicationOutput("Cycles Render job: Blender stopped after @ frame(s)", _framesRendered);
 	_framesRendered = 0;
 	_passesMissingReported = false;
+	_writesFile = false;
 	_reported.Reset();
 }
 
@@ -350,6 +362,7 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 		exportSettings.pixelAspect = pixelAspect;
 		exportSettings.blenderVersion = _client->GetBlenderVersion();
 		exportSettings.blenderVersionText = _client->GetBlenderVersionText();
+		exportSettings.itemNames = _writesFile && BlenderFileNeedsNames(settings);
 
 		// Motion blur: look at the scene when the shutter opens and when it closes, then come
 		// back to the frame. Each look is one evaluation of the document.
@@ -451,7 +464,27 @@ maxon::Result<void> CyclesVideoPost::RenderFrame(const cinema::BaseContainer& se
 			request.Floats("region", region, 4);
 		}
 	}
+
+	// The file Blender writes itself, beside what the Picture Viewer gets (file_output.h).
+	maxon::String filePath;
+	if (_writesFile)
+	{
+		maxon::String problem;
+		filePath = GetBlenderFilePath(settings, vps, problem);
+		if (filePath.IsPopulated())
+		{
+			WriteBlenderFileField(request, settings, filePath);
+		}
+		else
+		{
+			maxon::BaseArray<maxon::String> problems;
+			problems.Append(problem) iferr_ignore("A lost warning is not worth failing the render.");
+			Report(problems);
+		}
+	}
 	const BridgeMessage reply = _client->Request(request, BlobViews(), vps->thread) iferr_return;
+	if (filePath.IsPopulated() && g_cyclesRenderLogCalls)
+		ApplicationOutput("Cycles Render frame: Blender wrote @", GetJsonString(reply.header, "file"_s));
 
 	const maxon::Int blobIndex = maxon::Int(GetJsonInt(reply.header, "pixels"_s, -1));
 	if (GetJsonInt(reply.header, "width"_s, 0) != width || GetJsonInt(reply.header, "height"_s, 0) != height || GetJsonInt(reply.header, "channels"_s, 0) != 4)

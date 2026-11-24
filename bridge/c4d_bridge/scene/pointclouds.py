@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Point cloud builder: particles as spheres.
+"""Point cloud builder: particles as spheres, each with a radius, a colour and named attributes
+(numbers, vectors, colours) that a material reads with an Attribute node of type GEOMETRY.
 
 Blender 5.1 and later make the points directly (`PointCloud.resize`). Blender 5.0 has no way to
 add points to a point cloud from Python, so there the points are the loose vertices of a mesh,
@@ -11,7 +12,7 @@ import bpy
 import numpy as np
 
 from ..errors import RequestError
-from .common import array_from, place
+from .common import array_from, named_attributes, place
 from .objects import assign_materials
 
 # The name a material uses to read the colour of a particle (Attribute node, type GEOMETRY).
@@ -22,7 +23,7 @@ _RADIUS_ATTRIBUTE = "radius"
 
 
 def build_pointcloud(scene, item, blobs):
-    """A `pointcloud` item: points with a radius and a colour each, made anew every time."""
+    """A `pointcloud` item: points with a radius, a colour and named attributes each, made anew every time."""
     points = array_from(blobs, item["points"], np.float32)
     count = len(points) // 3
     if "radii" in item:
@@ -36,6 +37,7 @@ def build_pointcloud(scene, item, blobs):
         colors = array_from(blobs, item["colors"], np.float32)
         if len(colors) != count * 4:
             raise RequestError("bad_request", f"pointcloud {item['id']!r}: one colour (r, g, b, a) per point is needed")
+    attributes = named_attributes(item, blobs, count, (COLOR_ATTRIBUTE, _RADIUS_ATTRIBUTE, "position"))
 
     old = scene.pointclouds.pop(item["id"], None)
     # (hasattr() on the class does not see RNA functions; the RNA description lists them.)
@@ -51,6 +53,8 @@ def build_pointcloud(scene, item, blobs):
         data.attributes.new(_RADIUS_ATTRIBUTE, 'FLOAT', 'POINT').data.foreach_set("value", radii)
     if colors is not None:
         data.attributes.new(COLOR_ATTRIBUTE, 'FLOAT_COLOR', 'POINT').data.foreach_set("color", colors)
+    for name, data_type, field, values in attributes:
+        data.attributes.new(name, data_type, 'POINT').data.foreach_set(field, values)
     for _ in item.get("materials", ()):
         data.materials.append(None)
     if isinstance(data, bpy.types.Mesh):

@@ -28,8 +28,11 @@ class Scene:
         self.curves = {}
         self.pointclouds = {}
         self.light_links = {}
+        self.node_objects = {}      # material or world id -> (its node tree, {node name: item id}): objects nodes name (materials.py)
         self.proxies = {}           # proxy items by id (proxies.py)
         self.proxy_files = {}       # the .blend files they link
+        self.compositor = None      # the compositor tree attached to the scene (compositor.py)
+        self.compositor_action = None   # what the last request did to it: "built", "updated", "removed"
         self.warnings = []
 
     def clear(self):
@@ -38,9 +41,12 @@ class Scene:
         keep = native.protected()
         # Linked files first: a library goes with everything linked from it (proxies.py).
         proxies.clear(self)
+        # The compositor's tree is a node group like the others below: the scene lets go of it first.
+        compositor.before_clear(self)
         for name in _OWNED_COLLECTIONS:
             bpy.data.batch_remove([data for data in getattr(bpy.data, name) if data not in keep])
         native.after_clear()
+        compositor.detach(self, removed=True)
         self.meshes.clear()
         self.objects.clear()
         self.materials.clear()
@@ -50,10 +56,12 @@ class Scene:
         self.curves.clear()
         self.pointclouds.clear()
         self.light_links.clear()
+        self.node_objects.clear()
 
     def apply(self, header, blobs):
         """Build every item of one request. Returns (item count, warnings)."""
         self.warnings = []
+        self.compositor_action = None
         if header.get("clear"):
             self.clear()
         self.remove(header.get("remove", ()))
@@ -72,6 +80,7 @@ class Scene:
                 raise RequestError("bad_request",
                                    f"{item.get('kind')} {item.get('id')!r} lacks the field {missing}") from missing
         lights.apply_links(self)
+        materials.resolve_objects(self)
         proxies.after_items(self, header)
         return len(items), self.warnings
 
@@ -85,9 +94,11 @@ class Scene:
         for item_id in item_ids:
             instancers.remove_instancer(self, item_id)
             proxies.remove_proxy(self, item_id)
+            compositor.remove_compositor(self, item_id)
             self._remove_object(item_id)
         for item_id in item_ids:
             native.forget(item_id)
+            self.node_objects.pop(item_id, None)
             for collection, store in ((bpy.data.meshes, self.meshes), (bpy.data.materials, self.materials),
                                       (bpy.data.images, self.images), (bpy.data.volumes, self.volumes),
                                       (bpy.data.hair_curves, self.curves)):
@@ -125,12 +136,13 @@ class Scene:
         return obj
 
 
-from . import cameras, curves, instancers, lights, materials, meshes, native, objects, pointclouds, proxies, volumes, world  # noqa: E402
+from . import cameras, compositor, curves, instancers, lights, materials, meshes, native, objects, pointclouds, proxies, volumes, world  # noqa: E402
 
 BUILDERS = {
     "mesh": meshes.build_mesh,
     "points": meshes.build_points,
     "object": objects.build_object,
+    "empty": objects.build_empty,
     "instancer": instancers.build_instancer,
     "proxy": proxies.build_proxy,
     "volume": volumes.build_volume,
@@ -141,4 +153,5 @@ BUILDERS = {
     "image": materials.build_image,
     "material": materials.build_material,
     "world": world.build_world,
+    "compositor": compositor.build_compositor,
 }

@@ -45,4 +45,7 @@ STRINGTABLE Tcyclescamera
 	CYCLESCAMERA_LENS_CYLINDER_U_MIN        "Longitude Min";
 	CYCLESCAMERA_LENS_CYLINDER_U_MAX        "Longitude Max";
 	CYCLESCAMERA_LENS_CYLINDER_RADIUS       "Cylinder Radius";
+
+	CYCLESCAMERA_GROUP_IMAGER               "Imager";
+	CYCLESCAMERA_IMAGER_ENABLE              "Imager";
 }

@@ -6,6 +6,7 @@
 
 #include "c4d.h"
 #include "maxon/hashmap.h"
+#include "maxon/uuid.h"
 
 #include "../scene/document_colors.h"
 #include "../scene/scene_writer.h"
@@ -39,9 +40,20 @@ struct TextureMapping
 /// `instancer`) that hold the keys Redshift's random nodes vary by: a number in 0..1 from the
 /// object's path of names, and its Redshift Object ID (SceneExporter::Leaf::nameKey). A material
 /// reads them with an Attribute node of type INSTANCER. They are sent only for objects whose
-/// material reads them (MaterialExporter::ReadsObjectKeys).
+/// material reads them (MaterialExporter::ReadsObjectKeys). They are two of the attributes a
+/// material can read (MaterialExporter::UseAttribute); the others are per particle and per clone
+/// (scene/element_data.h) or the user's own (an object's user data, by its name).
 static const maxon::Char* const OBJECT_NAME_KEY = "cr_name_key";
 static const maxon::Char* const OBJECT_ID_KEY = "cr_object_id";
+
+/// An object of the document that a node of a material names (the Texture Coordinate node's "Object",
+/// since 0.3.0), and the id of the `empty` item that stands for it in Blender (NamedObjectId() in
+/// scene/scene_exporter.h). The scene export writes that item at the object's place.
+struct NamedObject
+{
+	cinema::BaseObject* object = nullptr;
+	maxon::String id;
+};
 
 /// One material of a stack on an object, with the mapping of its texture tag.
 struct MaterialLayer
@@ -59,7 +71,7 @@ struct MaterialLayer
 struct MaterialIdTable
 {
 	maxon::HashMap<maxon::String, maxon::String> ids;      ///< what a material item was made from -> its id
-	maxon::HashMap<maxon::String, maxon::Bool> keyed;      ///< ids of materials that read the object keys
+	maxon::HashMap<maxon::String, maxon::BaseArray<maxon::String>> reads;   ///< ids of materials that read attributes -> their names (UseAttribute)
 	maxon::Bool hasDefault = false;                        ///< the default material was written
 };
 
@@ -150,10 +162,20 @@ public:
 	/// @return              The path, or empty when there is none to send.
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::String> ResolveImageUrl(const maxon::Url& url, maxon::String& problem);
+	//----------------------------------------------------------------------------------------
+	/// The same for a file given as text, as Redshift's file parameters and a Bitmap shader hold it:
+	/// a URL ("asset:///file_...~.png?name=...&db=...", "file:///C:/...") goes through
+	/// ResolveImageUrl, so an image of the Asset Browser is copied out and can be opened by Blender;
+	/// a plain name or path is looked for as Cinema 4D looks for a bitmap's.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<maxon::String> ResolveImagePath(const maxon::String& path, maxon::String& problem);
 	/// The id of the `image` item for pixels in memory (RGBA, top row first, values as they
 	/// are to be used). They are written to a file kept like a baked shader's (baked_files.h).
 	maxon::Result<maxon::String> GetPixelImageId(const maxon::BaseArray<maxon::Vector4d32>& pixels, maxon::Int32 width, maxon::Int32 height);
 	maxon::Int32 GetBakeResolution() const { return _bakeResolution; }
+	/// Send each translated material with its name in Cinema 4D (the names of a stack joined by
+	/// " + "), for Cryptomatte's manifest (ExportSettings::itemNames). Off by default.
+	void SetItemNames(maxon::Bool on) { _itemNames = on; }
 	/// Number of shaders baked by this process so far; for tests.
 	static maxon::Int GetBakeCount();
 
@@ -161,11 +183,34 @@ public:
 	void Warn(const maxon::String& message);
 	SceneWriter& GetWriter() { return _writer; }
 
-	/// Said by a translation that reads the object keys (OBJECT_NAME_KEY, OBJECT_ID_KEY) while the
-	/// material it belongs to is written; ReadsObjectKeys then answers true for that material's id,
-	/// and the objects wearing it are sent with their keys.
-	void UseObjectKeys() { ++_objectKeyUses; }
-	maxon::Bool ReadsObjectKeys(const maxon::String& materialId) const { return (_known ? _known->keyed : _keyedMaterials).Find(materialId) != nullptr; }
+	//----------------------------------------------------------------------------------------
+	/// Said by a translation while the material it belongs to is written: the material reads the
+	/// attribute @p name with an Attribute node. GetReads() then lists it for that material's id, and
+	/// what wears the material is sent with it where it has such data: per particle and per clone
+	/// (the names of scene/element_data.h), the object keys, or user data of that name on the object.
+	/// A name told twice counts once.
+	//----------------------------------------------------------------------------------------
+	/// @param[in] announce  Name in the console an object that wears the material and has no such data (a
+	///                      Redshift user data node, whose default Redshift would use there; not an
+	///                      Attribute node of a Cycles graph, which may name anything Blender has).
+	void UseAttribute(const maxon::String& name, maxon::Bool announce = false);
+	/// True for a name some material of this export read with @p announce.
+	maxon::Bool IsAnnounced(const maxon::String& name) const { return _announced.Contains(name); }
+	/// The same for the two object keys (OBJECT_NAME_KEY, OBJECT_ID_KEY).
+	void UseObjectKeys();
+	/// The attributes the material of that id reads, or nullptr when it reads none.
+	const maxon::BaseArray<maxon::String>* GetReads(const maxon::String& materialId) const;
+
+	//----------------------------------------------------------------------------------------
+	/// Said by a translation while a material is written: a node of @p material names the object
+	/// @p link (nodespace/object_link.h). Returns the id of the `empty` item that stands for it, which
+	/// the node is to name, or an empty string when @p link finds no object of the document (or
+	/// @p material is nullptr: the node is then written without one, and the caller says so).
+	/// GetNamedObjects() lists each object once, however many nodes and materials name it.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<maxon::String> UseObject(const cinema::BaseMaterial* material, const maxon::Uuid& link);
+	/// The objects nodes named so far (UseObject), each once, in the order first named.
+	const maxon::BaseArray<NamedObject>& GetNamedObjects() const { return _namedObjects; }
 
 	//----------------------------------------------------------------------------------------
 	/// After the materials were asked for: hands over which id each got (MaterialIdTable).
@@ -199,16 +244,19 @@ private:
 	cinema::BaseDocument* _doc;
 	DocumentColors _colors;
 	maxon::Int32 _bakeResolution;
+	maxon::Bool _itemNames = false;
 	maxon::Int32 _blenderVersion = 0;
 	maxon::String _blenderVersionText;
 	maxon::HashMap<maxon::String, maxon::String> _materials;   ///< what a material item was made from -> its id
 	maxon::HashMap<maxon::String, maxon::String> _images;
 	maxon::HashMap<maxon::String, maxon::Bool> _imageAlpha;      ///< image file -> has an alpha channel
 	maxon::String _defaultId;
-	maxon::Int _objectKeyUses = 0;
-	maxon::HashMap<maxon::String, maxon::Bool> _keyedMaterials;   ///< ids of materials that read the object keys
+	maxon::BaseArray<maxon::String> _currentReads;               ///< UseAttribute() while a material is written
+	maxon::BaseArray<maxon::String> _announced;                  ///< IsAnnounced()
+	maxon::HashMap<maxon::String, maxon::BaseArray<maxon::String>> _reads;   ///< ids of materials that read attributes -> their names
 	const MaterialIdTable* _known = nullptr;   ///< SetKnownIds()
 	maxon::Bool _unknown = false;
+	maxon::BaseArray<NamedObject> _namedObjects;               ///< UseObject()
 };
 
 } // namespace cyclesrender

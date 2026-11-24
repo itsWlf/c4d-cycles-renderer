@@ -89,8 +89,9 @@ static maxon::Bool ToRec709(const cinema::BaseDocument* doc, Rows3& m)
 // (equal paths, equal r; a render instance and every clone of a Cloner in render-instance or
 // multi-instance mode take the value of the object they show; clones in instance mode differ),
 // in "Object ID" mode on the Object ID of a Redshift Object tag on the object or above it (no tag:
-// all objects one value), in "User Data ID" mode on the node's User Data number; the Object ID and
-// the User Data number give the same r for the same number. Here r is Blender's White Noise of
+// all objects one value), in "User Data ID" mode on the node's User Data number, which may be
+// wired (an Integer User Data node reading a particle's id gives every particle its own number); the
+// Object ID and the User Data number give the same r for the same number. Here r is Blender's White Noise of
 // (key, seed, kind), the key sent per object by the plugin (SceneExporter::Leaf::nameKey): other
 // numbers than Redshift's, the same structure.
 //----------------------------------------------------------------------------------------
@@ -103,8 +104,16 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::RandomPerObject(const maxon::G
 	Term key;
 	if (mode == 4)
 	{
-		const maxon::Float64 userData = Setting(rsNode, "inuserdata", 0.0, what, label) iferr_return;
-		key = Term::Of(cinema::Vector(userData, 0.0, 1.0));
+		// The number set on the node, or what is wired into it (a user data node: redshift_scene_data.cpp).
+		const Term userData = Input(rsNode, "inuserdata", false, what, 0) iferr_return;
+		if (userData.IsConstant())
+		{
+			key = Term::Of(cinema::Vector(userData.value.x, 0.0, 1.0));
+		}
+		else
+		{
+			key = Combine(userData, Term::Number(0.0), Term::Number(1.0)) iferr_return;
+		}
 	}
 	else
 	{

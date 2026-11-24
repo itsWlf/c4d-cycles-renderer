@@ -13,6 +13,7 @@
 #include "../ids.h"
 #include "../materials/cycles_curves.h"
 #include "../nodespace/cycles_nodes.h"
+#include "../nodespace/object_link.h"
 #include "../nodespace/path_commands.h"
 #include "maxon/node_spaces.h"
 #include "maxon/nodeslib.h"
@@ -444,6 +445,152 @@ static maxon::Result<maxon::String> ImageNodeCommand(const maxon::String& comman
 		json.String("scheme", url.GetScheme().ToString());
 		json.String("path", url.GetPath());
 	}
+	json.EndObject();
+	return json.GetText();
+}
+
+// The bytes of an object's marker as hex, for a probe of what a link field's Uuid is made of.
+static maxon::String MarkerText(const cinema::BaseObject* op)
+{
+	void* data = nullptr;
+	maxon::Int32 size = 0;
+	op->GetMarker().GetMemory(data, size);
+	static const maxon::Char* const DIGITS = "0123456789abcdef";
+	maxon::String text;
+	const maxon::UChar* const bytes = static_cast<const maxon::UChar*>(data);
+	for (maxon::Int32 i = 0; bytes && i < size; ++i)
+	{
+		const maxon::Char pair[3] = { DIGITS[bytes[i] >> 4], DIGITS[bytes[i] & 15], 0 };
+		text += maxon::String(pair);
+	}
+	return text;
+}
+
+static const cinema::BaseObject* FindObjectNamed(const cinema::BaseObject* op, const maxon::String& name);
+
+// The first material of Cycles nodes of @p doc, or nullptr.
+static cinema::BaseMaterial* FirstCyclesMaterial(cinema::BaseDocument* doc)
+{
+	const maxon::Id space(CYCLES_NODESPACE_ID);
+	for (cinema::BaseMaterial* material = doc ? doc->GetFirstMaterial() : nullptr; material; material = material->GetNext())
+	{
+		if (material->IsInstanceOf(Mmaterial) && static_cast<const cinema::NodeMaterial*>(material)->HasSpace(space))
+			return material;
+	}
+	return nullptr;
+}
+
+// "objectlink probe <object>", "objectlink set <node id> [<object>]", "objectlink get <node id>" (ipr_testhook.h): a
+// setting of a Cycles node that links an object of the scene (nodespace/object_link.h), as far as a script cannot
+// reach it (it cannot drop an object into the field, and Python has no conversion between the field's Uuid and an object).
+static maxon::Result<maxon::String> ObjectLinkCommand(const maxon::String& argument)
+{
+	iferr_scope;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	cinema::BaseMaterial* const material = FirstCyclesMaterial(doc);
+	if (!material)
+		return "{\"problem\":\"the active document has no material of Cycles nodes\"}"_s;
+	maxon::String verb = argument;
+	maxon::String rest;
+	maxon::Int space = 0;
+	if (argument.Find(" "_s, &space))
+	{
+		verb = argument.GetLeftPart(space);
+		rest = argument.GetRightPart(space + 1);
+	}
+	JsonWriter json;
+	json.BeginObject();
+	json.String("material", material->GetName());
+	if (verb == "probe"_s)
+	{
+		// What the Uuid is made of, and what it finds again in the document and in a copy of it.
+		cinema::BaseObject* const op = const_cast<cinema::BaseObject*>(FindObjectNamed(doc->GetFirstObject(), rest));
+		if (!op)
+			return "{\"problem\":\"no object of that name in the active document\"}"_s;
+		const maxon::Uuid link = MakeObjectLink(material, op) iferr_return;
+		const maxon::Uuid again = MakeObjectLink(material, op) iferr_return;
+		json.String("uuid", link.ToString());
+		json.Bool("same_uuid_again", link.ToString() == again.ToString());
+		json.String("marker", MarkerText(op));
+		json.String("guid", maxon::String::UIntToString(op->GetGUID()));
+		const cinema::BaseObject* const back = FindLinkedObject(material, link) iferr_return;
+		json.Bool("back_is_object", back == op);
+		cinema::BaseDocument* copy = static_cast<cinema::BaseDocument*>(doc->GetClone(cinema::COPYFLAGS::NONE, nullptr));
+		if (copy)
+		{
+			const cinema::BaseObject* const twin = FindObjectNamed(copy->GetFirstObject(), rest);
+			const cinema::BaseObject* const inCopy = FindLinkedObject(FirstCyclesMaterial(copy), link) iferr_return;
+			json.Bool("copy_resolves", inCopy != nullptr);
+			json.Bool("copy_is_twin", inCopy && inCopy == twin);
+			json.String("copy_marker", twin ? MarkerText(twin) : maxon::String());
+			json.String("copy_guid", twin ? maxon::String::UIntToString(twin->GetGUID()) : maxon::String());
+			cinema::BaseDocument::Free(copy);
+		}
+		// Another object (a copy of it, in no document): another key.
+		cinema::BaseObject* loose = static_cast<cinema::BaseObject*>(op->GetClone(cinema::COPYFLAGS::NONE, nullptr));
+		if (loose)
+		{
+			iferr (const maxon::Uuid looseLink = MakeObjectLink(material, loose))
+			{
+				json.String("clone_problem", err.GetMessage());
+			}
+			else
+			{
+				json.String("clone_uuid", looseLink.ToString());
+				const cinema::BaseObject* const looseBack = FindLinkedObject(material, looseLink) iferr_return;
+				json.Bool("clone_resolves", looseBack != nullptr);
+			}
+			json.String("clone_marker", MarkerText(loose));
+			cinema::BaseObject::Free(loose);
+		}
+		// A key the material does not hold.
+		maxon::Uuid unknown;
+		unknown.CreateId() iferr_return;
+		const cinema::BaseObject* const unknownBack = FindLinkedObject(material, unknown) iferr_return;
+		json.Bool("unknown_resolves", unknownBack != nullptr);
+		json.EndObject();
+		return json.GetText();
+	}
+	if (verb != "set"_s && verb != "get"_s)
+		return "{\"problem\":\"objectlink probe <object> | set <node id> [<object>] | get <node id>\"}"_s;
+	maxon::String nodeName = rest;
+	maxon::String objectName;
+	if (verb == "set"_s && rest.Find(" "_s, &space))
+	{
+		nodeName = rest.GetLeftPart(space);
+		objectName = rest.GetRightPart(space + 1);
+	}
+	const maxon::nodes::NodesGraphModelRef model = static_cast<const cinema::NodeMaterial*>(material)->GetGraph(maxon::Id(CYCLES_NODESPACE_ID)) iferr_return;
+	if (!model)
+		return "{\"problem\":\"the material has no graph\"}"_s;
+	maxon::Id nodeId;
+	nodeId.Init(nodeName) iferr_return;
+	const maxon::GraphNode node = model.GetViewRoot().FindChild(nodeId) iferr_return;
+	if (!node.IsValid())
+		return "{\"problem\":\"no node of that id\"}"_s;
+	const maxon::GraphNode inputs = node.GetInputs() iferr_return;
+	maxon::GraphNode port = inputs.FindChild(maxon::Id("prop.object")) iferr_return;
+	if (!port.IsValid())
+		return "{\"problem\":\"the node has no prop.object\"}"_s;
+	if (verb == "set"_s)
+	{
+		cinema::BaseObject* op = nullptr;
+		if (objectName.IsPopulated())
+		{
+			op = const_cast<cinema::BaseObject*>(FindObjectNamed(doc->GetFirstObject(), objectName));
+			if (!op)
+				return "{\"problem\":\"no object of that name in the active document\"}"_s;
+		}
+		const maxon::Uuid link = MakeObjectLink(material, op) iferr_return;
+		maxon::GraphTransaction transaction = model.BeginTransaction() iferr_return;
+		port.SetPortValue(link) iferr_return;
+		transaction.Commit() iferr_return;
+		port = inputs.FindChild(maxon::Id("prop.object")) iferr_return;
+	}
+	const maxon::Uuid stored = port.GetEffectivePortValue<maxon::Uuid>().GetValueOr(maxon::Uuid()) iferr_return;
+	json.String("uuid", stored.IsEmpty() ? maxon::String() : stored.ToString());
+	const cinema::BaseObject* const found = FindLinkedObject(material, stored) iferr_return;
+	json.String("object", found ? maxon::String(found->GetName()) : maxon::String());
 	json.EndObject();
 	return json.GetText();
 }
@@ -971,9 +1118,9 @@ static maxon::String Execute(const maxon::String& commandLine)
 		}
 		return FormatString("{\"trace\":@,\"now\":@}", TakeIprTrace(), maxon::String::FloatToString(platform::UnixTime(), -1, 6));
 	}
-	else if (command == "curve"_s)
+	else if (command == "curve"_s || command == "objectlink"_s)
 	{
-		iferr (const maxon::String answer = CurveCommand(argument))
+		iferr (const maxon::String answer = (command == "curve"_s ? CurveCommand(argument) : ObjectLinkCommand(argument)))
 			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
 		return answer;
 	}

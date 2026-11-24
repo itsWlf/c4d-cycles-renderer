@@ -31,6 +31,7 @@
 #include "maxon/previewimageprovider.h"
 #include "maxon/spinlock.h"
 #include "maxon/splinemapper.h"
+#include "maxon/uuid.h"
 
 #include "../ids.h"
 #include "../materials/material_preview.h"
@@ -211,6 +212,8 @@ public:
 					break;
 				}
 				case 'u': port.SetType<maxon::Url>() iferr_return; break;
+				// A link to an object of the scene (object_link.h): empty at first.
+				case 'o': port.SetType<maxon::Uuid>() iferr_return; break;
 				case 'k':
 				{
 					port.SetType<maxon::SplineMapper>() iferr_return;

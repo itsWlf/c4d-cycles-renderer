@@ -82,6 +82,16 @@ static const maxon::Char* GetChoice(const cinema::BaseContainer& data, const Cho
 	return choice.options[index];
 }
 
+const maxon::Char* GetChoiceName(const cinema::BaseContainer& data, maxon::Int32 id)
+{
+	for (const ChoiceSetting& choice : CHOICES)
+	{
+		if (choice.id == id)
+			return GetChoice(data, choice);
+	}
+	return nullptr;
+}
+
 // The render passes a final frame can deliver next to the picture. The name is Blender's own
 // name of the pass, and the name of the layer in the Picture Viewer; the property switches
 // the pass on, relative to Blender's view layer.

@@ -3,7 +3,8 @@
 // math, colour, utility and texture nodes with a counterpart in Blender (among them the
 // inverse trigonometry, bias and gain, the vector and colour math, Color Composite and Color Layer,
 // Fresnel, State, Ramp and Scalar Ramp, TriPlanar, UV Projection, MatCap, Camera Map and others),
-// each measured against Redshift's own render. The list, with what each becomes, is in
+// each measured against Redshift's own render, and the nodes that read data of the scene by name
+// (user data, vertex and point attributes). The list, with what each becomes, is in
 // docs/reference/c4d-sdk.md, "Redshift nodes".
 
 #ifndef CYCLESRENDER_REDSHIFT_NODES_H__
@@ -101,9 +102,35 @@ private:
 	/// The look-alikes (redshift_lookalikes.cpp): Jitter, Random Color Switch, Brick, Flakes. Each
 	/// renders the same kind of picture as Redshift without Redshift's own random numbers, and says so.
 	maxon::Result<NodeOutput> LookAlikes(const Source& source, const maxon::String& name, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth, maxon::Bool& handled);
+	/// The nodes that read data of the scene by a name (redshift_scene_data.cpp): the Color, Scalar,
+	/// Integer and Vector User Data nodes (what is known per particle and per clone, an object's
+	/// Object ID and display colour, and its own user data), the Vertex Attribute and the Point
+	/// Attribute node (a mesh's vertex maps and vertex colours).
+	maxon::Result<NodeOutput> SceneDataNodes(const Source& source, const maxon::String& name, const maxon::Char* what, maxon::Bool& handled);
+	/// What a user data node reads: as a colour or vector (@p size 3) or a number (1), as one number
+	/// (a colour's mean), and its alpha. @p found is false when its default is to be used.
+	struct SceneValue
+	{
+		Term value;
+		Term number;
+		Term alpha;
+		maxon::Int size = 0;
+		maxon::Bool found = false;
+	};
+	maxon::Result<SceneValue> ReadUserData(const maxon::GraphNode& rsNode, const maxon::Char* what);
+	/// The output @p socket ("Color", "Vector", "Fac") of an Attribute node for the attribute @p name:
+	/// with @p both read from the geometry and from the instancer and added up (a missing attribute
+	/// reads as 0, so one material is right on a point cloud and on instances), else from the
+	/// instancer alone (which falls back to the object's property).
+	maxon::Result<Term> AttributeTerm(const maxon::String& name, const maxon::Char* socket, maxon::Bool both);
+	/// The alpha of the colour @p source gives, for a Color Splitter's alpha output: of a Color User
+	/// Data node the alpha of what it reads, of a Vertex or Point Attribute node the vertex colour's.
+	/// @p known turns false for any other node: the alpha of its colour is not followed.
+	maxon::Result<Term> AlphaOf(const Source& source, const maxon::Char* what, maxon::Bool& known);
 	/// A random number in 0..1 per object for @p seed, as the random nodes' "Input ID Mode" says:
-	/// the object's name key, its Object ID, or the node's User Data number (the same number and
-	/// seed give the same value, as in Redshift).
+	/// the object's name key, its Object ID, or the node's User Data number, which may be wired
+	/// (a user data node reading a particle's id: one number per particle); the same number and
+	/// seed give the same value, as in Redshift.
 	maxon::Result<Term> RandomPerObject(const maxon::GraphNode& rsNode, maxon::Float64 seed, const maxon::Char* what, const maxon::Char* label);
 	/// Redshift's colour jitter (measured): hue, saturation and value of the colour in linear
 	/// Rec.709 moved by the node's ranges at the random numbers of their seeds.

@@ -36,6 +36,16 @@
 #define ConstDescIDLevel(...) ConstDescID(DescLevel(__VA_ARGS__))
 #endif
 
+// The item tree, the list Cinema 4D's own field lists are made of (customgui_itemtree.h): the custom
+// GUI exists in all four versions, but what a plugin needs to use it (the data of a list entry, the
+// message its clicks arrive by: customgui_itemtree_utils.h) is declared from the 2027 SDK on. The
+// Imager tab of the Cycles Camera tag shows its layers in one where it can (tags/imager_tab.cpp).
+#if API_VERSION >= 2027000
+#define CYCLESRENDER_ITEM_TREE 1
+#else
+#define CYCLESRENDER_ITEM_TREE 0
+#endif
+
 namespace cyclesrender
 {
 

@@ -82,4 +82,14 @@ CONTAINER Tcyclescamera
 			REAL CYCLESCAMERA_LENS_CYLINDER_RADIUS { MIN 0.00001; STEP 0.1; }
 		}
 	}
+
+	// The Imager tab. Below its switch everything is made at run time (tags/imager_tab.cpp), in this
+	// order: the menu "Add Effect", the list of layers, the menu "Layer", the buttons, and the
+	// settings of every layer from the table of Blender's effects (tags/imager_effects.h), of which
+	// the selected layer's show.
+	GROUP CYCLESCAMERA_GROUP_IMAGER
+	{
+		BOOL CYCLESCAMERA_IMAGER_ENABLE { ANIM OFF; }
+		SEPARATOR { LINE; }
+	}
 }

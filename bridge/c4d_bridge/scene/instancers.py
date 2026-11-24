@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Instancer builder: many copies of one mesh, or of several meshes that belong together, each copy
-with its own matrix, colour and numbers.
+with its own matrix, colour, numbers and named attributes.
 
 One instancer is three datablocks: the prototype object (the mesh with its materials, in no
 collection, so it does not render by itself), a mesh of loose points carrying one matrix, one
-colour and the named numbers (`floats`) per instance, and the object that shows them through a
-Geometry Nodes modifier. The points' attributes become the instances' own.
+colour, the named numbers (`floats`) and the named attributes (`attributes`: numbers, vectors,
+colours) per instance, and the object that shows them through a Geometry Nodes modifier. The points'
+attributes become the instances' own, which a material reads with an Attribute node of type
+INSTANCER. `properties` are custom properties of the object that shows the instances: the same node
+finds them where an instance has no attribute of that name, so they hold what all copies share.
 
 With `parts` (since 0.3.0) a copy shows several meshes, each at its own place in the copy. They
 are joined into one prototype, so that Blender has one instance per copy and not one per copy and
@@ -21,8 +24,8 @@ import bpy
 import numpy as np
 
 from ..errors import RequestError
-from .common import array_from, matrix_from
-from .objects import assign_materials, set_visibility
+from .common import array_from, give_name, matrix_from, named_attributes
+from .objects import assign_materials, set_properties, set_visibility
 
 # Not "instance_transform": that is the name of the instances' own built-in attribute, and a point
 # attribute of that name is dropped when the points become instances.
@@ -47,6 +50,7 @@ def build_instancer(scene, item, blobs):
         if len(values) != count or not entry.get("name") or entry["name"] in (TRANSFORM, COLOR):
             raise RequestError("bad_request", f"instancer {item['id']!r}: float {entry.get('name')!r} needs one value per instance and a name of its own")
         floats[entry["name"]] = values
+    attributes = named_attributes(item, blobs, count, [TRANSFORM, COLOR, "position", *floats])
 
     parts = scene.instancers.get(item["id"])
     if parts is not None and parts["joined"] != ("parts" in item):
@@ -56,6 +60,8 @@ def build_instancer(scene, item, blobs):
     if parts is None:
         parts = _create(scene, item["id"], None if "parts" in item else sources[0][0])
     points, holder = parts["points"], parts["holder"]
+    # Cryptomatte names an instance after the object it instances: the prototype.
+    give_name(parts["prototype"], item.get("name"))
     if "parts" in item:
         _join(scene, item, parts, sources)
     else:
@@ -64,6 +70,7 @@ def build_instancer(scene, item, blobs):
             prototype.data = sources[0][0]
         assign_materials(scene, prototype, item)
     set_visibility(holder, item)
+    set_properties(holder, item)
 
     if len(points.vertices) != count:
         points.clear_geometry()
@@ -79,8 +86,15 @@ def build_instancer(scene, item, blobs):
     # Point attributes become the instances' own, which an Attribute node of type INSTANCER reads.
     for name, values in floats.items():
         _attribute(points, name, 'FLOAT').data.foreach_set("value", values)
+    kept = set(floats)
+    for name, data_type, field, values in attributes:
+        existing = points.attributes.get(name)
+        if existing is not None and existing.data_type != data_type:
+            points.attributes.remove(existing)
+        _attribute(points, name, data_type).data.foreach_set(field, values)
+        kept.add(name)
     stale = [a.name for a in points.attributes
-             if a.name not in floats and a.name not in (TRANSFORM, COLOR) and not a.is_required and not a.is_internal]
+             if a.name not in kept and a.name not in (TRANSFORM, COLOR) and not a.is_required and not a.is_internal]
     for name in stale:
         points.attributes.remove(points.attributes[name])
     points.update()

@@ -8,6 +8,7 @@
 #include "maxon/atomictypes.h"
 
 #include "../scene/camera_export.h"
+#include "../scene/imager_export.h"
 #include "../scene/scene_exporter.h"
 #include "../session/frame_reader.h"
 #include "../session/frame_watcher.h"
@@ -415,7 +416,8 @@ public:
 		LINKING = 8,							///< items came or went while a light has an include or exclude list
 		LIGHT_GONE = 9,						///< a light of the last whole export is gone
 		MESH_NOT_HELD = 10,				///< a mesh kept as Blender holds it was not held (never seen)
-		ENVIRONMENT = 11					///< an environment the world was written from is gone, switched off, asks for other roles, or the world reads other images
+		ENVIRONMENT = 11,					///< an environment the world was written from is gone, switched off, asks for other roles, or the world reads other images
+		NAMED_GONE = 12						///< an object a node of a material names (an `empty` of the last whole export) is gone
 	} MAXON_ENUM_LIST_CLASS(WHOLE);
 	WHOLE GetLastWholeReason() const { const IprLocked held(_lock); return _lastWhole; }
 	/// For tests: the time after which a step that collects may run again counts from now (0: at once);
@@ -452,7 +454,8 @@ private:
 	maxon::Result<void> SyncView(cinema::BaseDocument* doc);
 	/// FollowLights() without its checks.
 	maxon::Result<void> SyncLights(cinema::BaseDocument* doc);
-	/// Remembers the lights of the export that was just written (FollowLights).
+	/// Remembers the lights of the export that was just written (FollowLights), its world when a step can
+	/// write it alone, and the objects its materials' nodes name (their `empty` items, written by every step).
 	maxon::Result<void> NoteLights(SceneExporter& exporter);
 	/// The document's change counters as the gate and FollowStep() compare them.
 	struct DocumentCounters
@@ -576,6 +579,28 @@ private:
 		LightLinking linking;
 	};
 	maxon::BaseArray<FollowedLight> _lights;
+	/// An object a node of a material names, found again through a link, and its `empty` item
+	/// (SceneExporter::GetNamedObjects): written again at its place by every step, as a light is.
+	struct FollowedEmpty
+	{
+		FollowedEmpty() = default;
+		FollowedEmpty(FollowedEmpty&& other) : link(other.link), id(std::move(other.id)) { other.link = nullptr; }
+		FollowedEmpty& operator =(FollowedEmpty&& other)
+		{
+			if (this != &other)
+			{
+				cinema::BaseLink::Free(link);
+				link = other.link;
+				other.link = nullptr;
+				id = std::move(other.id);
+			}
+			return *this;
+		}
+		~FollowedEmpty() { cinema::BaseLink::Free(link); }
+		cinema::BaseLink* link = nullptr;
+		maxon::String id;
+	};
+	maxon::BaseArray<FollowedEmpty> _empties;
 	/// The world of the last whole export (SceneExporter::GetWrittenWorld) when a step can write it again by
 	/// itself: the Cycles Environments of its three roles found again through links (nullptr: the role is empty).
 	maxon::Bool _worldAlone = false;
@@ -679,6 +704,7 @@ private:
 	maxon::Bool _cameraLocked = false;
 	maxon::Bool _hasLockedCamera = false;
 	CameraValues _lockedCamera;						///< while locked: the camera as it was
+	ImagerChain _lockedImager;						///< and its effects (the Imager tab of its Cycles Camera tag)
 	maxon::Bool _windowShown = false;
 
 	maxon::BaseArray<maxon::String> _reportedWarnings;

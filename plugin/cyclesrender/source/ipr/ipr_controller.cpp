@@ -284,6 +284,7 @@ void IprController::Fail(const maxon::String& message)
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	_empties.Reset();
 	ForgetWorld();
 	ForgetFollowed();
 	_sentView = "?"_s;
@@ -408,6 +409,7 @@ void IprController::Stop()
 	_sceneState.Reset();
 	_cameraState.Reset();
 	_lights.Reset();
+	_empties.Reset();
 	ForgetWorld();
 	ForgetFollowed();
 	_sentView = "?"_s;
@@ -487,6 +489,8 @@ void IprController::SetCameraLock(maxon::Bool locked)
 	if (camera)
 	{
 		_lockedCamera = CameraValues::Read(camera);
+		iferr (_lockedImager = ImagerChain::Read(camera))
+			_lockedImager = ImagerChain();
 		_hasLockedCamera = true;
 	}
 }
@@ -969,9 +973,11 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 	// A locked camera is a set of values that never changes (SetCameraLock); it is sent like
 	// any other, which changes nothing in Blender unless the image changed its shape.
 	CameraValues camera;
+	ImagerChain imager;
 	if (_cameraLocked && _hasLockedCamera)
 	{
 		camera = _lockedCamera;
+		imager.CopyFrom(_lockedImager) iferr_return;
 	}
 	else
 	{
@@ -981,6 +987,35 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 		if (!object)
 			return maxon::OK;
 		camera = CameraValues::Read(object);
+		imager = ImagerChain::Read(object) iferr_return;
+	}
+
+	// The camera's effects (the Imager tab of its Cycles Camera tag) are an item of their own, sent
+	// alone like the camera, whatever the camera itself is sent as: a changed value or opacity is one
+	// small request, which Blender shows without starting the render over (the bridge sets it on the
+	// compositor it has). Without effects, and with none sent before, nothing is made here.
+	if (!imager.IsEmpty() || _cameraState.Holds(ImagerItemId()))
+	{
+		IprTask* effects = NewObj(IprTask) iferr_return;
+		finally
+		{
+			DeleteObj(effects);
+		};
+		effects->kind = IprTask::KIND::SCENE;
+		effects->scene = NewObj(SceneWriter, false) iferr_return;
+		const maxon::Bool written = ExportImager(*effects->scene, imager, DocumentColors(doc), _exportSettings.blenderVersion) iferr_return;
+		if (!written)
+			effects->scene->RemoveItem(ImagerItemId());
+		for (const maxon::String& warning : effects->scene->GetWarnings())
+			ReportOnce(warning);
+		const maxon::Int changes = effects->scene->KeepChanges(_cameraState, true) iferr_return;
+		if (changes > 0)
+		{
+			TraceIpr("posted_imager");
+			_worker->Post(effects);
+			effects = nullptr;
+			ArmLatency(0.0);
+		}
 	}
 
 	// The quick way: place Blender's own view. Nothing in Blender's scene changes then.
@@ -1329,6 +1364,18 @@ maxon::Result<void> IprController::NoteLights(SceneExporter& exporter)
 		// (Its objects are compared for being there only; the links find them again.)
 		_writtenWorld = world;
 		_worldAlone = true;
+	}
+	// The objects nodes name follow the same way: each one's `empty` is written again by every step.
+	_empties.Reset();
+	for (const NamedObject& named : exporter.GetNamedObjects())
+	{
+		FollowedEmpty followed;
+		followed.link = cinema::BaseLink::Alloc();
+		if (!followed.link)
+			return maxon::OutOfMemoryError(MAXON_SOURCE_LOCATION);
+		followed.link->SetLink(named.object);
+		followed.id = named.id;
+		_empties.Append(std::move(followed)) iferr_return;
 	}
 	maxon::BaseArray<WrittenLight> written = exporter.TakeWrittenLights();
 	for (WrittenLight& light : written)
@@ -2077,6 +2124,26 @@ maxon::Result<IprController::ALONE> IprController::SyncAlone(cinema::BaseDocumen
 				return Whole(WHOLE::ENVIRONMENT);
 			Waits(WHOLE::ENVIRONMENT);
 		}
+	}
+	// The objects nodes of the materials name: each one's `empty` at its place (SceneExporter::WriteEmptyAlone), whatever
+	// moved it (itself, an object above it) and whatever it is (a null, a camera, an object that renders nothing).
+	// Unchanged ones are dropped below. One that is gone changes what its material's node gives: the whole export's.
+	maxon::Bool namedLost = false;
+	for (const FollowedEmpty& named : _empties)
+	{
+		const cinema::BaseObject* const object = static_cast<const cinema::BaseObject*>(named.link->GetLink(doc, Obase));
+		if (!object)
+		{
+			namedLost = true;
+			continue;
+		}
+		SceneExporter::WriteEmptyAlone(*task->scene, coords, named.id, object);
+	}
+	if (namedLost)
+	{
+		if (!manual)
+			return Whole(WHOLE::NAMED_GONE);
+		Waits(WHOLE::NAMED_GONE);
 	}
 	for (const maxon::String& warning : task->scene->GetWarnings())
 		ReportOnce(warning);

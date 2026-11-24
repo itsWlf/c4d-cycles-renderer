@@ -45,7 +45,17 @@ namespace cyclesrender
 /// does with what the node space names: a node of NODESPACE::IMAGENODEASSETID with the file in
 /// its IMAGENODEPORTS; "asset", "ports", "ports_found", "node"), pathcommand relative|absolute
 /// <node id> (runs that button's command through maxon::CommandClasses: "result") and path
-/// <node id> (both also give the file's "scheme" and "path"). And add material|camera|camera_tag|
+/// <node id> (both also give the file's "scheme" and "path"). A setting that links an object of the scene
+/// (kind 'o', nodespace/object_link.h; a script can neither drop an object into the field nor convert
+/// between it and an object), always in the first material of Cycles nodes of the active document:
+/// objectlink set <node id> [<object name>] sets the "prop.object" of the node with that id as a drop of
+/// the object does (the material keeps the link; no name: empties it), objectlink get <node id> reads it,
+/// both answering {"material", "uuid", "object" (the name of the object it finds, empty for none)};
+/// objectlink probe <object name> answers what the link of that object is made of and finds: {"material",
+/// "uuid", "same_uuid_again" (asked twice), "marker" (the object's marker as hex), "guid", "back_is_object",
+/// "copy_resolves" and "copy_is_twin" (in a GetClone of the document: found, and the copy's object of that
+/// name), "copy_marker", "copy_guid", "clone_uuid" (or "clone_problem"), "clone_marker", "clone_resolves" (a
+/// copy of the object alone, in no document), "unknown_resolves" (a new Uuid)}. And add material|camera|camera_tag|
 /// object_tag|light|light_tag|fog|environment|world_material|scatter|proxy runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"};
 /// add follow runs FollowAddedCameras() as the message plugin does after a change: {"views_set", "switches"}.
 /// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render

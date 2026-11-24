@@ -18,7 +18,7 @@ import bpy
 from . import BRIDGE_VERSION, final, protocol
 from .errors import RequestError
 from .render import devices, settings
-from .scene import Scene
+from .scene import Scene, compositor
 
 CONNECT_TIMEOUT_SECONDS = 60.0
 
@@ -219,8 +219,24 @@ class Bridge:
 
     def handle_scene(self, header, blobs):
         count, warnings = self.scene.apply(header, blobs)
+        action = self.scene.compositor_action
+        reply = {"count": count, "warnings": warnings, "libraries": len(bpy.data.libraries),
+                 "node_groups": len(bpy.data.node_groups)}
+        if action:
+            reply["compositor"] = action
+        if self.viewport is not None and self.viewport.ready:
+            self.viewport.set_compositor(compositor.active(self.scene))
+            if action == "updated" and count == 1 and not header.get("clear") and not header.get("remove"):
+                # Only values of the compositor changed: Blender shows them at the next redraw and the
+                # render's samples stay (measured). The picture is published, the progress is left alone.
+                self.viewport.redraw()
+                return reply, ()
+            if action in ("built", "removed"):
+                # Another tree does not always start the render over, and Eevee's samples are counted
+                # by its redraws: make it start over, so that the progress is the new picture's.
+                bpy.context.scene.update_tag()
         self._scene_changed()
-        return {"count": count, "warnings": warnings, "libraries": len(bpy.data.libraries)}, ()
+        return reply, ()
 
     def handle_blend_info(self, header, blobs):
         from .scene import proxies

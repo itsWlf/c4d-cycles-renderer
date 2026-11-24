@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// A Blender shader node graph under construction: the plugin's material translators describe
-// nodes and links here, in Blender's own names, and the bridge builds them as they are.
+// A Blender node graph under construction: the plugin's material translators (and the Imager tab's
+// compositor, scene/imager_export.cpp) describe nodes and links here, in Blender's own names, and
+// the bridge builds them as they are.
 //
 // Format of the result: protocol/protocol.md, "Node graphs".
 
@@ -39,6 +40,10 @@ public:
 	/// Adds a node of a Blender node type such as "ShaderNodeTexImage".
 	maxon::Result<maxon::Int> Add(const maxon::Char* type);
 
+	/// For a group node of the compositor: the node group of Blender's bundled assets it shows, by
+	/// Blender's name (protocol.md, "The compositor").
+	void SetGroup(maxon::Int node, const maxon::String& name);
+
 	/// Sets a property of the node itself (not a socket), e.g. "interpolation".
 	void SetProperty(maxon::Int node, const maxon::Char* name, const maxon::String& value);
 	void SetProperty(maxon::Int node, const maxon::Char* name, maxon::Bool value);
@@ -69,6 +74,7 @@ private:
 	struct Node
 	{
 		maxon::String type;
+		maxon::String group;
 		JsonWriter properties;
 		JsonWriter inputs;
 		JsonWriter outputs;

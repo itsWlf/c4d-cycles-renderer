@@ -1085,6 +1085,7 @@ static const CyclesSocket TEXCOORD_OUTPUTS[] =
 
 static const CyclesProperty TEXCOORD_PROPERTIES[] =
 {
+	{ "object", "prop.object", "Object", 'o', "", "", 0.0, 500 },
 	{ "from_instancer", "prop.from_instancer", "From Instancer", 'b', "", "", 0.0, 500 },
 };
 
@@ -1653,7 +1654,7 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeTangent", "com.wolfnimations.cyclesrender.node.tangent", "Tangent", "INPUT", nullptr, 0, TANGENT_OUTPUTS, 1, TANGENT_PROPERTIES, 3, 500 },
 	{ "ShaderNodeTexBrick", "com.wolfnimations.cyclesrender.node.texbrick", "Brick Texture", "TEXTURE", TEXBRICK_INPUTS, 10, TEXBRICK_OUTPUTS, 2, TEXBRICK_PROPERTIES, 4, 500 },
 	{ "ShaderNodeTexChecker", "com.wolfnimations.cyclesrender.node.texchecker", "Checker Texture", "TEXTURE", TEXCHECKER_INPUTS, 4, TEXCHECKER_OUTPUTS, 2, nullptr, 0, 500 },
-	{ "ShaderNodeTexCoord", "com.wolfnimations.cyclesrender.node.texcoord", "Texture Coordinate", "INPUT", nullptr, 0, TEXCOORD_OUTPUTS, 7, TEXCOORD_PROPERTIES, 1, 500 },
+	{ "ShaderNodeTexCoord", "com.wolfnimations.cyclesrender.node.texcoord", "Texture Coordinate", "INPUT", nullptr, 0, TEXCOORD_OUTPUTS, 7, TEXCOORD_PROPERTIES, 2, 500 },
 	{ "ShaderNodeTexEnvironment", "com.wolfnimations.cyclesrender.node.texenvironment", "Environment Texture", "TEXTURE", TEXENVIRONMENT_INPUTS, 1, TEXENVIRONMENT_OUTPUTS, 1, TEXENVIRONMENT_PROPERTIES, 6, 500 },
 	{ "ShaderNodeTexGabor", "com.wolfnimations.cyclesrender.node.texgabor", "Gabor Texture", "TEXTURE", TEXGABOR_INPUTS, 6, TEXGABOR_OUTPUTS, 3, TEXGABOR_PROPERTIES, 1, 500 },
 	{ "ShaderNodeTexGradient", "com.wolfnimations.cyclesrender.node.texgradient", "Gradient Texture", "TEXTURE", TEXGRADIENT_INPUTS, 1, TEXGRADIENT_OUTPUTS, 2, TEXGRADIENT_PROPERTIES, 1, 500 },

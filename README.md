@@ -106,7 +106,7 @@ The second command starts Cinema 4D with the freshly built plugin and the bridge
 ## Licence
 
 - `bridge/` is licensed under the **GNU General Public License v3.0 or later** ([bridge/LICENSE](bridge/LICENSE)), because it runs inside Blender and uses its Python API.
-- Everything else (`plugin/`, `protocol/`, `tools/`, `docs/`, `examples/`) is licensed under the **Apache License 2.0** ([LICENSE](LICENSE)). The exception is the two scripts in `tools/` that run inside Blender (`dump_blender_nodes.py`, `make_native_placeholder.py`), which are GPL-3.0-or-later like the bridge.
+- Everything else (`plugin/`, `protocol/`, `tools/`, `docs/`, `examples/`) is licensed under the **Apache License 2.0** ([LICENSE](LICENSE)). The exception is the three scripts in `tools/` that run inside Blender (`dump_blender_nodes.py`, `dump_blender_effects.py`, `make_native_placeholder.py`), which are GPL-3.0-or-later like the bridge.
 
 Every source file names its licence in its first lines (`SPDX-License-Identifier`). The plugin and the bridge are separate programs that only exchange data.
 

@@ -11,6 +11,7 @@ import bpy
 
 from ..errors import RequestError
 from . import native
+from .common import give_name
 
 
 def build_image(scene, item, blobs):
@@ -53,6 +54,7 @@ def build_material(scene, item, blobs):
     if material is None:
         material = bpy.data.materials.new(item["id"])
         scene.materials[item["id"]] = material
+    give_name(material, item.get("name"))
     if material.node_tree is None:
         material.use_nodes = True
     build_nodes(scene, material.node_tree, item.get("nodes", ()), item.get("links", ()), item["id"])
@@ -69,6 +71,7 @@ def build_nodes(scene, tree, nodes, links, owner):
     """
     tree.nodes.clear()
     made = {}
+    named = {}      # node name -> id of the item whose object it names (resolve_objects)
     for spec in nodes:
         try:
             node = tree.nodes.new(spec["type"])
@@ -80,6 +83,10 @@ def build_nodes(scene, tree, nodes, links, owner):
         for name, value in spec.get("props", {}).items():
             if name == "image":
                 node.image = scene.images.get(value)
+            elif name == "object":
+                if not hasattr(node, "object") or not isinstance(value, str):
+                    raise RequestError("bad_request", f"{owner}/{spec['name']}: 'object' needs a node that names an object, and an item id")
+                named[spec["name"]] = value
             elif name == "color_ramp":
                 _set_ramp(node, value, f"{owner}/{spec['name']}")
             elif name == "mapping":
@@ -99,6 +106,33 @@ def build_nodes(scene, tree, nodes, links, owner):
             raise RequestError("bad_request", f"{owner!r}: a link names the unknown node {missing}") from missing
         tree.links.new(_find_socket(source.outputs, from_socket, f"{owner}/{from_node}"),
                        _find_socket(target.inputs, to_socket, f"{owner}/{to_node}"))
+    # The objects the nodes name are set once the whole request is built (resolve_objects): their items may
+    # come later in it.
+    if named:
+        scene.node_objects[owner] = (tree, named)
+    else:
+        scene.node_objects.pop(owner, None)
+
+
+def resolve_objects(scene):
+    """After every request: each node that names an object (the property `object`, the id of an `empty` or any
+    other item that is an object in Blender) gets that object, whatever the order the items came in. An id
+    the bridge does not hold leaves the node without an object, with a warning."""
+    for owner, (tree, named) in list(scene.node_objects.items()):
+        try:
+            nodes = tree.nodes
+        except ReferenceError:
+            del scene.node_objects[owner]   # the material or world went with its tree
+            continue
+        for node_name, item_id in named.items():
+            node = nodes.get(node_name)
+            if node is None:
+                continue
+            obj = scene.objects.get(item_id)
+            if obj is None:
+                scene.warn(f"{owner}/{node_name}: names the object {item_id!r}, which was not sent; the node has none.")
+            if node.object != obj:
+                node.object = obj
 
 
 # Numbers that only Blender knows: {"image": "<image id>", "is": "<what>"} stands for a property of

@@ -51,8 +51,12 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 
 /// The same for a graph that is at hand without its material (a preview is asked for a graph).
 /// @param[in] materialName  For the warnings.
+/// @param[in] material      The material the graph belongs to, which keeps the links of settings that name an
+///                          object of the scene (nodespace/object_link.h); without it such a setting is written
+///                          as if it named none.
 maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, NodeGraph& graph, const maxon::GraphModelRef& model,
-	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world = nullptr);
+	const maxon::String& materialName, NodeOutput& surface, NodeOutput& displacement, CyclesMaterialSettings& settings, CyclesWorldOutputs* world = nullptr,
+	const cinema::BaseMaterial* material = nullptr);
 
 /// Whether @p material is a world material: a material of Cycles nodes whose graph has a World Output node.
 maxon::Bool IsCyclesWorldMaterial(const cinema::BaseMaterial* material);

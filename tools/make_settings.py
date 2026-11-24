@@ -32,6 +32,7 @@ Each entry:
     C(id, SYMBOL, label, default index, [(SUFFIX, label, Blender identifier), ...], path)
     group(id, SYMBOL, label, [entries], open=..., engine=...)   a foldable group; top level: a tab
     row(a, b)                                       two entries side by side
+    filename(id, SYMBOL, label)                     a file to save to, read by the plugin (its own row)
 Options:
     path2    a second Blender property that takes the same value
     since    the first supported Blender that has the property ("5.0" when left out)
@@ -80,6 +81,11 @@ def text(id, symbol, label):
     return {"kind": "TEXT", "id": id, "symbol": symbol, "label": label, "engine": None, "enable": None}
 
 
+def filename(id, symbol, label, enable=None):
+    """A file to save to (Cinema 4D's file field with its "..." button); read by the plugin, never sent as a property."""
+    return {"kind": "FILENAME", "id": id, "symbol": symbol, "label": label, "engine": None, "enable": enable}
+
+
 def group(id, symbol, label, children, open=True, engine=None, advanced=False):
     return {"kind": "GROUP", "id": id, "symbol": symbol, "label": label, "children": children, "open": open,
             "engine": engine, "enable": None, "advanced": advanced}
@@ -112,6 +118,26 @@ def passes(entries):
     return [{"kind": "PASS", "id": entry[0], "symbol": "CYCLES_PASS_" + entry[1], "label": entry[2],
              "engine": entry[3] if len(entry) > 3 else None, "enable": None}
             for entry in entries]
+
+
+# The same passes for the file Blender writes (the Output tab, F6 of 0.3.0): the id of a pass's
+# switch for the file is its Picture Viewer switch's plus FILE_PASS_OFFSET (1700 + n -> 1870 + n).
+FILE_PASS_OFFSET = 170
+
+
+def file_passes(entries):
+    return [{"kind": "PASS", "id": entry[0] + FILE_PASS_OFFSET, "symbol": "CYCLES_FILE_PASS_" + entry[1], "label": entry[2],
+             "engine": entry[3] if len(entry) > 3 else None, "enable": ("CYCLES_FILE_WRITE", 1)}
+            for entry in entries]
+
+
+# Blender's EXR codecs (image_settings.exr_codec), in an order of the plugin's own: the position is
+# what a scene stores, so a new one goes at the end. HTJ2K came with Blender 5.1 (5.0 keeps its own
+# choice, and the bridge's warning says so). Measured 2026-11-24 on 5.0.0 to 5.3.0.
+EXR_CODECS = [("NONE", "None", "NONE"), ("ZIP", "ZIP (Lossless)", "ZIP"), ("PIZ", "PIZ (Lossless)", "PIZ"), ("DWAA", "DWAA (Lossy)", "DWAA"),
+              ("DWAB", "DWAB (Lossy)", "DWAB"), ("ZIPS", "ZIPS (Lossless)", "ZIPS"), ("RLE", "RLE (Lossless)", "RLE"), ("PXR24", "Pxr24 (Lossy)", "PXR24"),
+              ("B44", "B44 (Lossy)", "B44"), ("B44A", "B44A (Lossy)", "B44A"), ("HTJ2K", "HTJ2K (Lossless, Blender 5.1)", "HTJ2K")]
+FILE_ON = ("CYCLES_FILE_WRITE", 1)
 
 
 POOLS = [(size, size + " MB", size) for size in ("16", "32", "64", "128", "256", "512", "1024")]
@@ -436,6 +462,29 @@ PAGE = [
                 F(1854, "CYCLES_OUTPUT_ASPECT_Y", "Y", 1.0, None, min=1.0, max=200.0, step=0.1)),
             text(1856, "CYCLES_OUTPUT_NOTE", "Width, Height and Pixel Aspect of Cinema 4D's Output page, in Blender's terms."),
         ]),
+        # A file Blender writes itself from the render it just made, beside the picture and the passes
+        # the Picture Viewer gets (0.3.0, F6; the maintainer: "an option to export directly from the
+        # Blender render ... that aren't completely supported going through the cinema picture viewer
+        # like the cryptomatte passes. You can select which passes are exported"). Read by the plugin
+        # (videopost/file_output.cpp), never sent as properties: path None. A multilayer OpenEXR, by
+        # Blender's File Output node; the defaults are those of Blender's render output for that format.
+        group(2202, "CYCLES_GROUP_FILE", "Files Written by Blender", [
+            B(1860, "CYCLES_FILE_WRITE", "Write Files from Blender", False, None),
+            filename(1861, "CYCLES_FILE_PATH", "File", enable=FILE_ON),
+            row(C(1862, "CYCLES_FILE_DEPTH", "Color Depth", 1, [("HALF", "Float (Half)", "16"), ("FULL", "Float (Full)", "32")], None, enable=FILE_ON),
+                C(1863, "CYCLES_FILE_CODEC", "Codec", 1, EXR_CODECS, None, enable=FILE_ON)),
+            text(1857, "CYCLES_FILE_NOTE", "Multilayer OpenEXR. Tokens and the frame number as on Cinema 4D's Output page; final renders only."),
+            group(2203, "CYCLES_GROUP_FILE_CRYPTOMATTE", "Cryptomatte", [
+                row(B(1864, "CYCLES_FILE_CRYPTO_OBJECT", "Object", False, None, enable=FILE_ON),
+                    B(1865, "CYCLES_FILE_CRYPTO_MATERIAL", "Material", False, None, enable=FILE_ON)),
+                I(1866, "CYCLES_FILE_CRYPTO_LEVELS", "Levels", 6, None, min=2, max=16, enable=FILE_ON),
+            ]),
+            group(2204, "CYCLES_GROUP_FILE_PASSES", "Passes", [
+                B(1869, "CYCLES_FILE_COMBINED", "Combined", True, None, enable=FILE_ON),
+                group(2205, "CYCLES_GROUP_FILE_PASSES_DATA", "Data", file_passes(DATA_PASSES), open=False),
+                group(2206, "CYCLES_GROUP_FILE_PASSES_LIGHT", "Light", file_passes(LIGHT_PASSES), open=False),
+            ]),
+        ]),
     ]),
 
 ]
@@ -493,7 +542,7 @@ def group_body(children, depth):
     for child in children:
         # A render pass is a checkbox of its own row, and some are hidden for one engine: outside a
         # grid hiding one shifts nothing.
-        if child["kind"] in ("GROUP", "TEXT", "PASS"):
+        if child["kind"] in ("GROUP", "TEXT", "PASS", "FILENAME"):
             flush()
             out.append(res_entry(child, depth))
             continue
@@ -534,6 +583,8 @@ def res_entry(entry, depth):
         return f"{tab}COLOR {symbol} {{ ANIM OFF; }}\n"
     if kind == "TEXT":
         return f"{tab}STATICTEXT {symbol} {{ }}\n"
+    if kind == "FILENAME":
+        return f"{tab}FILENAME {symbol} {{ ANIM OFF; SAVE; }}\n"
     if kind == "CHOICE":
         options = "".join(f"{tab}\t\t{symbol}_{suffix};\n" for suffix, _label, _name in entry["options"])
         return f"{tab}LONG {symbol}\n{tab}{{\n{tab}\tANIM OFF;\n{tab}\tCYCLE\n{tab}\t{{\n{options}{tab}\t}}\n{tab}}}\n"

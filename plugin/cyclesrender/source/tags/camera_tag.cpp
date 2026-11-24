@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The Cycles Camera tag (camera_tag.h). Reading order: Init (the defaults), then what the
-// Attribute Manager shows (GetDDescription hides, GetDEnabling greys out).
+// Attribute Manager shows (GetDDescription hides, GetDEnabling greys out), then the Imager tab's
+// menu and buttons (tags/imager_tab.h has what they do).
 
 #include "c4d.h"
 #include "c4d_resource.h"
@@ -11,6 +12,11 @@
 
 #include "../ids.h"
 #include "camera_tag.h"
+#include "imager_tab.h"
+
+// MSG_ITEMTREE_CALLBACK of customgui_itemtree.h, the message a list of the Attribute Manager sends
+// its owner (the same number in the four SDKs; only the 2027 SDK declares what comes with it).
+static const maxon::Int32 IMAGER_LIST_MESSAGE = 1024875;
 
 namespace cyclesrender
 {
@@ -92,6 +98,7 @@ public:
 		data.SetFloat(CYCLESCAMERA_LENS_CYLINDER_V_MIN, -CAMERATAG_DEFAULT::CYLINDER_V);
 		data.SetFloat(CYCLESCAMERA_LENS_CYLINDER_V_MAX, CAMERATAG_DEFAULT::CYLINDER_V);
 		data.SetFloat(CYCLESCAMERA_LENS_CYLINDER_RADIUS, CAMERATAG_DEFAULT::CYLINDER_RADIUS);
+		InitImagerTab(data);
 		return true;
 	}
 
@@ -112,6 +119,9 @@ public:
 			const maxon::Bool used = setting.types[0] == panorama || setting.types[1] == panorama || setting.types[2] == panorama;
 			SetHidden(description, setting.id, !used);
 		}
+		// The Imager tab: its menus and every layer's settings come from the table of Blender's effects.
+		if (!BuildImagerDescription(static_cast<const cinema::BaseList2D*>(node), description))
+			return false;
 		return SUPER::GetDDescription(node, description, flags);
 	}
 
@@ -130,7 +140,49 @@ public:
 			if (parameter == CYCLESCAMERA_DOF_FOCUS_DISTANCE && values.GetObjectLink(CYCLESCAMERA_DOF_FOCUS_OBJECT, item->GetDocument()))
 				return false;
 		}
+		if (item && !IsImagerParameterEnabled(item->GetDataInstanceRef(), parameter))
+			return false;
 		return SUPER::GetDEnabling(node, id, data, flags, itemdesc);
+	}
+
+	// The menu "Add Effect" of the Imager tab adds a layer; it stores nothing.
+	virtual cinema::Bool SetDParameter(cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data, cinema::DESCFLAGS_SET& flags) override
+	{
+		cinema::BaseList2D* const item = static_cast<cinema::BaseList2D*>(node);
+		if (item && id.GetDepth() > 0 && SetImagerMenu(item, id[0].id, data))
+		{
+			flags |= cinema::DESCFLAGS_SET::PARAM_SET;
+			return true;
+		}
+		const cinema::Bool set = SUPER::SetDParameter(node, id, data, flags);
+		// The list of layers written back by the Attribute Manager: the layers follow it.
+		if (set && item && id.GetDepth() > 0)
+			SetImagerList(item, id[0].id);
+		return set;
+	}
+
+	// The Imager tab's buttons, and the values that change what the tab shows.
+	virtual cinema::Bool Message(cinema::GeListNode* node, cinema::Int32 type, void* data) override
+	{
+		cinema::BaseList2D* const item = static_cast<cinema::BaseList2D*>(node);
+		if (item && data && type == MSG_DESCRIPTION_COMMAND)
+		{
+			const cinema::DescriptionCommand* const command = static_cast<const cinema::DescriptionCommand*>(data);
+			if (command->_descId.GetDepth() > 0 && RunImagerCommand(item, command->_descId[0].id))
+				return true;
+		}
+		else if (item && data && type == IMAGER_LIST_MESSAGE)
+		{
+			if (HandleImagerList(item, data))
+				return true;
+		}
+		else if (item && data && type == MSG_DESCRIPTION_POSTSETPARAMETER)
+		{
+			const cinema::DescriptionPostSetValue* const set = static_cast<const cinema::DescriptionPostSetValue*>(data);
+			if (set->descid && set->descid->GetDepth() > 0)
+				ImagerParameterWasSet(item, (*set->descid)[0].id);
+		}
+		return SUPER::Message(node, type, data);
 	}
 };
 

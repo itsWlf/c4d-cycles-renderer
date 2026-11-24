@@ -102,6 +102,8 @@ class Viewport:
         self.redrawn = 0                   # redraws seen while rendering, and frames published (for tests)
         self.published = 0
         self.error = None                  # traceback of a failed draw callback, sent with the next reply
+        self._composited = False           # the scene has a compositor tree (scene/compositor.py)
+        self._combined_pass = True         # the pass shown is the combined picture
 
     # --- set-up: two steps, because the screen is swapped between them -----------------
 
@@ -329,8 +331,36 @@ class Viewport:
                     shading.render_pass = name
         except TypeError as error:
             raise RequestError("bad_request", f"the engine has no pass {name!r} ({error})") from error
+        self._combined_pass = name == 'COMBINED'
+        self._apply_compositor()
         self.touch()
         return self.describe()
+
+    def set_compositor(self, composited):
+        """The scene got a compositor tree, or lost it: the viewport shows the composite from now on,
+        or the render as it is. The viewport's compositor runs after the engine has drawn and writes
+        into the texture the frames are read from, before the view transform (measured for Cycles
+        and Eevee, in the camera view and the viewport's own view: docs/reference/blender.md, "The
+        compositor"). A single pass is shown as rendered: the effects are the picture's."""
+        composited = bool(composited)
+        if composited != self._composited:
+            self._composited = composited
+            self._apply_compositor()
+
+    def redraw(self):
+        """The picture changed without the render starting over (a value of the compositor): draw
+        it again, which publishes it; the progress stays what it is."""
+        if self.rendering and self.area:
+            self._publish_pending = True
+            self.area.tag_redraw()
+            self._ask_for_trailing_frame(PUBLISH_SECONDS)
+
+    def _apply_compositor(self):
+        wanted = 'ALWAYS' if self._composited and self._combined_pass else 'DISABLED'
+        shading = self.space.shading
+        if shading.use_compositor != wanted:
+            with self._override():
+                shading.use_compositor = wanted
 
     def show_window(self, visible):
         """Show Blender's window to the user, or hide it again (it keeps drawing either way)."""

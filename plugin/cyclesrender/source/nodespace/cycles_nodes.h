@@ -41,7 +41,8 @@ struct CyclesProperty
 	const maxon::Char* port;        ///< id of the port in Cinema 4D ("prop.distribution")
 	const maxon::Char* label;
 	/// 'e' one of several options, 'b' switch, 'i' whole number, 'f' number, 'c' colour, 'v' vector, 't' text, 'u' file,
-	/// 'k' curve (a maxon::SplineMapper, shown with Cinema 4D's spline control)
+	/// 'k' curve (a maxon::SplineMapper, shown with Cinema 4D's spline control), 'o' an object of the scene (a
+	/// maxon::Uuid shown as a link field: nodespace/object_link.h; since 0.3.0)
 	maxon::Char kind;
 	/// options as "IDENTIFIER|Label;IDENTIFIER|Label"; an option that came after the setting has its
 	/// version as a third part ("LIGHT|Light|503", GetCyclesOptionSince())

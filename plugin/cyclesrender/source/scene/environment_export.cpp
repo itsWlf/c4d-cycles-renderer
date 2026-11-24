@@ -178,19 +178,19 @@ static maxon::Result<NodeOutput> AddDome(MaterialExporter& materials, NodeGraph&
 		data, cinema::DESCFLAGS_GET::NONE) && data.GetType() == cinema::DA_STRING)
 	{
 		path = data.GetString();
-		if (path.StartsWith("file://"_s))
-		{
-			const maxon::Url url(path);
-			path = url.GetSystemPath() iferr_return;
-		}
 	}
 	if (path.IsEmpty())
 		return AddBackground(graph, color, strength);
 
-	cinema::Filename resolved;
-	if (!cinema::GenerateTexturePath(materials.GetDocument()->GetDocumentPath(), cinema::Filename(path), cinema::Filename(), &resolved))
-		resolved = cinema::Filename(path);
-	const maxon::String image = materials.GetFileImageId(resolved.GetString(), true) iferr_return;
+	// As a path Blender can open: a "file://" URL as its path, a map of the Asset Browser ("asset:///...")
+	// copied out of its database, a name looked for as Cinema 4D looks for a bitmap's.
+	maxon::String problem;
+	const maxon::String resolved = materials.ResolveImagePath(path, problem) iferr_return;
+	if (problem.IsPopulated())
+		writer.Warn(FormatString("Light \"@\": its dome map: @", dome->GetName(), problem));
+	if (resolved.IsEmpty())
+		return AddBackground(graph, color, strength);
+	const maxon::String image = materials.GetFileImageId(resolved, true) iferr_return;
 	NoteImage(images, image);
 	if (GetIntParameter(dome, REDSHIFT_LIGHT_DOME_ENVTYPE, 0) != 0)
 		writer.Warn(FormatString("Light \"@\": only a spherical dome map is translated; the map is used as one.", dome->GetName()));
@@ -522,7 +522,17 @@ static maxon::Result<NodeOutput> AddEnvironment(MaterialExporter& materials, Nod
 			}
 			// Found as a bitmap's file is: next to the document, in its "tex" folder, in the search paths.
 			cinema::Filename resolved;
-			if (!cinema::GenerateTexturePath(materials.GetDocument()->GetDocumentPath(), file, cinema::Filename(), &resolved))
+			maxon::Int urlMark = 0;
+			if (file.GetString().Find("://"_s, &urlMark))
+			{
+				// A file of the Asset Browser: copied out, so that Blender can open it.
+				maxon::String problem;
+				const maxon::String copied = materials.ResolveImagePath(file.GetString(), problem) iferr_return;
+				if (problem.IsPopulated())
+					writer.Warn(FormatString("Environment \"@\": its HDRI file: @", environment->GetName(), problem));
+				resolved = cinema::Filename(copied.IsPopulated() ? copied : file.GetString());
+			}
+			else if (!cinema::GenerateTexturePath(materials.GetDocument()->GetDocumentPath(), file, cinema::Filename(), &resolved))
 			{
 				resolved = file;
 				writer.Warn(FormatString("Environment \"@\": the HDRI file \"@\" was not found.", environment->GetName(), file.GetString()));

@@ -31,6 +31,8 @@ public:
 	/// Forget everything, as after Blender's scene was cleared.
 	void Reset() { _items.Reset(); _sources.Reset(); _sourcesAfter.Reset(); }
 	maxon::Int GetItemCount() const { return _items.GetCount(); }
+	/// True when Blender holds an item of this id.
+	maxon::Bool Holds(const maxon::String& id) const { return _items.Find(id) != nullptr; }
 	/// Makes this a copy of @p other (for comparing a fresh export with it, without changing it).
 	maxon::Result<void> CopyFrom(const SyncState& other);
 
