@@ -47,6 +47,7 @@ static const maxon::UInt64 DRAW_FIELD = 5;
 static const maxon::UInt64 DRAW_CHILD = 6;
 static const maxon::UInt64 DRAW_AREA = 7;
 static const maxon::UInt64 DRAW_WEIGHT = 8;
+static const maxon::UInt64 DRAW_W = 9;
 
 // A number in [0, 1).
 static maxon::Float64 Draw(maxon::UInt64 seed, maxon::UInt64 index, maxon::UInt64 stream)
@@ -89,6 +90,8 @@ struct Surface
 	maxon::BaseArray<maxon::Float32> cornerWeights;   ///< 3 per triangle: the vertex map's, or 1
 	maxon::BaseArray<cinema::Vector> normals;         ///< 1 per triangle, unit length
 	maxon::BaseArray<maxon::Bool> hasUv;              ///< 1 per triangle
+	maxon::BaseArray<cinema::Vector> tangentsU;       ///< 1 per triangle: the direction in which its U grows (dP/du), or 0 without UVs
+	maxon::BaseArray<cinema::Vector> tangentsV;       ///< 1 per triangle: the direction in which its V grows (dP/dv), or 0
 	maxon::BaseArray<maxon::Float64> cumulative;      ///< the area of the triangles up to and with this one
 	maxon::BaseArray<maxon::Float64> areas;           ///< 1 per triangle
 	maxon::Float64 largestArea = 0.0;
@@ -115,6 +118,8 @@ struct Candidate
 	cinema::Vector p;
 	cinema::Vector n;
 	cinema::Vector uv;
+	cinema::Vector tu;            ///< across the surface along its U, unit length (SurfaceFrame)
+	cinema::Vector tv;            ///< across the surface along its V
 	maxon::Float32 weight = 1.0f;
 	maxon::UInt64 index = 0;      ///< its number, which its random numbers are drawn by
 	maxon::Bool areaKept = true;  ///< Surface and Poisson: its triangle's share of the area keeps it (SurfaceCandidate)
@@ -126,6 +131,8 @@ struct Placed
 	cinema::Vector p;
 	cinema::Vector n;
 	cinema::Vector uv;
+	cinema::Vector tu;
+	cinema::Vector tv;
 	maxon::UInt64 index = 0;
 	maxon::Float64 field = 1.0;   ///< the object's field list at its place (1 without one)
 };
@@ -294,6 +301,28 @@ static maxon::Result<void> BuildSurface(const cinema::BaseObject* root, const ci
 				}
 				surface.normals.Append(length > 0.0 ? cross / length : cinema::Vector(0.0, 1.0, 0.0)) iferr_return;
 				surface.hasUv.Append(uvw != nullptr) iferr_return;
+				// The directions in which U and V grow on the triangle (dP/du, dP/dv from its corners' UVs), or none
+				// where it has no UVs or they do not span it.
+				cinema::Vector tangentU(0.0);
+				cinema::Vector tangentV(0.0);
+				if (uvw)
+				{
+					const cinema::Vector& ua = uvs[corner[0]];
+					const cinema::Vector& ub = uvs[corner[1]];
+					const cinema::Vector& uc = uvs[corner[2]];
+					const maxon::Float64 du1 = ub.x - ua.x;
+					const maxon::Float64 dv1 = ub.y - ua.y;
+					const maxon::Float64 du2 = uc.x - ua.x;
+					const maxon::Float64 dv2 = uc.y - ua.y;
+					const maxon::Float64 det = du1 * dv2 - du2 * dv1;
+					if (maxon::Abs(det) > 1e-12)
+					{
+						tangentU = ((b - a) * dv2 - (c - a) * dv1) / det;
+						tangentV = ((c - a) * du1 - (b - a) * du2) / det;
+					}
+				}
+				surface.tangentsU.Append(tangentU) iferr_return;
+				surface.tangentsV.Append(tangentV) iferr_return;
 				total += 0.5 * length;
 				surface.cumulative.Append(total) iferr_return;
 				surface.areas.Append(0.5 * length) iferr_return;
@@ -332,6 +361,28 @@ static cinema::Vector PlanarUv(const Surface& surface, const cinema::Vector& p)
 {
 	const cinema::Vector size = surface.high - surface.low;
 	return cinema::Vector(size.x > 0.0 ? (p.x - surface.low.x) / size.x : 0.0, size.z > 0.0 ? (surface.high.z - p.z) / size.z : 0.0, 0.0);
+}
+
+// The two directions across a surface whose normal is @p n, as unit vectors at right angles to it and to each
+// other: along U and along V of the surface's UVs (@p u, @p v: dP/du and dP/dv, SurfaceCandidate) where they span
+// it; else a frame of the normal alone, U as close to the scatter object's X as the normal allows (its Z where the
+// normal lies along X) and V = n x U, which on ground facing +Y is -Z, the way PlanarUv's v runs.
+static void SurfaceFrame(const cinema::Vector& n, const cinema::Vector& u, const cinema::Vector& v, cinema::Vector& tu, cinema::Vector& tv)
+{
+	cinema::Vector along = u - n * Dot(u, n);
+	if (along.GetLength() > 1e-12)
+	{
+		tu = along.GetNormalized();
+		tv = Cross(n, tu);
+		// V as the UVs run it (a mirrored UV layout runs it the other way).
+		if (Dot(tv, v) < 0.0)
+			tv = -tv;
+		return;
+	}
+	const cinema::Vector xRef(1.0, 0.0, 0.0);
+	along = maxon::Abs(Dot(xRef, n)) < 0.999 ? xRef - n * Dot(xRef, n) : cinema::Vector(0.0, 0.0, 1.0) - n * n.z;
+	tu = along.GetNormalized();
+	tv = Cross(n, tu);
 }
 
 // --- samplers -------------------------------------------------------------------------------------
@@ -510,12 +561,26 @@ struct Settings
 	maxon::Float64 densityMin = 0.0;
 	maxon::Float64 densityMax = 1.0;
 	maxon::Float64 normalThreshold = maxon::PI;
-	maxon::Float64 positionDistance = 0.0;
+	maxon::Float64 positionDistance = 0.0;   ///< along the copy's Y: the Max (1201)
+	maxon::Float64 positionYMin = 0.0;
+	maxon::Float64 positionUMin = 0.0;
+	maxon::Float64 positionUMax = 0.0;
+	maxon::Float64 positionVMin = 0.0;
+	maxon::Float64 positionVMax = 0.0;
+	maxon::Bool scaleUniform = true;
 	maxon::Float64 scaleMin = 1.0;
 	maxon::Float64 scaleMax = 1.0;
-	maxon::Float64 rotationAngle = 0.0;
+	cinema::Vector scaleMinAxes = cinema::Vector(1.0);
+	cinema::Vector scaleMaxAxes = cinema::Vector(1.0);
+	maxon::Float64 rotationAngle = 0.0;      ///< the pitch's Max (1206)
+	maxon::Float64 rotationPMin = 0.0;
+	maxon::Float64 rotationHMin = 0.0;
+	maxon::Float64 rotationHMax = 0.0;
+	maxon::Float64 rotationBMin = 0.0;
+	maxon::Float64 rotationBMax = 0.0;
 	maxon::Int32 fieldsAffect = CYCLESSCATTER_FIELDS_AFFECT_DENSITY;
 	maxon::Bool removeCopies = false;
+	maxon::Bool poissonLimit = false;
 };
 }
 
@@ -555,9 +620,11 @@ static Candidate SurfaceCandidate(const Surface& surface, maxon::UInt64 seed, ma
 	candidate.uv = surface.hasUv[t] ? surface.cornerUvs[t * 3] * wa + surface.cornerUvs[t * 3 + 1] * wb + surface.cornerUvs[t * 3 + 2] * wc
 		: PlanarUv(surface, candidate.p);
 	candidate.weight = maxon::Float32(surface.cornerWeights[t * 3] * wa + surface.cornerWeights[t * 3 + 1] * wb + surface.cornerWeights[t * 3 + 2] * wc);
+	SurfaceFrame(candidate.n, surface.tangentsU[t], surface.tangentsV[t], candidate.tu, candidate.tv);
 	return candidate;
 }
 
+// A point has no UV directions of its own: the frame of its normal.
 static Candidate PointCandidate(const Surface& surface, maxon::UInt64 index)
 {
 	Candidate candidate;
@@ -566,10 +633,176 @@ static Candidate PointCandidate(const Surface& surface, maxon::UInt64 index)
 	candidate.n = surface.pointNormals[maxon::Int(index)];
 	candidate.uv = surface.pointHasUv[maxon::Int(index)] ? surface.pointUvs[maxon::Int(index)] : PlanarUv(surface, candidate.p);
 	candidate.weight = surface.pointWeights[maxon::Int(index)];
+	SurfaceFrame(candidate.n, cinema::Vector(0.0), cinema::Vector(0.0), candidate.tu, candidate.tv);
 	return candidate;
 }
 
-// Places copies over @p surface. The candidates come in a fixed order (their numbers), each with fixed random
+// --- inside a closed mesh (Volume) ---------------------------------------------------------------
+
+namespace
+{
+/// Whether a point lies inside the surface's triangles, by the parity of the faces a ray from it along +X
+/// crosses. The triangles are sorted into a grid over Y and Z by their extent there, so a ray looks only at those
+/// of its cell. Right for a closed mesh (every edge shared by an even number of triangles, Closed()); the ray of a
+/// random candidate meets an edge or a corner exactly with a probability of nil, and a face parallel to the ray
+/// is never crossed.
+class InsideTest
+{
+public:
+	maxon::Result<void> Init(const Surface& surface)
+	{
+		iferr_scope;
+		_surface = &surface;
+		const maxon::Int triangles = surface.areas.GetCount();
+		_cells = maxon::ClampValue(maxon::Int(maxon::Sqrt(maxon::Float64(triangles))), maxon::Int(1), maxon::Int(256));
+		_low = surface.low;
+		const cinema::Vector size = surface.high - surface.low;
+		_cellY = size.y > 0.0 ? size.y / maxon::Float64(_cells) : 1.0;
+		_cellZ = size.z > 0.0 ? size.z / maxon::Float64(_cells) : 1.0;
+		_starts.Resize(_cells * _cells + 1) iferr_return;
+		for (maxon::Int& start : _starts)
+			start = 0;
+		// Two passes: count per cell, then fill (one array of triangle numbers, ordered by cell).
+		for (maxon::Int pass = 0; pass < 2; ++pass)
+		{
+			maxon::BaseArray<maxon::Int> fill;
+			if (pass == 1)
+			{
+				for (maxon::Int i = 1; i < _starts.GetCount(); ++i)
+					_starts[i] += _starts[i - 1];
+				_items.Resize(_starts[_starts.GetCount() - 1]) iferr_return;
+				fill.CopyFrom(_starts) iferr_return;
+			}
+			for (maxon::Int t = 0; t < triangles; ++t)
+			{
+				const cinema::Vector* const c = &surface.corners[t * 3];
+				const maxon::Int y0 = CellY(maxon::Min(c[0].y, maxon::Min(c[1].y, c[2].y)));
+				const maxon::Int y1 = CellY(maxon::Max(c[0].y, maxon::Max(c[1].y, c[2].y)));
+				const maxon::Int z0 = CellZ(maxon::Min(c[0].z, maxon::Min(c[1].z, c[2].z)));
+				const maxon::Int z1 = CellZ(maxon::Max(c[0].z, maxon::Max(c[1].z, c[2].z)));
+				for (maxon::Int y = y0; y <= y1; ++y)
+				{
+					for (maxon::Int z = z0; z <= z1; ++z)
+					{
+						const maxon::Int cell = y * _cells + z;
+						if (pass == 0)
+							++_starts[cell + 1];
+						else
+							_items[fill[cell]++] = t;
+					}
+				}
+			}
+		}
+		return maxon::OK;
+	}
+
+	maxon::Bool IsInside(const cinema::Vector& p) const
+	{
+		const maxon::Int cell = CellY(p.y) * _cells + CellZ(p.z);
+		maxon::Int crossings = 0;
+		for (maxon::Int i = _starts[cell]; i < _starts[cell + 1]; ++i)
+		{
+			const cinema::Vector* const c = &_surface->corners[_items[i] * 3];
+			// Barycentric weights of (p.y, p.z) in the triangle seen along X.
+			const maxon::Float64 w0 = Edge(c[1], c[2], p);
+			const maxon::Float64 w1 = Edge(c[2], c[0], p);
+			const maxon::Float64 w2 = Edge(c[0], c[1], p);
+			const maxon::Bool inside = (w0 > 0.0 && w1 > 0.0 && w2 > 0.0) || (w0 < 0.0 && w1 < 0.0 && w2 < 0.0);
+			if (!inside)
+				continue;
+			const maxon::Float64 sum = w0 + w1 + w2;
+			const maxon::Float64 x = (c[0].x * w0 + c[1].x * w1 + c[2].x * w2) / sum;
+			if (x > p.x)
+				++crossings;
+		}
+		return (crossings & 1) != 0;
+	}
+
+	/// The edges of the surface's triangles shared by an odd number of them, its corners joined by place (a mesh
+	/// whose points are doubled where its faces meet counts as closed when they lie at the same place): 0 for a
+	/// closed mesh.
+	static maxon::Result<maxon::Int> OpenEdges(const Surface& surface)
+	{
+		iferr_scope;
+		maxon::HashMap<maxon::UInt64, maxon::Int> ids;
+		maxon::HashMap<maxon::UInt64, maxon::Int> edges;
+		const auto id = [&ids](const cinema::Vector& v) -> maxon::Result<maxon::Int>
+		{
+			iferr_scope;
+			const maxon::UInt64 key = MixFloat(MixFloat(MixFloat(0x1D, v.x), v.y), v.z);
+			if (const auto* const found = ids.Find(key))
+				return found->GetValue();
+			const maxon::Int value = ids.GetCount();
+			ids.Insert(key, value) iferr_return;
+			return value;
+		};
+		for (maxon::Int t = 0; t < surface.areas.GetCount(); ++t)
+		{
+			maxon::Int corner[3];
+			for (maxon::Int k = 0; k < 3; ++k)
+			{
+				corner[k] = id(surface.corners[t * 3 + k]) iferr_return;
+			}
+			for (maxon::Int k = 0; k < 3; ++k)
+			{
+				const maxon::Int a = corner[k];
+				const maxon::Int b = corner[(k + 1) % 3];
+				if (a == b)
+					continue;
+				const maxon::UInt64 key = maxon::UInt64(maxon::Min(a, b)) << 32 | maxon::UInt64(maxon::Max(a, b));
+				if (auto* const found = edges.Find(key))
+				{
+					found->SetValue(found->GetValue() + 1);
+				}
+				else
+				{
+					edges.Insert(key, maxon::Int(1)) iferr_return;
+				}
+			}
+		}
+		maxon::Int open = 0;
+		for (const auto& entry : edges)
+			open += (entry.GetValue() & 1);
+		return open;
+	}
+
+private:
+	maxon::Int CellY(maxon::Float64 y) const { return maxon::ClampValue(maxon::Int((y - _low.y) / _cellY), maxon::Int(0), _cells - 1); }
+	maxon::Int CellZ(maxon::Float64 z) const { return maxon::ClampValue(maxon::Int((z - _low.z) / _cellZ), maxon::Int(0), _cells - 1); }
+	static maxon::Float64 Edge(const cinema::Vector& a, const cinema::Vector& b, const cinema::Vector& p)
+	{
+		return (b.y - a.y) * (p.z - a.z) - (b.z - a.z) * (p.y - a.y);
+	}
+
+	const Surface* _surface = nullptr;
+	maxon::Int _cells = 1;
+	cinema::Vector _low = cinema::Vector(0.0);
+	maxon::Float64 _cellY = 1.0;
+	maxon::Float64 _cellZ = 1.0;
+	maxon::BaseArray<maxon::Int> _starts;   ///< per cell, where its triangles begin in _items (one more for the end)
+	maxon::BaseArray<maxon::Int> _items;
+};
+}
+
+// Candidate @p index of the Volume distribution: a place in the box of the surface's points (in the scatter's
+// axes), uniform in it, kept when it lies inside the mesh (areaKept). It has no faces under it: its normal is the
+// up vector (Normal Align then turns nothing), its frame across is the up vector's, and it samples shaders at the
+// top view's UV (PlanarUv) with its height in the box as W, so that 3D shaders vary with height too.
+static Candidate VolumeCandidate(const Surface& surface, const InsideTest& inside, const cinema::Vector& up, maxon::UInt64 seed, maxon::UInt64 index)
+{
+	Candidate candidate;
+	candidate.index = index;
+	const cinema::Vector size = surface.high - surface.low;
+	candidate.p = surface.low + cinema::Vector(size.x * Draw(seed, index, DRAW_U), size.y * Draw(seed, index, DRAW_V), size.z * Draw(seed, index, DRAW_W));
+	candidate.areaKept = inside.IsInside(candidate.p);
+	candidate.n = up;
+	candidate.uv = PlanarUv(surface, candidate.p);
+	candidate.uv.z = size.y > 0.0 ? (candidate.p.y - surface.low.y) / size.y : 0.0;
+	SurfaceFrame(up, cinema::Vector(0.0), cinema::Vector(0.0), candidate.tu, candidate.tv);
+	return candidate;
+}
+
+// Places copies over @p surface (inside it for Volume). The candidates come in a fixed order (their numbers), each with fixed random
 // thresholds of its own, and are decided in that order: kept by its triangle's area (Surface, Poisson), then
 // allowed by the restrictions (the vertex map: none under Limit or at 0, else as likely as its weight; the slope;
 // the density shader; the object's field list), then not too close to a copy placed before it (Keep Away,
@@ -579,24 +812,42 @@ static Candidate PointCandidate(const Surface& surface, maxon::UInt64 index)
 // Surface makes Count copies: the first Count candidates that pass, however many it has to try (up to
 // SURFACE_TRIES_PER_COPY per copy; the console says when fewer found room); with "Restrictions Remove Copies"
 // the first Count candidates kept by area are judged and those that fail are left out. Vertices judges every
-// point, Poisson tries until Samples candidates in a row are too close (the surface is full): both remove.
+// point, Poisson tries until Samples candidates in a row are too close (the surface is full), or, with its limit
+// on, until Count copies are placed: both remove. Volume is Surface with places in the box of the mesh, kept by
+// lying inside it instead of by area. No distribution makes more than SCATTER_MAX_COPIES; with @p thread it
+// stops when that thread is asked to (stats.cancelled), between blocks of candidates.
 static maxon::Result<void> PlaceOnSurface(const Surface& surface, const Settings& settings, cinema::BaseShader* densityShader, const cinema::FieldList* fields,
-	const cinema::BaseObject* scatter, const cinema::BaseDocument* doc, maxon::BaseArray<Placed>& placed, ScatterStats& stats,
+	const cinema::BaseObject* scatter, const cinema::BaseDocument* doc, cinema::BaseThread* thread, maxon::BaseArray<Placed>& placed, ScatterStats& stats,
 	maxon::BaseArray<maxon::String>& warnings)
 {
 	iferr_scope;
 	const maxon::Bool vertices = settings.mode == CYCLESSCATTER_MODE_VERTICES;
 	const maxon::Bool poisson = settings.mode == CYCLESSCATTER_MODE_POISSON;
-	const maxon::Bool surfaceMode = !vertices && !poisson;
+	const maxon::Bool volume = settings.mode == CYCLESSCATTER_MODE_VOLUME;
+	const maxon::Bool surfaceMode = !vertices && !poisson && !volume;
 	if (vertices ? surface.points.IsEmpty() : surface.areas.IsEmpty() || surface.largestArea <= 0.0)
 	{
 		warnings.Append("its surface has no polygons."_s) iferr_return;
 		return maxon::OK;
 	}
-	const maxon::Bool fixedCount = surfaceMode && !settings.removeCopies;
+	InsideTest inside;
+	if (volume)
+	{
+		const maxon::Int open = InsideTest::OpenEdges(surface) iferr_return;
+		if (open > 0)
+		{
+			warnings.Append(FormatString("its surface is not closed (@ edges belong to one face only); Volume needs a closed mesh and makes no copies.", open)) iferr_return;
+			return maxon::OK;
+		}
+		inside.Init(surface) iferr_return;
+	}
+	const maxon::Bool counted = surfaceMode || volume;
+	const maxon::Bool fixedCount = counted && !settings.removeCopies;
+	const maxon::Bool poissonCapped = poisson && settings.poissonLimit;
 	const maxon::Int limit = vertices ? surface.points.GetCount() : poisson ? POISSON_MAX_CANDIDATES
 		: maxon::Min(SURFACE_MAX_CANDIDATES, maxon::Max(SURFACE_MIN_CANDIDATES, settings.count * SURFACE_TRIES_PER_COPY));
-	const maxon::Bool useVertexMap = surface.vertexMapFound;
+	// (A vertex map weighs places on the faces; inside a volume there are none.)
+	const maxon::Bool useVertexMap = surface.vertexMapFound && !volume;
 	const maxon::Float64 cosThreshold = settings.normalThreshold >= maxon::PI - 1e-9 ? -2.0 : maxon::Cos(settings.normalThreshold);
 	ShaderSampler density;
 	const maxon::Bool densityOn = density.Init(densityShader, doc);
@@ -605,20 +856,28 @@ static maxon::Result<void> PlaceOnSurface(const Surface& surface, const Settings
 	KeepAwayGrid grid(poisson ? maxon::Max(settings.poissonRadius, settings.keepAway) : settings.keepAway);
 	maxon::Int failures = 0;
 	maxon::Int judged = 0;
-	maxon::Bool done = surfaceMode && settings.count <= 0;
+	maxon::Bool done = (counted || poissonCapped) && settings.count <= 0;
 	maxon::Bool full = false;
+	maxon::Bool reachedCount = false;
 
 	maxon::BaseArray<Candidate> block;
 	maxon::BaseArray<cinema::Vector> positions;
 	maxon::BaseArray<maxon::Float64> fieldValues;
 	for (maxon::Int start = 0; start < limit && !done; start += BLOCK)
 	{
+		if (thread && thread->TestBreak())
+		{
+			stats.cancelled = true;
+			return maxon::OK;
+		}
 		const maxon::Int end = maxon::Min(limit, start + BLOCK);
 		block.Reset();
 		positions.Reset();
 		for (maxon::Int i = start; i < end; ++i)
 		{
-			const Candidate candidate = vertices ? PointCandidate(surface, maxon::UInt64(i)) : SurfaceCandidate(surface, settings.seed, maxon::UInt64(i));
+			const Candidate candidate = vertices ? PointCandidate(surface, maxon::UInt64(i))
+				: volume ? VolumeCandidate(surface, inside, settings.up, settings.seed, maxon::UInt64(i))
+				: SurfaceCandidate(surface, settings.seed, maxon::UInt64(i));
 			++stats.candidates;
 			if (!candidate.areaKept)
 				continue;
@@ -636,8 +895,8 @@ static maxon::Result<void> PlaceOnSurface(const Surface& surface, const Settings
 		for (maxon::Int b = 0; b < block.GetCount() && !done; ++b)
 		{
 			const Candidate& candidate = block[b];
-			// Removing: the first Count candidates kept by area are the ones judged.
-			if (surfaceMode && !fixedCount && ++judged > settings.count)
+			// Removing: the first Count candidates kept by area (inside the mesh) are the ones judged.
+			if (counted && !fixedCount && ++judged > settings.count)
 			{
 				done = true;
 				break;
@@ -649,7 +908,7 @@ static maxon::Result<void> PlaceOnSurface(const Surface& surface, const Settings
 				if (Draw(settings.seed, candidate.index, DRAW_WEIGHT) >= candidate.weight)
 					continue;
 			}
-			if (Dot(candidate.n, settings.up) < cosThreshold)
+			if (!volume && Dot(candidate.n, settings.up) < cosThreshold)
 				continue;
 			if (densityOn)
 			{
@@ -675,16 +934,30 @@ static maxon::Result<void> PlaceOnSurface(const Surface& surface, const Settings
 			copy.p = candidate.p;
 			copy.n = candidate.n;
 			copy.uv = candidate.uv;
+			copy.tu = candidate.tu;
+			copy.tv = candidate.tv;
 			copy.index = candidate.index;
 			copy.field = fieldScale ? field : 1.0;
 			placed.Append(copy) iferr_return;
-			if (fixedCount && placed.GetCount() >= settings.count)
+			if ((fixedCount || poissonCapped) && placed.GetCount() >= settings.count)
+			{
+				reachedCount = true;
 				done = true;
+			}
+			if (placed.GetCount() >= SCATTER_MAX_COPIES)
+			{
+				stats.capped = !reachedCount;
+				done = true;
+			}
 		}
 	}
-	if (poisson && !full)
+	if (stats.capped)
 	{
-		warnings.Append(FormatString("the Poisson distribution stopped after @ tries before the surface was full (raise the Radius).", POISSON_MAX_CANDIDATES)) iferr_return;
+		warnings.Append(FormatString("it stopped at @ copies, the most a Cycles Scatter makes.", SCATTER_MAX_COPIES)) iferr_return;
+	}
+	else if (poisson && !full && !reachedCount)
+	{
+		warnings.Append(FormatString("the Poisson distribution stopped after @ tries before the surface was full (raise the Radius, or limit the count).", POISSON_MAX_CANDIDATES)) iferr_return;
 	}
 	if (fixedCount && placed.GetCount() < settings.count)
 	{
@@ -838,6 +1111,12 @@ static maxon::Result<void> ReadCopiesFile(const cinema::BaseObject* scatter, con
 	maxon::Int skipped = 0;
 	while (p && p < end)
 	{
+		if (matrices.GetCount() >= SCATTER_MAX_COPIES)
+		{
+			warnings.Append(FormatString("the file \"@\" has more lines than the @ copies a Cycles Scatter makes; the rest are not read.", resolved.GetString(), SCATTER_MAX_COPIES))
+				iferr_return;
+			break;
+		}
 		const maxon::Char* lineEnd = p;
 		while (lineEnd < end && *lineEnd != '\n' && *lineEnd != '\r')
 			++lineEnd;
@@ -1069,11 +1348,27 @@ static Settings ReadSettings(const cinema::BaseObject* scatter)
 	settings.densityMax = maxon::Clamp01(GetFloatParameter(scatter, CYCLESSCATTER_DENSITY_MAX, 1.0));
 	settings.normalThreshold = maxon::ClampValue(GetFloatParameter(scatter, CYCLESSCATTER_NORMAL_THRESHOLD, maxon::PI), 0.0, maxon::PI);
 	settings.positionDistance = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_DISTANCE, 0.0);
+	settings.positionYMin = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_Y_MIN, 0.0);
+	settings.positionUMin = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_U_MIN, 0.0);
+	settings.positionUMax = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_U_MAX, 0.0);
+	settings.positionVMin = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_V_MIN, 0.0);
+	settings.positionVMax = GetFloatParameter(scatter, CYCLESSCATTER_POSITION_V_MAX, 0.0);
+	settings.scaleUniform = GetBoolParameter(scatter, CYCLESSCATTER_SCALE_UNIFORM, true);
 	settings.scaleMin = maxon::Max(0.0, GetFloatParameter(scatter, CYCLESSCATTER_SCALE_MIN, 1.0));
 	settings.scaleMax = maxon::Max(0.0, GetFloatParameter(scatter, CYCLESSCATTER_SCALE_MAX, 1.0));
+	const cinema::Vector minAxes = GetVectorParameter(scatter, CYCLESSCATTER_SCALE_MIN_AXES, cinema::Vector(1.0));
+	const cinema::Vector maxAxes = GetVectorParameter(scatter, CYCLESSCATTER_SCALE_MAX_AXES, cinema::Vector(1.0));
+	settings.scaleMinAxes = cinema::Vector(maxon::Max(0.0, minAxes.x), maxon::Max(0.0, minAxes.y), maxon::Max(0.0, minAxes.z));
+	settings.scaleMaxAxes = cinema::Vector(maxon::Max(0.0, maxAxes.x), maxon::Max(0.0, maxAxes.y), maxon::Max(0.0, maxAxes.z));
 	settings.rotationAngle = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_ANGLE, 0.0);
+	settings.rotationPMin = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_P_MIN, 0.0);
+	settings.rotationHMin = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_H_MIN, 0.0);
+	settings.rotationHMax = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_H_MAX, 0.0);
+	settings.rotationBMin = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_B_MIN, 0.0);
+	settings.rotationBMax = GetFloatParameter(scatter, CYCLESSCATTER_ROTATION_B_MAX, 0.0);
 	settings.fieldsAffect = GetIntParameter(scatter, CYCLESSCATTER_FIELDS_AFFECT, CYCLESSCATTER_FIELDS_AFFECT_DENSITY);
 	settings.removeCopies = GetBoolParameter(scatter, CYCLESSCATTER_REMOVE_COPIES, false);
+	settings.poissonLimit = GetBoolParameter(scatter, CYCLESSCATTER_POISSON_LIMIT, false);
 	return settings;
 }
 
@@ -1158,16 +1453,26 @@ maxon::Result<void> ComputeScatter(cinema::BaseObject* scatter, const cinema::Ba
 			{
 				warnings.Append(FormatString("the vertex map \"@\" is not on its surface (or has another number of points); it is not used.", vertexMap->GetName())) iferr_return;
 			}
+			else if (vertexMap && settings.mode == CYCLESSCATTER_MODE_VOLUME)
+			{
+				warnings.Append(FormatString("the vertex map \"@\" weighs places on the faces; inside a volume it is not used.", vertexMap->GetName())) iferr_return;
+			}
 			maxon::BaseArray<Placed> placed;
-			PlaceOnSurface(surface, settings, GetShaderParameter(scatter, CYCLESSCATTER_DENSITY_SHADER, doc), fields, scatter, doc, placed, stats, warnings) iferr_return;
+			PlaceOnSurface(surface, settings, GetShaderParameter(scatter, CYCLESSCATTER_DENSITY_SHADER, doc), fields, scatter, doc, thread, placed, stats, warnings) iferr_return;
+			if (stats.cancelled)
+				return maxon::OK;
 
-			// The copies' axes, then the shaders that vary them, sampled where each copy sits.
+			// The copies' axes, then the shaders that vary them, sampled where each copy sits: each value goes from its
+			// Min at black to its Max at white. In the order of before (the pitch, then along the copy's Y, then the
+			// scale), so that the parameters of before give the copies of before to the bit; what came in 0.3.0 at 0
+			// changes nothing.
 			ShaderSampler position;
 			ShaderSampler scale;
 			ShaderSampler rotation;
 			position.Init(GetShaderParameter(scatter, CYCLESSCATTER_POSITION_SHADER, doc), doc);
 			scale.Init(GetShaderParameter(scatter, CYCLESSCATTER_SCALE_SHADER, doc), doc);
 			rotation.Init(GetShaderParameter(scatter, CYCLESSCATTER_ROTATION_SHADER, doc), doc);
+			const auto between = [](maxon::Float64 low, maxon::Float64 high, maxon::Float64 t) { return low + (high - low) * t; };
 			copies.matrices.EnsureCapacity(placed.GetCount()) iferr_return;
 			for (maxon::Int i = 0; i < placed.GetCount(); ++i)
 			{
@@ -1175,21 +1480,53 @@ maxon::Result<void> ComputeScatter(cinema::BaseObject* scatter, const cinema::Ba
 				cinema::Matrix m = AlignedMatrix(copy.p, copy.n, settings.up, settings.normalAlign);
 				if (rotation.IsActive())
 				{
-					const maxon::Float64 angle = rotation.Sample(copy.uv, copy.n) * settings.rotationAngle;
+					// Heading, pitch, bank, each about the copy's own axis as it stands then (Y, X, Z), as Cinema 4D's HPB.
+					const maxon::Float64 t = rotation.Sample(copy.uv, copy.n);
+					const maxon::Float64 heading = between(settings.rotationHMin, settings.rotationHMax, t);
+					if (heading != 0.0)
+						m.sqmat = m.sqmat * cinema::HPBToMatrix(cinema::Vector(heading, 0.0, 0.0), cinema::ROTATIONORDER::HPB).sqmat;
+					const maxon::Float64 angle = between(settings.rotationPMin, settings.rotationAngle, t);
 					const maxon::Float64 c = maxon::Cos(angle);
 					const maxon::Float64 s = maxon::Sin(angle);
 					const cinema::Vector y = m.sqmat.v2 * c + m.sqmat.v3 * s;
 					const cinema::Vector z = m.sqmat.v3 * c - m.sqmat.v2 * s;
 					m.sqmat.v2 = y;
 					m.sqmat.v3 = z;
+					const maxon::Float64 bank = between(settings.rotationBMin, settings.rotationBMax, t);
+					if (bank != 0.0)
+						m.sqmat = m.sqmat * cinema::HPBToMatrix(cinema::Vector(0.0, 0.0, bank), cinema::ROTATIONORDER::HPB).sqmat;
 				}
 				if (position.IsActive())
-					m.off += m.sqmat.v2 * (position.Sample(copy.uv, copy.n) * settings.positionDistance);
+				{
+					// Along the copy's Y as it stands after its rotation; across the surface along its U and V.
+					const maxon::Float64 t = position.Sample(copy.uv, copy.n);
+					m.off += m.sqmat.v2 * between(settings.positionYMin, settings.positionDistance, t);
+					const maxon::Float64 u = between(settings.positionUMin, settings.positionUMax, t);
+					const maxon::Float64 v = between(settings.positionVMin, settings.positionVMax, t);
+					if (u != 0.0)
+						m.off += copy.tu * u;
+					if (v != 0.0)
+						m.off += copy.tv * v;
+				}
 				maxon::Float64 factor = copy.field;
+				cinema::Vector axes(1.0);
 				if (scale.IsActive())
-					factor *= settings.scaleMin + (settings.scaleMax - settings.scaleMin) * scale.Sample(copy.uv, copy.n);
+				{
+					const maxon::Float64 t = scale.Sample(copy.uv, copy.n);
+					if (settings.scaleUniform)
+						factor *= between(settings.scaleMin, settings.scaleMax, t);
+					else
+						axes = cinema::Vector(between(settings.scaleMinAxes.x, settings.scaleMaxAxes.x, t), between(settings.scaleMinAxes.y, settings.scaleMaxAxes.y, t),
+							between(settings.scaleMinAxes.z, settings.scaleMaxAxes.z, t));
+				}
 				if (factor != 1.0)
 					m.sqmat = m.sqmat * factor;
+				if (axes != cinema::Vector(1.0))
+				{
+					m.sqmat.v1 *= axes.x;
+					m.sqmat.v2 *= axes.y;
+					m.sqmat.v3 *= axes.z;
+				}
 				copies.matrices.Append(m) iferr_return;
 				copies.colors.Append(SCATTER_COPY_COLOR) iferr_return;
 				uvs.Append(copy.uv) iferr_return;

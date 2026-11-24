@@ -7,13 +7,15 @@
 //
 // Blocks: 1000 the shape, 1100 the volume shading (Blender's Principled Volume, with its names and,
 // but for the density, its defaults: objects/fog_object.cpp), 1200 the noise that varies the density
-// (Cinema 4D's noises, sampled by the plugin: scene/fog_export.h), 2000 tabs and groups. The layout is
-// to be redesigned (internal roadmap, F11): a parameter keeps its number when it moves.
+// (Cinema 4D's noises, sampled by the plugin: scene/fog_export.h) and the grid's resolution, 1300 the
+// texture that varies it too (any shader, sampled into the same grid), 2000 tabs and groups. A
+// parameter keeps its number when it moves (F11 step 2 moved the resolution to the Fog tab).
 enum
 {
 	// Tabs and groups
 	CYCLESFOG_GROUP_FOG = 2000,
 	CYCLESFOG_GROUP_NOISE = 2001,
+	CYCLESFOG_GROUP_DENSITY = 2002,              // the Fog tab's section of what varies the density
 
 	// Shape
 	CYCLESFOG_SIZE = 1000,                       // the box's edges along X, Y and Z; document units
@@ -45,7 +47,17 @@ enum
 	CYCLESFOG_NOISE_BRIGHTNESS = 1210,           // -1..1, added after the clip
 	CYCLESFOG_NOISE_CONTRAST = 1211,             // -1..1, around 0.5 after the clip
 	CYCLESFOG_NOISE_SPEED = 1212,                // the noise's time per second of the document (animation)
-	CYCLESFOG_NOISE_RESOLUTION = 1213            // cells of the grid along the box's longest edge
+	CYCLESFOG_NOISE_RESOLUTION = 1213,           // cells of the grid along the box's longest edge, for the noise
+	                                             // and the texture ("Voxel Resolution", in the Fog tab since F11 step 2)
+
+	// Texture: the density times a shader's value (any of Cinema 4D's shaders, owned by the fog), sampled
+	// into the same grid as the noise
+	CYCLESFOG_TEXTURE = 1300,                    // SHADERLINK; a shader linked turns the grid on
+	CYCLESFOG_TEXTURE_PROJECTION = 1301,         // which of the box's axes the shader's U and V lie along
+		CYCLESFOG_TEXTURE_PROJECTION_FRONT = 0,    // U along X, V down Y (W along Z): a picture upright seen from the front
+		CYCLESFOG_TEXTURE_PROJECTION_RIGHT = 1,    // U along Z, V down Y (W along X): seen from the right
+		CYCLESFOG_TEXTURE_PROJECTION_TOP = 2,      // U along X, V down Z (W along Y): seen from above
+	CYCLESFOG_GRID_INFO = 1302                   // STATICTEXT: the grid's cells (stores nothing; the number is taken)
 };
 
 #endif // OCYCLESFOG_H__

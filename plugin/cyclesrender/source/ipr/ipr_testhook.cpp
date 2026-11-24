@@ -480,6 +480,66 @@ static cinema::BaseMaterial* FirstCyclesMaterial(cinema::BaseDocument* doc)
 	return nullptr;
 }
 
+// "handle <object> [<index> <x> <y> <z>]" (ipr_testhook.h): the handles an object of the plugin offers in the viewport
+// (ObjectData::GetHandleCount, GetHandle) and, with an index and a place, that handle moved there as a drag of it
+// ends: in one undo step, GetHandle and SetHandle as Cinema 4D's own MoveHandle calls them.
+static maxon::Result<maxon::String> HandleCommand(const maxon::String& argument)
+{
+	iferr_scope;
+	cinema::BaseDocument* const doc = cinema::GetActiveDocument();
+	maxon::BaseArray<maxon::String> parts;
+	argument.Split(" "_s, true, [&parts](const maxon::String& part) -> maxon::Result<maxon::Bool>
+		{
+			iferr_scope;
+			if (part.IsPopulated())
+			{
+				parts.Append(part) iferr_return;
+			}
+			return true;
+		}) iferr_return;
+	cinema::BaseObject* const op = doc && !parts.IsEmpty() ? doc->SearchObject(parts[0]) : nullptr;
+	cinema::ObjectData* const data = op ? op->GetNodeData<cinema::ObjectData>() : nullptr;
+	if (!data)
+		return "{\"problem\":\"handle <object> [<index> <x> <y> <z>]: no such object of a plugin\"}"_s;
+	maxon::Bool moved = false;
+	if (parts.GetCount() >= 5)
+	{
+		const cinema::Int32 index = parts[1].ToInt32() iferr_return;
+		const maxon::Float x = parts[2].ToFloat() iferr_return;
+		const maxon::Float y = parts[3].ToFloat() iferr_return;
+		const maxon::Float z = parts[4].ToFloat() iferr_return;
+		const cinema::Vector p(x, y, z);
+		if (index >= 0 && index < data->GetHandleCount(op))
+		{
+			doc->StartUndo();
+			doc->AddUndo(cinema::UNDOTYPE::CHANGE_SMALL, op);
+			cinema::HandleInfo info;
+			data->GetHandle(op, index, info);
+			data->SetHandle(op, index, p, info);
+			op->SetDirty(cinema::DIRTYFLAGS::DATA);
+			doc->EndUndo();
+			cinema::EventAdd();
+			moved = true;
+		}
+	}
+	JsonWriter json;
+	json.BeginObject();
+	json.Bool("moved", moved);
+	const cinema::Int32 count = data->GetHandleCount(op);
+	json.Int("count", count);
+	json.BeginArray("handles");
+	for (cinema::Int32 i = 0; i < count; ++i)
+	{
+		cinema::HandleInfo info;
+		data->GetHandle(op, i, info);
+		const maxon::Float64 values[6] = { info.position.x, info.position.y, info.position.z, info.direction.x, info.direction.y, info.direction.z };
+		json.Floats(nullptr, values, 6);
+	}
+	json.EndArray();
+	json.EndObject();
+	return json.GetText();
+}
+
 // "objectlink probe <object>", "objectlink set <node id> [<object>]", "objectlink get <node id>" (ipr_testhook.h): a
 // setting of a Cycles node that links an object of the scene (nodespace/object_link.h), as far as a script cannot
 // reach it (it cannot drop an object into the field, and Python has no conversion between the field's Uuid and an object).
@@ -703,7 +763,8 @@ static void MeanOfFrame(const Frame& frame, maxon::Float64* mean)
 	}
 }
 
-// The test hook's "fognoise": what the last export of a Cycles Fog with a noise measured.
+// The test hook's "fognoise": what the last export of a Cycles Fog with a voxel grid (a noise, a texture or
+// both) measured.
 static maxon::String FogNoiseAnswer()
 {
 	const FogNoiseStats stats = GetLastFogNoiseStats();
@@ -718,6 +779,10 @@ static maxon::String FogNoiseAnswer()
 	answer.Bool("reused", stats.reused);
 	answer.Int("type", stats.type);
 	answer.Int("seed", stats.seed);
+	answer.Bool("noise", stats.noise);
+	answer.Bool("textured", stats.textured);
+	answer.Bool("main_thread", stats.mainThread);
+	answer.Int("filled", stats.filled);
 	answer.EndObject();
 	return answer.GetText();
 }
@@ -769,7 +834,8 @@ static maxon::String ScatterAnswer(const maxon::String& name)
 {
 	const cinema::BaseDocument* const doc = cinema::GetActiveDocument();
 	const cinema::BaseObject* const op = !doc ? nullptr : name.IsPopulated() ? FindObjectNamed(doc->GetFirstObject(), name) : doc->GetActiveObject();
-	const ScatterResult* const result = GetScatterResult(op);
+	// Held while it is read: the drawing thread may publish the next one meanwhile.
+	const ScatterResultRef result = GetScatterResult(op);
 	JsonWriter json;
 	json.BeginObject();
 	json.Bool("found", result != nullptr);
@@ -786,7 +852,9 @@ static maxon::String ScatterAnswer(const maxon::String& name)
 		json.Bool("fields_sampled", result->stats.fieldsSampled);
 		json.Float("distribute_ms", result->stats.distributeMs);
 		json.Float("effector_ms", result->stats.effectorMs);
-		json.Int("evaluations", result->evaluations);
+		json.Int("evaluations", GetScatterEvaluations(op));
+		json.Bool("cancelled", result->stats.cancelled);
+		json.Bool("capped", result->stats.capped);
 		json.Int("builds", result->builds);
 		// Something the copies follow from changed after they were computed (GetCurrentScatterCopies computes them again).
 		json.Bool("stale", ScatterDependencies(op, doc) != result->dependencies);
@@ -1118,9 +1186,9 @@ static maxon::String Execute(const maxon::String& commandLine)
 		}
 		return FormatString("{\"trace\":@,\"now\":@}", TakeIprTrace(), maxon::String::FloatToString(platform::UnixTime(), -1, 6));
 	}
-	else if (command == "curve"_s || command == "objectlink"_s)
+	else if (command == "curve"_s || command == "objectlink"_s || command == "handle"_s)
 	{
-		iferr (const maxon::String answer = (command == "curve"_s ? CurveCommand(argument) : ObjectLinkCommand(argument)))
+		iferr (const maxon::String answer = (command == "curve"_s ? CurveCommand(argument) : command == "handle"_s ? HandleCommand(argument) : ObjectLinkCommand(argument)))
 			return FormatString("{\"problem\":\"@\"}", err.GetMessage());
 		return answer;
 	}

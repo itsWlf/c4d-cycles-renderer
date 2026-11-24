@@ -30,13 +30,30 @@ def plain(value):
     return None
 
 
+def number_ui(rna):
+    """How Blender's interface treats a number property: its step (in hundredths of a unit for floats, as RNA
+    keeps it), precision, subtype and soft and hard range."""
+    ui = {"step": rna.step, "subtype": rna.subtype, "soft_min": rna.soft_min, "soft_max": rna.soft_max, "min": rna.hard_min, "max": rna.hard_max}
+    if rna.type == "FLOAT":
+        ui["precision"] = rna.precision
+    return {key: (None if isinstance(value, float) and abs(value) > 1e30 else value) for key, value in ui.items()}
+
+
 def describe(node):
     entry = {"type": node.bl_idname, "label": node.bl_label, "color_tag": getattr(node, "color_tag", ""), "inputs": [], "outputs": [], "properties": []}
     for socket in node.inputs:
         if not socket.enabled and socket.identifier.startswith("__"):
             continue
-        entry["inputs"].append({"identifier": socket.identifier, "name": socket.name, "kind": socket.bl_idname, "enabled": socket.enabled,
-                                "default": plain(socket.default_value) if hasattr(socket, "default_value") else None})
+        described = {"identifier": socket.identifier, "name": socket.name, "kind": socket.bl_idname, "enabled": socket.enabled,
+                     "default": plain(socket.default_value) if hasattr(socket, "default_value") else None}
+        # Numbers (0.3.0, F11 step 2): how Blender steps them and their range (make_nodes.py, number_plan). Only
+        # the socket class's range can be read: a socket's own range (its declaration's min and max, which
+        # Blender's field uses through rna_NodeSocketStandard_float_range) is not in bl_rna, and assigning a value
+        # beyond it from Python is not clamped (measured on 5.2.3: a Principled BSDF's Roughness took 5.0). So a
+        # factor socket has its class's 0..1, a plain float socket no range.
+        if hasattr(socket, "default_value") and isinstance(socket.default_value, (float, int)) and not isinstance(socket.default_value, bool):
+            described["ui"] = number_ui(socket.bl_rna.properties["default_value"])
+        entry["inputs"].append(described)
     for socket in node.outputs:
         entry["outputs"].append({"identifier": socket.identifier, "name": socket.name, "kind": socket.bl_idname, "enabled": socket.enabled})
     for prop in node.bl_rna.properties:
@@ -51,8 +68,10 @@ def describe(node):
                 entry["properties"].append({"identifier": prop.identifier, "name": prop.name, "kind": "ENUM", "items": items,
                                             "default": getattr(node, prop.identifier)})
         elif prop.type in ("BOOLEAN", "INT", "FLOAT", "STRING") and not getattr(prop, "is_array", False):
-            entry["properties"].append({"identifier": prop.identifier, "name": prop.name, "kind": prop.type,
-                                        "default": plain(getattr(node, prop.identifier))})
+            described = {"identifier": prop.identifier, "name": prop.name, "kind": prop.type, "default": plain(getattr(node, prop.identifier))}
+            if prop.type in ("INT", "FLOAT"):
+                described["ui"] = number_ui(prop)
+            entry["properties"].append(described)
     entry["show"] = availability(node, entry)
     return entry
 

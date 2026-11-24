@@ -625,6 +625,8 @@ static maxon::GenericData g_registeredSpace;
 static maxon::Bool g_registeredDatabase = false;
 
 // The folders of the nodes in the Asset Browser ("Cycles Nodes" and Blender's menus below it).
+// "Cycles Nodes" is in Cinema 4D's "Nodes", as Maxon's own node folders are: a folder without a
+// parent lands in "Uncategorized" in the Node Editor's node popup and the Asset Browser.
 // The built-in repository takes no new assets (StoreAsset: unsupported operation); it asks
 // loaders like this one for what it holds.
 static maxon::Result<maxon::Bool> LoadNodeFolders(const maxon::Block<const maxon::Id>& types, const maxon::Id& aid, maxon::ASSET_FIND_MODE findMode,

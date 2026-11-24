@@ -14,11 +14,17 @@
 namespace cyclesrender
 {
 
-/// The scene items a light is limited to (its "Project" tab: include or exclude list).
+/// The scene items a light is limited to (its "Project" tab: include or exclude list, and the
+/// Cycles Object tags' lists): which it lights, and which cast its shadows. Without shadowsApart the
+/// shadows follow the lighting, as Cinema 4D's own lists have it.
 struct LightLinking
 {
+	maxon::Bool lightLinked = true;              ///< the lighting is limited (the item's `linking`)
 	maxon::Bool include = false;                 ///< true: only these are lit; false: all but these
 	maxon::BaseArray<maxon::String> itemIds;     ///< ids of `object` and `instancer` items
+	maxon::Bool shadowsApart = false;            ///< the shadows have lists of their own (the item's `shadow_linking`)
+	maxon::Bool shadowInclude = false;           ///< true: only these cast its shadows; false: all but these
+	maxon::BaseArray<maxon::String> shadowItemIds;
 };
 
 /// Blender's four light types.

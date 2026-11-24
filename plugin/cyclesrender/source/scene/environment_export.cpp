@@ -334,6 +334,11 @@ static maxon::Result<NodeOutput> AddEnvironmentMaterial(MaterialExporter& materi
 	CyclesMaterialSettings settings;
 	CyclesWorldOutputs world;
 	BuildCyclesNodeSurface(materials, graph, material, surface, displacement, settings, &world) iferr_return;
+	if (!world.found)
+	{
+		// No World Output is for the engine that renders (their Target): said by BuildCyclesNodeSurface.
+		return AddBackground(graph, cinema::Vector(0.0), 0.0);
+	}
 	if (!world.surface.IsValid())
 	{
 		writer.Warn(FormatString("Environment \"@\": nothing is wired into the Surface of the World Output of \"@\"; the world is black.", environment->GetName(), material->GetName()));

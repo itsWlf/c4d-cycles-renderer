@@ -16,6 +16,24 @@ namespace cyclesrender
 {
 
 //----------------------------------------------------------------------------------------
+/// A fingerprint of the settings of @p shader and of every shader inside it, folded into @p hash: made
+/// from the settings as Cinema 4D would save them (links count by the type and name of what they point
+/// to), so the same shader in the copy of the document a render works on gives the same fingerprint,
+/// and a changed value (a gradient's knot) another one. A bitmap shader counts with the time its file
+/// was last changed. Used for baked textures (MaterialExporter::GetBakedImageId) and the Cycles Fog's
+/// texture grid (scene/fog_export.h).
+//----------------------------------------------------------------------------------------
+maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash);
+
+//----------------------------------------------------------------------------------------
+/// What a shader's values depend on besides its settings, folded into @p hash: @p doc's colour settings
+/// (they decide how its colours are taken in), and the frame when the shader or one inside it changes
+/// over time by itself (SHADERINFO::TIMEDEPENDENT, a movie or image sequence). A shader animated by keys
+/// needs no frame: its settings change, and with them ShaderFingerprint().
+//----------------------------------------------------------------------------------------
+maxon::UInt64 ShaderSurroundings(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash);
+
+//----------------------------------------------------------------------------------------
 /// How a texture tag lays a material's textures on the object.
 //----------------------------------------------------------------------------------------
 struct TextureMapping
@@ -232,6 +250,10 @@ public:
 	void SetBlenderVersion(maxon::Int32 code, const maxon::String& text) { _blenderVersion = code; _blenderVersionText = text; }
 	maxon::Int32 GetBlenderVersion() const { return _blenderVersion; }
 	const maxon::String& GetBlenderVersionText() const { return _blenderVersionText; }
+	/// The engine that will render what is written: of several output nodes of a Cycles graph the one whose
+	/// Target fits it counts (cycles_node_material.cpp, ChooseOutput). False, the default, is Cycles.
+	void SetEevee(maxon::Bool eevee) { _eevee = eevee; }
+	maxon::Bool IsEevee() const { return _eevee; }
 	cinema::BaseDocument* GetDocument() const { return _doc; }
 	/// The document's colour settings: every colour parameter goes through Input() on its way out.
 	const DocumentColors& GetColors() const { return _colors; }
@@ -247,6 +269,7 @@ private:
 	maxon::Bool _itemNames = false;
 	maxon::Int32 _blenderVersion = 0;
 	maxon::String _blenderVersionText;
+	maxon::Bool _eevee = false;
 	maxon::HashMap<maxon::String, maxon::String> _materials;   ///< what a material item was made from -> its id
 	maxon::HashMap<maxon::String, maxon::String> _images;
 	maxon::HashMap<maxon::String, maxon::Bool> _imageAlpha;      ///< image file -> has an alpha channel

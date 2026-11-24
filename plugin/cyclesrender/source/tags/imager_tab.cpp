@@ -21,6 +21,8 @@ namespace cyclesrender
 
 // Blender's limits beyond this are none (tools/make_effects.py, NO_LIMIT).
 static const maxon::Float64 NO_LIMIT = 1.0e29;
+// The widest range a number is shown as a slider over (as tools/make_nodes.py's SLIDER_SPAN): wider ones keep a field.
+static const maxon::Float64 IMAGER_SLIDER_SPAN = 100.0;
 
 // The first Blender the table knows: an effect, setting or option that came later says so in its name.
 static maxon::Int32 OldestBlender()
@@ -314,8 +316,9 @@ static cinema::BaseContainer SettingDescription(const ImagerSetting& setting)
 			bc.SetFloat(cinema::DESC_MAX, setting.maximum);
 		bc.SetInt32(cinema::DESC_UNIT, setting.subtype == 'A' ? cinema::DESC_UNIT_DEGREE : cinema::DESC_UNIT_FLOAT);
 		bc.SetFloat(cinema::DESC_STEP, setting.subtype == 'A' ? 0.017453292519943295 : (setting.subtype == 'F' ? 0.01 : 0.1));
-		// A factor is a slider between Blender's limits.
-		if (setting.kind == 'f' && setting.subtype == 'F' && hasMinimum && hasMaximum)
+		// A slider between Blender's limits wherever they make a usable range: a factor, or any number bounded on
+		// both sides within IMAGER_SLIDER_SPAN (0.3.0, F11 step 2, the rule of tools/make_nodes.py, number_plan).
+		if (setting.kind == 'f' && hasMinimum && hasMaximum && (setting.subtype == 'F' || setting.maximum - setting.minimum <= IMAGER_SLIDER_SPAN))
 		{
 			bc.SetInt32(cinema::DESC_CUSTOMGUI, CUSTOMGUI_REALSLIDER);
 			bc.SetFloat(cinema::DESC_MINSLIDER, setting.minimum);
@@ -328,6 +331,13 @@ static cinema::BaseContainer SettingDescription(const ImagerSetting& setting)
 			bc.SetInt32(cinema::DESC_MIN, maxon::Int32(setting.minimum));
 		if (hasMaximum)
 			bc.SetInt32(cinema::DESC_MAX, maxon::Int32(setting.maximum));
+		bc.SetInt32(cinema::DESC_STEP, 1);
+		if (hasMinimum && hasMaximum && setting.maximum - setting.minimum <= IMAGER_SLIDER_SPAN)
+		{
+			bc.SetInt32(cinema::DESC_CUSTOMGUI, CUSTOMGUI_LONGSLIDER);
+			bc.SetInt32(cinema::DESC_MINSLIDER, maxon::Int32(setting.minimum));
+			bc.SetInt32(cinema::DESC_MAXSLIDER, maxon::Int32(setting.maximum));
+		}
 	}
 	else if (setting.kind == 'm')
 	{

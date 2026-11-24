@@ -84,6 +84,11 @@ static const cinema::Int32 ID_SCATTER_OBJECT = 1074728;
 /// Stored in scene files.
 static const cinema::Int32 ID_PROXY_OBJECT = 1074729;
 
+/// The command "Cycles Camera": adds a camera with a Cycles Camera tag, as the IPR window's menu
+/// "Objects" does (ipr/ipr_add.h). Listed in the plugin's submenu of the Extensions menu
+/// (plugin_menu.h). Issued by the maintainer, 2026-11-24.
+static const cinema::Int32 ID_CAMERA_COMMAND = 1074797;
+
 /// The scene hook that tells the IPR the document was evaluated during a modal loop
 /// (ipr/ipr_scenehook.h). Stored in every scene file saved with the plugin, which is why it has a
 /// number of its own and does not share the renderer's.

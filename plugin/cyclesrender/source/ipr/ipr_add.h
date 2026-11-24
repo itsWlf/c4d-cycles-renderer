@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// What the IPR window's "Add" menu adds to the active document: what the plugin offers, made
-// right there, each in one undo step.
+// What the IPR window's menus "Objects" and "Materials" add to the active document: what the plugin
+// offers, made right there, each in one undo step. Also the command "Cycles Camera", which adds the
+// camera with its tag from the Extensions menu and the Commander.
 
 #ifndef CYCLESRENDER_IPR_ADD_H__
 #define CYCLESRENDER_IPR_ADD_H__
@@ -10,7 +11,8 @@
 namespace cyclesrender
 {
 
-/// The entries of the "Add" menu.
+/// What can be added. The IPR window's menus list the objects and the materials; the three tags on
+/// the selection are in no menu since F11 (0.3.0) and stay for the test hook's commands.
 enum class IPRADD
 {
 	CYCLES_MATERIAL,				///< a material of Cycles nodes, as the command "Cycles Material" makes it
@@ -32,6 +34,13 @@ enum class IPRADD
 /// @return              The number of things added.
 //----------------------------------------------------------------------------------------
 maxon::Int AddToDocument(cinema::BaseDocument* doc, IPRADD what, maxon::String& message);
+
+//----------------------------------------------------------------------------------------
+/// Registers the command "Cycles Camera" (ID_CAMERA_COMMAND, the Cycles Camera tag's icon): adds
+/// IPRADD::CAMERA_WITH_TAG to the active document and shows what was done in the status bar.
+/// @return  Whether Cinema 4D took the command.
+//----------------------------------------------------------------------------------------
+cinema::Bool RegisterCameraCommand();
 
 //----------------------------------------------------------------------------------------
 /// Keeps the render view on the right camera through undo and redo of "Camera with Cycles

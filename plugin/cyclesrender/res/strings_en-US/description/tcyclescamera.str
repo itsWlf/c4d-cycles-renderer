@@ -7,6 +7,7 @@ STRINGTABLE Tcyclescamera
 	CYCLESCAMERA_DOF_ENABLE                 "Depth of Field";
 	CYCLESCAMERA_DOF_FOCUS_OBJECT           "Focus Object";
 	CYCLESCAMERA_DOF_FOCUS_DISTANCE         "Focus Distance";
+	CYCLESCAMERA_DOF_TAKE_FOCUS             "Take from Camera";
 	CYCLESCAMERA_DOF_FSTOP                  "F-Stop";
 	CYCLESCAMERA_GROUP_APERTURE             "Aperture";
 	CYCLESCAMERA_DOF_BLADES                 "Blades";

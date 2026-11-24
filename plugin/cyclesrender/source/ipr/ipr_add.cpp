@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-// The IPR window's "Add" menu (ipr_add.h).
+// What the IPR window's menus "Objects" and "Materials" add, and the command "Cycles Camera" (ipr_add.h).
 
 #include "c4d.h"
 #include "c4d_basematerial.h"
+#include "c4d_commanddata.h"
 #include "c4d_resource.h"
 #include "c4d_symbols.h"
 #include "ocamera.h"
@@ -388,6 +389,39 @@ maxon::Int AddToDocument(cinema::BaseDocument* doc, IPRADD what, maxon::String& 
 	}
 	cinema::EventAdd();
 	return added;
+}
+
+namespace
+{
+/// The command "Cycles Camera": what the IPR window's "Objects > Cycles Camera" does, from anywhere.
+class CameraCommand : public cinema::CommandData
+{
+public:
+	virtual cinema::Bool Execute(cinema::BaseDocument* doc, cinema::GeDialog* parentManager) override
+	{
+		maxon::String message;
+		const maxon::Int added = AddToDocument(doc, IPRADD::CAMERA_WITH_TAG, message);
+		if (message.IsPopulated())
+			cinema::StatusSetText(message);
+		return added > 0;
+	}
+};
+}
+
+cinema::Bool RegisterCameraCommand()
+{
+	CameraCommand* const command = NewObjClear(CameraCommand);
+	if (!command)
+		return false;
+	// The Cycles Camera tag's icon: what the command adds is a camera that wears one.
+	cinema::BaseBitmap* icon = cinema::BaseBitmap::Alloc();
+	if (icon && icon->Init(cinema::GeGetPluginResourcePath() + cinema::Filename("icons"_s) + cinema::Filename("camera_tag.png"_s)) != cinema::IMAGERESULT::OK)
+		cinema::BaseBitmap::Free(icon);
+	// Listed by the plugin's own submenu of the Extensions menu (plugin_menu.h), not by Cinema 4D.
+	const cinema::Bool registered = cinema::RegisterCommandPlugin(ID_CAMERA_COMMAND, cinema::GeLoadString(IDS_CAMERA_COMMAND_NAME), PLUGINFLAG_HIDEPLUGINMENU,
+		icon, "Add a camera where the view looks from, with a Cycles Camera tag, and look through it"_s, command);
+	cinema::BaseBitmap::Free(icon);
+	return registered;
 }
 
 } // namespace cyclesrender

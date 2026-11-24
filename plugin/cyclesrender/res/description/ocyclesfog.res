@@ -4,8 +4,9 @@ CONTAINER Ocyclesfog
 	NAME Ocyclesfog;
 	INCLUDE Obase;
 
-	// One tab: the box's size, then Blender's Principled Volume with its names, in the order of
-	// Blender's node. Kept plain: the layout is to be redesigned (ids never change with it).
+	// The main tab: the box's size, then Blender's Principled Volume with its names, in the order of
+	// Blender's node, with what varies the density across the box after the density's own values:
+	// a texture, and the grid both it and the Noise tab are sampled into (ids never change with the layout).
 	GROUP CYCLESFOG_GROUP_FOG
 	{
 		DEFAULT 1;
@@ -14,19 +15,40 @@ CONTAINER Ocyclesfog
 		SEPARATOR { LINE; }
 		COLOR CYCLESFOG_COLOR { }
 		REAL CYCLESFOG_DENSITY { MIN 0.0; STEP 0.01; }
-		REAL CYCLESFOG_ANISOTROPY { MIN -1.0; MAX 1.0; STEP 0.05; CUSTOMGUI REALSLIDER; }
+		REAL CYCLESFOG_ANISOTROPY { MIN -1.0; MAX 1.0; STEP 0.01; CUSTOMGUI REALSLIDER; }
 		COLOR CYCLESFOG_ABSORPTION_COLOR { }
+
+		// A shader shapes the density (its value times the Density; with the Noise tab on, times the noise
+		// as well); both are sampled at the centres of a grid of voxels that fills the box.
+		GROUP CYCLESFOG_GROUP_DENSITY
+		{
+			DEFAULT 1;
+
+			SHADERLINK CYCLESFOG_TEXTURE { }
+			LONG CYCLESFOG_TEXTURE_PROJECTION
+			{
+				CYCLE
+				{
+					CYCLESFOG_TEXTURE_PROJECTION_FRONT;
+					CYCLESFOG_TEXTURE_PROJECTION_RIGHT;
+					CYCLESFOG_TEXTURE_PROJECTION_TOP;
+				}
+			}
+			LONG CYCLESFOG_NOISE_RESOLUTION { MIN 8; MAX 512; STEP 8; CUSTOMGUI LONGSLIDER; MINSLIDER 8; MAXSLIDER 512; }
+			STATICTEXT CYCLESFOG_GRID_INFO { }
+		}
 		SEPARATOR { LINE; }
 		REAL CYCLESFOG_EMISSION_STRENGTH { MIN 0.0; STEP 0.1; }
 		COLOR CYCLESFOG_EMISSION_COLOR { }
 		SEPARATOR { LINE; }
 		REAL CYCLESFOG_BLACKBODY_INTENSITY { MIN 0.0; STEP 0.1; }
 		COLOR CYCLESFOG_BLACKBODY_TINT { }
-		REAL CYCLESFOG_TEMPERATURE { MIN 0.0; STEP 100.0; }
+		REAL CYCLESFOG_TEMPERATURE { MIN 0.0; STEP 1.0; }
 	}
 
 	// The density varied by one of Cinema 4D's noises, with the Noise shader's names. The noise types
-	// are filled in from Cinema 4D's own menu (objects/fog_object.cpp, GetDDescription).
+	// are filled in from Cinema 4D's own menu (objects/fog_object.cpp, GetDDescription). Its grid's
+	// resolution is in the Fog tab, shared with the texture.
 	GROUP CYCLESFOG_GROUP_NOISE
 	{
 		BOOL CYCLESFOG_NOISE_ENABLE { ANIM OFF; }
@@ -43,7 +65,7 @@ CONTAINER Ocyclesfog
 		}
 		REAL CYCLESFOG_NOISE_SCALE { UNIT METER; MIN 0.001; STEP 1.0; }
 		VECTOR CYCLESFOG_NOISE_RELATIVE_SCALE { UNIT PERCENT; MIN 0.0; STEP 1.0; }
-		REAL CYCLESFOG_NOISE_OCTAVES { MIN 0.0; MAX 20.0; STEP 0.1; }
+		REAL CYCLESFOG_NOISE_OCTAVES { MIN 0.0; MAX 20.0; STEP 0.1; CUSTOMGUI REALSLIDER; MINSLIDER 0.0; MAXSLIDER 10.0; }
 		LONG CYCLESFOG_NOISE_SEED { }
 		BOOL CYCLESFOG_NOISE_ABSOLUTE { }
 		SEPARATOR { LINE; }
@@ -52,7 +74,5 @@ CONTAINER Ocyclesfog
 		REAL CYCLESFOG_NOISE_BRIGHTNESS { UNIT PERCENT; MIN -100.0; MAX 100.0; STEP 1.0; CUSTOMGUI REALSLIDER; }
 		REAL CYCLESFOG_NOISE_CONTRAST { UNIT PERCENT; MIN -100.0; MAX 100.0; STEP 1.0; CUSTOMGUI REALSLIDER; }
 		REAL CYCLESFOG_NOISE_SPEED { MIN 0.0; STEP 0.1; }
-		SEPARATOR { LINE; }
-		LONG CYCLESFOG_NOISE_RESOLUTION { MIN 8; MAX 512; STEP 8; }
 	}
 }

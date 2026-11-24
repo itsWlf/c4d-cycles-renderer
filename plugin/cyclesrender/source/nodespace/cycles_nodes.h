@@ -74,7 +74,7 @@ struct CyclesNodeFolder
 {
 	const maxon::Char* id;          ///< id of the category asset
 	const maxon::Char* label;
-	const maxon::Char* parent;      ///< id of the folder it is in, or nullptr for the top one ("Cycles Nodes")
+	const maxon::Char* parent;      ///< id of the folder it is in; for the top one ("Cycles Nodes") Cinema 4D's "Nodes"
 };
 
 /// The id of the node space; also the key of a material's graph in scene files.

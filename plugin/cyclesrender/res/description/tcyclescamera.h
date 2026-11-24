@@ -33,6 +33,7 @@ enum
 	CYCLESCAMERA_DOF_BLADES = 1004,            // 0: round; fewer than 3 is round in Blender
 	CYCLESCAMERA_DOF_ROTATION = 1005,          // radians
 	CYCLESCAMERA_DOF_RATIO = 1006,             // anamorphic bokeh
+	CYCLESCAMERA_DOF_TAKE_FOCUS = 1007,        // button (0.3.0, F11): the camera's own focus distance into 1002
 
 	// Lens (Blender's camera, Lens panel)
 	CYCLESCAMERA_LENS_TYPE = 1100,

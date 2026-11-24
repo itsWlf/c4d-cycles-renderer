@@ -807,6 +807,8 @@ static const CyclesSocket OUTPUTMATERIAL_INPUTS[] =
 
 static const CyclesProperty OUTPUTMATERIAL_PROPERTIES[] =
 {
+	{ "is_active_output", "prop.is_active_output", "Active Output", 'b', "", "", 0.0, 500 },
+	{ "target", "prop.target", "Target", 'e', "ALL|All;EEVEE|EEVEE;CYCLES|Cycles", "ALL", 0.0, 500 },
 	{ "material:displacement_method", "prop.material_displacement_method", "Displacement", 'e', "BUMP|Bump Only;DISPLACEMENT|Displacement Only;BOTH|Displacement and Bump", "BUMP", 0.0, 500 },
 	{ "material:cycles.emission_sampling", "prop.material_cycles_emission_sampling", "Emission Sampling", 'e', "NONE|None;AUTO|Auto;FRONT|Front;BACK|Back;FRONT_BACK|Front and Back", "AUTO", 0.0, 500 },
 	{ "material:use_transparent_shadow", "prop.material_use_transparent_shadow", "Transparent Shadows", 'b', "", "", 1.0, 500 },
@@ -831,6 +833,12 @@ static const CyclesSocket OUTPUTWORLD_INPUTS[] =
 {
 	{ "Surface", "in.surface", "Surface", 's', { 0.0, 0.0, 0.0, 0.0 }, "", "", 500 },
 	{ "Volume", "in.volume", "Volume", 's', { 0.0, 0.0, 0.0, 0.0 }, "", "", 500 },
+};
+
+static const CyclesProperty OUTPUTWORLD_PROPERTIES[] =
+{
+	{ "is_active_output", "prop.is_active_output", "Active Output", 'b', "", "", 0.0, 500 },
+	{ "target", "prop.target", "Target", 'e', "ALL|All;EEVEE|EEVEE;CYCLES|Cycles", "ALL", 0.0, 500 },
 };
 
 static const CyclesSocket PARTICLEINFO_OUTPUTS[] =
@@ -1636,8 +1644,8 @@ static const CyclesNode CYCLES_NODES[] =
 	{ "ShaderNodeNormal", "com.wolfnimations.cyclesrender.node.normal", "Normal", "VECTOR", NORMAL_INPUTS, 1, NORMAL_OUTPUTS, 2, NORMAL_PROPERTIES, 1, 500 },
 	{ "ShaderNodeNormalMap", "com.wolfnimations.cyclesrender.node.normalmap", "Normal Map", "VECTOR", NORMALMAP_INPUTS, 2, NORMALMAP_OUTPUTS, 1, NORMALMAP_PROPERTIES, 4, 500 },
 	{ "ShaderNodeObjectInfo", "com.wolfnimations.cyclesrender.node.objectinfo", "Object Info", "INPUT", nullptr, 0, OBJECTINFO_OUTPUTS, 6, nullptr, 0, 500 },
-	{ "ShaderNodeOutputMaterial", "com.wolfnimations.cyclesrender.node.outputmaterial", "Material Output", "OUTPUT", OUTPUTMATERIAL_INPUTS, 4, nullptr, 0, OUTPUTMATERIAL_PROPERTIES, 18, 500 },
-	{ "ShaderNodeOutputWorld", "com.wolfnimations.cyclesrender.node.outputworld", "World Output", "OUTPUT", OUTPUTWORLD_INPUTS, 2, nullptr, 0, nullptr, 0, 500 },
+	{ "ShaderNodeOutputMaterial", "com.wolfnimations.cyclesrender.node.outputmaterial", "Material Output", "OUTPUT", OUTPUTMATERIAL_INPUTS, 4, nullptr, 0, OUTPUTMATERIAL_PROPERTIES, 20, 500 },
+	{ "ShaderNodeOutputWorld", "com.wolfnimations.cyclesrender.node.outputworld", "World Output", "OUTPUT", OUTPUTWORLD_INPUTS, 2, nullptr, 0, OUTPUTWORLD_PROPERTIES, 2, 500 },
 	{ "ShaderNodeParticleInfo", "com.wolfnimations.cyclesrender.node.particleinfo", "Particle Info", "INPUT", nullptr, 0, PARTICLEINFO_OUTPUTS, 8, nullptr, 0, 500 },
 	{ "ShaderNodePointInfo", "com.wolfnimations.cyclesrender.node.pointinfo", "Point Info", "INPUT", nullptr, 0, POINTINFO_OUTPUTS, 3, nullptr, 0, 500 },
 	{ "ShaderNodeRGB", "com.wolfnimations.cyclesrender.node.rgb", "Color", "INPUT", nullptr, 0, RGB_OUTPUTS, 1, RGB_PROPERTIES, 1, 500 },
@@ -1686,7 +1694,7 @@ static const CyclesNode CYCLES_NODES[] =
 // The folders of the nodes in the Asset Browser: id, name, id of the folder it is in.
 static const CyclesNodeFolder CYCLES_NODE_FOLDERS[] =
 {
-	{ "com.wolfnimations.cyclesrender.assetcategory.nodes", "Cycles Nodes", nullptr },
+	{ "com.wolfnimations.cyclesrender.assetcategory.nodes", "Cycles Nodes", "category@52d8f01357834200aa0dc28f0e61bbb3" },
 	{ "com.wolfnimations.cyclesrender.assetcategory.nodes.shader", "Shader", "com.wolfnimations.cyclesrender.assetcategory.nodes" },
 	{ "com.wolfnimations.cyclesrender.assetcategory.nodes.input", "Input", "com.wolfnimations.cyclesrender.assetcategory.nodes" },
 	{ "com.wolfnimations.cyclesrender.assetcategory.nodes.color", "Color", "com.wolfnimations.cyclesrender.assetcategory.nodes" },

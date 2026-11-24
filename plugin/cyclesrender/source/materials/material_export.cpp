@@ -947,7 +947,7 @@ maxon::Int MaterialExporter::GetBakeCount()
 // document that a render works on gives the same fingerprint, and two shaders of one kind in
 // one material do not. (Dirty counters fail on both counts.) A bitmap shader's picture counts
 // with the time its file was last changed, so that a texture edited on disk is baked again.
-static maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash)
+maxon::UInt64 ShaderFingerprint(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash)
 {
 	hash = (hash ^ maxon::UInt64(shader->GetType())) * 0x100000001B3ull;
 	// Links (a Filter's texture, a Layer's layers, a shader's object) are left out of what is
@@ -1075,6 +1075,20 @@ static maxon::Bool IsTimeDependent(cinema::BaseShader* shader)
 	return false;
 }
 
+maxon::UInt64 ShaderSurroundings(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::UInt64 hash)
+{
+	const cinema::BaseContainer& documentData = doc->GetDataInstanceRef();
+	const maxon::Int32 colorProfile = documentData.GetInt32(cinema::DOCUMENT_COLORPROFILE, cinema::DOCUMENT_COLORPROFILE_SRGB);
+	const maxon::Bool linearWorkflow = documentData.GetBool(cinema::DOCUMENT_LINEARWORKFLOW, true);
+	hash = (hash ^ maxon::UInt64(colorProfile) ^ (maxon::UInt64(linearWorkflow) << 8) ^
+		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_COLOR_MANAGEMENT)) << 16) ^
+		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_OCIO_RENDER_COLORSPACE)) << 24)) * 0x100000001B3ull;
+	hash = (hash ^ maxon::UInt64(documentData.GetFilename(cinema::DOCUMENT_OCIO_CONFIG).GetString().GetHashCode())) * 0x100000001B3ull;
+	if (IsTimeDependent(shader))
+		hash = (hash ^ maxon::UInt64(doc->GetTime().GetFrame(doc->GetFps()) + 1)) * 0x100000001B3ull;
+	return hash;
+}
+
 maxon::Result<maxon::String> MaterialExporter::GetBakedImageId(cinema::BaseShader* shader)
 {
 	iferr_scope;
@@ -1093,12 +1107,7 @@ maxon::Result<maxon::String> MaterialExporter::GetBakedImageId(cinema::BaseShade
 	const maxon::Bool linearWorkflow = documentData.GetBool(cinema::DOCUMENT_LINEARWORKFLOW, true);
 	maxon::UInt64 key = ShaderFingerprint(shader, _doc, maxon::UInt64(_bakeResolution) * 0x9E3779B97F4A7C15ull);
 	key = (key ^ maxon::UInt64(owner ? owner->GetName().GetHashCode() : 0)) * 0x100000001B3ull;
-	key = (key ^ maxon::UInt64(colorProfile) ^ (maxon::UInt64(linearWorkflow) << 8) ^
-		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_COLOR_MANAGEMENT)) << 16) ^
-		(maxon::UInt64(documentData.GetInt32(cinema::DOCUMENT_OCIO_RENDER_COLORSPACE)) << 24)) * 0x100000001B3ull;
-	key = (key ^ maxon::UInt64(documentData.GetFilename(cinema::DOCUMENT_OCIO_CONFIG).GetString().GetHashCode())) * 0x100000001B3ull;
-	if (IsTimeDependent(shader))
-		key = (key ^ maxon::UInt64(_doc->GetTime().GetFrame(_doc->GetFps()) + 1)) * 0x100000001B3ull;
+	key = ShaderSurroundings(shader, _doc, key);
 	const maxon::String id = FormatString("image_baked_@", maxon::String::HexToString(key, false));
 	if (_images.Find(id))
 		return id;

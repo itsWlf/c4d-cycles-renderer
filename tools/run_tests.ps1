@@ -64,6 +64,7 @@ start and is emptied before every script. When c4dpy ends before every test of a
 reported, the test that was running fails and the ones not yet run are run again, each alone.
 The last tests, ipr_window_checks, ipr_follow_window, ipr_lights_window, ipr_navigate_window,
 ipr_live_window, ipr_optimized_window, ipr_values_window, ipr_threads_window, ipr_frames_window, new_light_window, baked_files_window,
+scatter_threads_window,
 blender_missing_window and default_engine_window,
 need windows and start the
 regular Cinema 4D for about half a minute each, with a preferences folder of their own so that the
@@ -216,7 +217,8 @@ $c4dTests = @(
   @{ Name = "visibility"; Covers = @("${P}scene/light_export.*", "${P}scene/scene_exporter.*", "${B}scene/lights.py", "${B}scene/objects.py") },
   @{ Name = "redshift"; Covers = @("${P}scene/light_export.*", "${P}scene/camera_export.*", "${B}scene/lights.py", "${B}scene/cameras.py") },
   @{ Name = "object_tag"; Settings = @{ g_cyclesRenderCapture = "<file>" }
-     Covers = @("${P}tags/object_tag.*", "${R}description/tcyclesobject.*", "${R}strings_en-US/description/tcyclesobject.str", "${P}scene/light_export.*", "${P}scene/curves_export.*", "${B}scene/instancers.py", "${B}scene/objects.py") },
+     Covers = @("${P}tags/object_tag.*", "${R}description/tcyclesobject.*", "${R}strings_en-US/description/tcyclesobject.str", "${P}scene/light_export.*", "${P}scene/curves_export.*", "${B}scene/instancers.py", "${B}scene/objects.py",
+                "${B}scene/lights.py") },
   @{ Name = "fire_vdb"; Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
@@ -299,12 +301,15 @@ $c4dTests = @(
   @{ Name = "ipr_add"; Settings = @{ g_cyclesRenderIprTest = "true" }; Covers = @("${P}ipr/ipr_add.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_testhook.*", "${P}lights/light_tag.*", "${P}lights/light_object.*") },
   @{ Name = "cycles_lights"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}lights/*", "${R}description/ocycleslight.*", "${R}description/tcycleslight.*", "${R}strings_en-US/description/ocycleslight.str",
-                "${R}strings_en-US/description/tcycleslight.str", "${P}scene/light_export.*", "${B}scene/lights.py", "${R}icons/*", "tools/make_icons.py") },
+                "${R}strings_en-US/description/tcycleslight.str", "${P}scene/light_export.*", "${B}scene/lights.py", "${R}icons/*", "tools/make_icons.py",
+                "${P}ipr/ipr_testhook.*") },
   # The Cycles Fog object (0.3.0, F5): Beer-Lambert, colours, emission, shape against a Cube of the
-  # Standard renderer, the check, the IPR's move and value alone, the Add menu; the noise.
+  # Standard renderer, the check, the IPR's move and value alone, the Add menu; the noise; the texture (F11
+  # step 2), which shares the shader fingerprint of the material exporter.
   @{ Name = "fog_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}objects/fog_object.*", "${P}scene/fog_export.*", "${R}description/ocyclesfog.*", "${R}strings_en-US/description/ocyclesfog.str",
-                "${P}ipr/ipr_add.*", "${P}scene/volume_export.*", "${B}scene/volumes.py", "${B}scene/meshes.py", "${R}icons/*", "tools/make_icons.py") },
+                "${P}ipr/ipr_add.*", "${P}scene/volume_export.*", "${B}scene/volumes.py", "${B}scene/meshes.py", "${R}icons/*", "tools/make_icons.py",
+                "${P}materials/material_export.*") },
   # The Cycles Environment object (0.3.0, F4): colour, HDRI against the Sky in 22 directions, Blender's Sky
   # Texture and its sun, which environment is used, the world written alone in the IPR.
   @{ Name = "environment_object"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
@@ -389,6 +394,10 @@ $c4dTests = @(
   @{ Name = "ipr_threads_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_dialog.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_trace.*",
                 "${P}ipr/ipr_testhook.*", "${P}session/frame_watcher.*", "${P}scene/camera_export.*", "${P}main.cpp", "tests/c4d/harness/*") },
+  # The Cycles Scatter read on the main thread while the drawing thread computes its copies (0.3.0, F11 step 3,
+  # the fault behind the maintainer's freeze): every read whole, a stop of the threads ends a long Poisson build.
+  @{ Name = "scatter_threads_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true" }
+     Covers = @("${P}objects/scatter_*", "${P}scene/scene_exporter.*", "${P}ipr/ipr_testhook.*") },
   # At most about 30 frames a second shown, the last one always; the status line's device.
   @{ Name = "ipr_frames_window"; Window = $true; CleanPrefs = $true; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderBlender = $Blender }
      Covers = @("${P}ipr/ipr_dialog.*", "${P}ipr/ipr_image_area.*", "${P}ipr/ipr_controller.*", "${P}ipr/ipr_scenehook.*", "${P}ipr/ipr_trace.*",

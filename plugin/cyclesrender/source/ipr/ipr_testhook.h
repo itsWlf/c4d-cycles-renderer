@@ -55,7 +55,12 @@ namespace cyclesrender
 /// "uuid", "same_uuid_again" (asked twice), "marker" (the object's marker as hex), "guid", "back_is_object",
 /// "copy_resolves" and "copy_is_twin" (in a GetClone of the document: found, and the copy's object of that
 /// name), "copy_marker", "copy_guid", "clone_uuid" (or "clone_problem"), "clone_marker", "clone_resolves" (a
-/// copy of the object alone, in no document), "unknown_resolves" (a new Uuid)}. And add material|camera|camera_tag|
+/// copy of the object alone, in no document), "unknown_resolves" (a new Uuid)}.
+/// handle <object name> [<index> <x> <y> <z>] answers the viewport handles of an object of the plugin in the active
+/// document ({"moved", "count", "handles": [[x, y, z, direction x, y, z], ...]}, object space, as GetHandle gives
+/// them) and, with an index and a place in the object's space, first moves that handle there as the end of a drag
+/// does (GetHandle, then SetHandle; one undo step; a script cannot drag a handle).
+/// add material|camera|camera_tag|
 /// object_tag|light|light_tag|fog|environment|world_material|scatter|proxy runs an entry of the window's "Add" menu (ipr_add.h): {"added", "message"};
 /// add follow runs FollowAddedCameras() as the message plugin does after a change: {"views_set", "switches"}.
 /// devices [find|type <n>|use <index> <0|1>|reset] works on the Preferences page's Cycles Render

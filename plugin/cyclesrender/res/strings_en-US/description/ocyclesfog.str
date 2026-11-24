@@ -15,6 +15,14 @@ STRINGTABLE Ocyclesfog
 	CYCLESFOG_BLACKBODY_TINT                "Blackbody Tint";
 	CYCLESFOG_TEMPERATURE                   "Temperature (K)";
 
+	CYCLESFOG_GROUP_DENSITY                 "Density Variation";
+	CYCLESFOG_TEXTURE                       "Texture";
+	CYCLESFOG_TEXTURE_PROJECTION            "Projection";
+	CYCLESFOG_TEXTURE_PROJECTION_FRONT      "Front (X, Y)";
+	CYCLESFOG_TEXTURE_PROJECTION_RIGHT      "Right (Z, Y)";
+	CYCLESFOG_TEXTURE_PROJECTION_TOP        "Top (X, Z)";
+	CYCLESFOG_GRID_INFO                     "Voxels";
+
 	CYCLESFOG_GROUP_NOISE                   "Noise";
 	CYCLESFOG_NOISE_ENABLE                  "Vary the Density by a Noise";
 	CYCLESFOG_NOISE_TYPE                    "Noise";
@@ -31,5 +39,5 @@ STRINGTABLE Ocyclesfog
 	CYCLESFOG_NOISE_BRIGHTNESS              "Brightness";
 	CYCLESFOG_NOISE_CONTRAST                "Contrast";
 	CYCLESFOG_NOISE_SPEED                   "Animation Speed";
-	CYCLESFOG_NOISE_RESOLUTION              "Resolution";
+	CYCLESFOG_NOISE_RESOLUTION              "Voxel Resolution";
 }

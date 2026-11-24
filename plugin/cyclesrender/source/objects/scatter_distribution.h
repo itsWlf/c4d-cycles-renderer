@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Where the Cycles Scatter object puts its copies: over a surface (on its points, by area, or as a Poisson
-// disc), or from a CSV file; thinned out by a vertex map, a shader, the surface's slope and a field list;
-// turned to the surface; varied by shaders; then changed by MoGraph's effectors.
+// disc), inside a closed mesh, or from a CSV file; thinned out by a vertex map, a shader, the surface's slope
+// and a field list; turned to the surface; varied by shaders; then changed by MoGraph's effectors.
 
 #ifndef CYCLESRENDER_SCATTER_DISTRIBUTION_H__
 #define CYCLESRENDER_SCATTER_DISTRIBUTION_H__
@@ -14,6 +14,10 @@ namespace cyclesrender
 /// The colour a copy has before any effector colours it: MoGraph's colour of a Cloner's clone that no
 /// effector touched (measured, docs/reference/c4d-sdk.md, "The Cycles Scatter object").
 static const cinema::Vector SCATTER_COPY_COLOR = cinema::Vector(1.0);
+
+/// The most copies one scatter makes, whatever its settings (the Count's own maximum): about 1.2 GB of copies in
+/// the plugin and as much again in the instancers sent to Blender. The console says when it was reached.
+static const maxon::Int SCATTER_MAX_COPIES = 10000000;
 
 /// The copies of one scatter, in the scatter object's axes.
 struct ScatterCopies
@@ -32,6 +36,8 @@ struct ScatterStats
 	maxon::Int triangles = 0;            ///< of the surface
 	maxon::Int effectorsRun = 0;         ///< effectors executed
 	maxon::Bool fieldsSampled = false;   ///< the object's own field list was sampled
+	maxon::Bool cancelled = false;       ///< the evaluating thread was asked to stop (BaseThread::TestBreak): the copies are incomplete
+	maxon::Bool capped = false;          ///< SCATTER_MAX_COPIES was reached
 	maxon::Float64 distributeMs = 0.0;   ///< placing (with the shaders and the field list)
 	maxon::Float64 effectorMs = 0.0;     ///< the effectors
 };
@@ -43,11 +49,13 @@ struct ScatterStats
 /// give the same copies, bit for bit, in every session and Cinema 4D version: the random numbers are the
 /// plugin's own (a hash of the seed, the candidate's number and what it is drawn for), and each candidate
 /// draws its own, so a restriction that removes one copy does not move the others.
-/// Call it from the object's GetVirtualObjects(), on the thread that evaluates the document.
+/// It prepares the object's shaders for rendering and runs its effectors: one call per object at a time (the
+/// object holds a lock around it, scatter_object.cpp).
 /// @param[in] scatter      The scatter object; its global matrix places it.
 /// @param[in] doc          Its document.
 /// @param[in] sourceCount  How many sources the copies are spread over (its children that are scattered); 0: none.
-/// @param[in] thread       The evaluating thread, for the effectors; may be null.
+/// @param[in] thread       The evaluating thread, for the effectors and to stop when it is asked to (stats.cancelled);
+///                         may be null.
 /// @param[out] copies      The copies, emptied first.
 /// @param[out] stats       What was done.
 /// @param[out] warnings    What the user should be told (a missing surface, a file not read, ...), each a sentence

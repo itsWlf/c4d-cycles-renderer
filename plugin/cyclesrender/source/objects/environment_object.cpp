@@ -302,7 +302,7 @@ cinema::Bool RegisterEnvironmentObject()
 		cinema::BaseBitmap::Free(icon);
 	// OBJECT_HASDEFORMMODE: the green "enabled" check, as the Cycles Light and Fog have. The scene
 	// category, as Cinema 4D's Sky.
-	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_ENVIRONMENT_OBJECT, cinema::GeLoadString(IDS_ENVIRONMENT_OBJECT_NAME), OBJECT_HASDEFORMMODE,
+	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_ENVIRONMENT_OBJECT, cinema::GeLoadString(IDS_ENVIRONMENT_OBJECT_NAME), OBJECT_HASDEFORMMODE | PLUGINFLAG_HIDEPLUGINMENU,
 		EnvironmentObject::Alloc, "Ocyclesenvironment"_s, icon, 0, cinema::OBJECTCATEGORY::SCENE);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

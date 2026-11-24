@@ -270,7 +270,8 @@ public:
 	const maxon::BaseArray<OwnedItem>& GetOwnedItems() const { return _ownedItems; }
 	maxon::BaseArray<OwnedItem> TakeOwnedItems() { return std::move(_ownedItems); }
 	MaterialIdTable TakeMaterialIds() { return std::move(_materialIds); }
-	/// After a whole Write(): a light was written with an include or exclude list, which names items.
+	/// After a whole Write(): a light was written with an include or exclude list (of lighting or of
+	/// shadows), which names items.
 	maxon::Bool HasLightLinking() const { return _lightLinking; }
 
 	//----------------------------------------------------------------------------------------
@@ -446,6 +447,7 @@ private:
 		maxon::Bool followable = true;       ///< `mg` follows from the owner's place and the tail alone (not shown through an instance)
 		const cinema::BaseObject* volumeSet = nullptr;     ///< volumes: the Volume Set (a loaded file) around it
 		const cinema::BaseTag* linkTag = nullptr;          ///< the Cycles Object tag whose light list counts for it
+		const cinema::BaseTag* shadowLinkTag = nullptr;    ///< the Cycles Object tag whose shadow list counts for it (none: its shadows follow linkTag)
 		Visibility visibility;
 		/// The keys Redshift's random nodes (Jitter, Random Color Switch) vary by, as the object
 		/// properties OBJECT_NAME_KEY and OBJECT_ID_KEY (material_export.h): a number in 0..1 from
@@ -474,6 +476,7 @@ private:
 		maxon::Bool followable = true;       ///< Leaf::followable
 		const cinema::BaseObject* volumeSet = nullptr;
 		const cinema::BaseTag* linkTag = nullptr;
+		const cinema::BaseTag* shadowLinkTag = nullptr;
 		maxon::Bool forceVisible = false;    ///< the next object is shown whatever its render dot says (instanced by a Cycles Object tag)
 		maxon::Bool deformed = false;        ///< inside a deform cache
 		/// The next object is the cache of a Sphere that is not itself the input of a generator. A
@@ -565,7 +568,8 @@ private:
 	maxon::Result<void> NoteOwned(const cinema::BaseObject* owner, const maxon::String& id);
 	/// Notes that @p referrer shows @p root (GetReferences).
 	maxon::Result<void> NoteReference(const cinema::BaseObject* referrer, const cinema::BaseObject* root);
-	/// The light's include or exclude list as item ids. @p itemIds: the item written for each leaf, or empty.
+	/// The light's include or exclude lists as item ids: what it lights and what casts its shadows
+	/// (LightLinking). @p itemIds: the item written for each leaf, or empty.
 	/// @return  False when the light has no such list.
 	maxon::Result<maxon::Bool> GetLightLinking(const Leaf& light, const maxon::BaseArray<maxon::String>& itemIds, struct LightLinking& linking) const;
 	/// @param[in] matrices  Global matrix of every copy.

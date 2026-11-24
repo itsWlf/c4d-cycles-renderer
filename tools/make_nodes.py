@@ -103,7 +103,14 @@ PATH_COMMANDS = [("com.wolfnimations.cyclesrender.command.path.relative", "Make 
 # "mode" is a simple value: the Mode of Combine Color and Separate Color (RGB, HSV, HSL) and of
 # Light Evaluation (5.3). Script and IES Texture, the only other nodes with a "mode", are left out
 # as a whole.
-SKIP_PROPERTIES = {"target", "is_active_output", "image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash"}
+SKIP_PROPERTIES = {"image", "object", "script", "ies", "filepath", "bytecode", "bytecode_hash"}
+# The output nodes' "is_active_output" and "target" (since 0.3.0, F11 step 4) are settings of the node like any
+# other (ports prop.is_active_output and prop.target), which the exporter reads to choose among several outputs
+# as Blender does (materials/cycles_node_material.cpp, ChooseOutput); they are not sent as properties, since
+# the output nodes are not written. "Active Output" starts off on every output, whatever Blender's default
+# (a new World Output is active in Blender): a material saved before has no value stored and reads off, and
+# with none marked the first output counts, as before.
+PROPERTY_DEFAULTS = {"is_active_output": False}
 # A property that names an object of Blender's scene becomes a link field to an object of Cinema 4D's
 # (since 0.3.0, F12): a port of type maxon::Uuid shown as a link, as Redshift's own nodes link a scene
 # object (docs/reference/c4d-sdk.md, "A node port that links an object of the scene"). The exporter
@@ -189,6 +196,11 @@ PANELS = {
 # The folders of the nodes in the Asset Browser: Blender's Add menu below "Cycles Nodes".
 CATEGORY_ROOT = "com.wolfnimations.cyclesrender.assetcategory.nodes"
 CATEGORY_ROOT_LABEL = "Cycles Nodes"
+# The folder "Cycles Nodes" is in: Cinema 4D's "Nodes" (maxon::AssetCategoryNodes of the 2025 to 2027 SDKs; the
+# same id in 2024's asset library), the parent of Maxon's own node folders (Material, Utility, Math, ...), which
+# the Node Editor's node popup and the Asset Browser show at their top. Without a parent it was filed under
+# "Uncategorized" (0.3.0, F11 step 4).
+CATEGORY_ROOT_PARENT = "category@52d8f01357834200aa0dc28f0e61bbb3"
 # For nodes Blender's menu does not list (older nodes kept for old files), by colour tag.
 MENU_BY_TAG = {"SHADER": "Shader", "TEXTURE": "Texture", "INPUT": "Input", "OUTPUT": "Output", "COLOR": "Color", "VECTOR": "Utilities/Vector",
                "CONVERTER": "Utilities/Math"}
@@ -300,6 +312,74 @@ def straight_spline(stored):
                           "_linkTangent": False, "_linkPosition": False, "_snap": False})
 
 
+# How a number steps and whether it is a slider (0.3.0, F11 step 2; the maintainer: "A lot of the material values
+# increment in whole values while sliding them. While In Blender they increment in decimal values."). From what
+# Blender's interface does with the socket or property (dump_blender_nodes.py, "ui"), into the keys of the layout
+# (core.framework, maxon/datadescription_ui.h; written as Maxon's own nodes write them):
+# - a float steps by Blender's step, which RNA keeps in hundredths of a unit (1 is 0.01, 10 is 0.1), on a slider by
+#   at most a hundredth of its range; with no step (0) Cinema 4D's own step stays;
+# - the range known is the socket class's (a factor 0..1, a percentage 0..100) or a property's: a socket's own
+#   range is not readable from Python (dump_blender_nodes.py), so a plain float socket has none;
+# - a float and a whole number are a slider wherever they have a usable range (the maintainer: "Instead of only
+#   integer sliders I also meant float sliders"): Blender's soft range when it is finite, else its hard range,
+#   bounded on both sides and at most SLIDER_SPAN wide (Blender's ±1000 of a Noise's Scale or ±10000 of a Math
+#   value is no range a slider can serve); that range is the slider's ("addminmax", the slider's limits, not the
+#   value's);
+# - a whole number steps by 1;
+# - no hard limit is added (the ports had none, and a typed value beyond the slider stays what was typed).
+SLIDER_SPAN = 100.0
+# The settings the plugin keeps for Blender without a socket or node property of Blender's (a Color Ramp's stops,
+# an output's value, the material's own settings): Blender's step and range for the property each stands for
+# (ColorRampElement.position and alpha 0..1, Material.pass_index, cycles.volume_step_rate, max_vertex_displacement
+# in metres, the Value node's output), in the form of the dump's "ui". Port prefix -> ui.
+OWN_NUMBERS = {
+    "prop.ramp_position_": {"step": 1, "soft_min": 0.0, "soft_max": 1.0},
+    "prop.ramp_alpha_": {"step": 1, "soft_min": 0.0, "soft_max": 1.0},
+    "prop.output_value": {"step": 10},
+    "prop.material_pass_index": {"step": 1},
+    "prop.material_cycles_volume_step_rate": {"step": 10},
+    "prop.material_max_vertex_displacement": {"step": 1},
+}
+
+
+def own_number(port):
+    return next((ui for prefix, ui in OWN_NUMBERS.items() if port.startswith(prefix)), None)
+UI_STEP = D + "ui.base.addminmax.stepvalue"
+UI_SLIDER = D + "ui.net.maxon.ui.number.slider"
+UI_LIMIT, UI_MIN, UI_MAX = D + "ui.base.addminmax.limitvalue", D + "ui.base.addminmax.minvalue", D + "ui.base.addminmax.maxvalue"
+
+
+def number_plan(kind, number):
+    """(step, slider range or None) for a number port from Blender's "ui" of it; (None, None) when nothing applies."""
+    if kind not in ("f", "i") or not number:
+        return None, None
+    low = number.get("soft_min") if number.get("soft_min") is not None else number.get("min")
+    high = number.get("soft_max") if number.get("soft_max") is not None else number.get("max")
+    bounded = low is not None and high is not None and 0 < high - low <= SLIDER_SPAN
+    if kind == "i":
+        return 1, ((int(low), int(high)) if bounded else None)
+    step = (number.get("step") or 0) / 100.0
+    slider = (float(low), float(high)) if bounded else None
+    if slider:
+        # A slider moves by at most a hundredth of its range (a factor by 0.01, where Blender's step says 0.1).
+        step = min(step, (high - low) / 100.0) if step > 0 else (high - low) / 100.0
+    return (step if step > 0 else None), slider
+
+
+def number_layout(kind, number):
+    step, slider = number_plan(kind, number)
+    stored = "int64" if kind == "i" else "float64"
+    ui = {}
+    if step is not None:
+        ui[UI_STEP] = value(stored, step)
+    if slider is not None:
+        ui[UI_SLIDER] = value("bool", True)
+        ui[UI_LIMIT] = value("bool", True)
+        ui[UI_MIN] = value(stored, slider[0])
+        ui[UI_MAX] = value(stored, slider[1])
+    return ui
+
+
 def default_value(kind, default):
     stored = PORT_TYPES[kind][1]
     if stored is None or default is None:
@@ -379,14 +459,27 @@ class Description:
         self.strings = [include()]
 
     def group(self, identifier, label, is_open, on_node):
+        """A foldable section of the Inputs tab (and, with on_node, of the node)."""
         self.data.append(entry("group", identifier))
         self.ui.append(entry("group", identifier, {D + "ui.base.groupid": value("net.maxon.datatype.internedid", "net.maxon.node.base.group.inputs"),
                                                    D + "ui.base.groupdefaultopen": value("bool", is_open),
                                                    D + "ui.base.showgroupinportlist": value("bool", on_node)}))
         self.strings.append(entry("group", identifier, name_string(label)))
 
+    def tab(self, identifier, label):
+        """A tab of its own in the Node Editor's Attribute Manager, beside Basic and Inputs: a group
+        without a parent group, as net.maxon.node.base declares its Basic, Inputs and Outputs and
+        as the Substance node of Cinema 4D 2027 adds its own (read in the installation's
+        resource.zip; docs/reference/c4d-sdk.md, "How a node looks"). What it holds counts as
+        inputs; it does not show on the node."""
+        self.data.append(entry("group", identifier))
+        self.ui.append(entry("group", identifier, {D + "ui.base.defaultclassification": value("net.maxon.datatype.id", "input"),
+                                                   D + "ui.base.groupdefaultopen": value("bool", True),
+                                                   D + "ui.base.showgroupinportlist": value("bool", False)}))
+        self.strings.append(entry("group", identifier, name_string(label)))
+
     def port(self, identifier, label, kind, default, output=False, group=None, hidden=False, constant=False, show=None, options=None,
-             preview=False):
+             preview=False, number=None):
         data_type, _stored, widget = PORT_TYPES[kind]
         data = {D + "data.base.classification": value("net.maxon.datatype.id", "output" if output else "input"),
                 D + "data.base.datatype": value("net.maxon.datatype.id", data_type)}
@@ -413,6 +506,8 @@ class Description:
         if kind == "o":
             # What can be dropped into the link field (DESCRIPTION::UI::BASE::BASELINK_ACCEPT).
             ui[D + "ui.base.baselink.accept"] = value("net.maxon.datatype.id", OBJECT_ACCEPT, array=True)
+        if not output:
+            ui.update(number_layout(kind, number))
         self.ui.append(entry("attribute", identifier, ui))
         self.strings.append(entry("attribute", identifier, name_string(label)))
         for name, option_label in options or []:
@@ -693,6 +788,7 @@ def main():
         description = Description(asset, node["label"], menu, node_since > oldest)
         inputs, outputs, properties = [], [], []
         in_ports, out_ports, prop_ports = [], [], []   # what the description needs of each
+        prop_numbers = {}                              # port of a setting -> Blender's "ui" of it (number_layout)
 
         labels = [s["name"] for s in node["inputs"]]
         for socket in node["inputs"]:
@@ -732,7 +828,8 @@ def main():
             items = ";".join(f"{identifier}|{label}" + (f"|{code}" if code > prop_since else "")
                              for identifier, label in prop.get("items", [])
                              for code in [union.code("option", node["type"], prop["identifier"], identifier)])
-            default = prop["default"]
+            default = PROPERTY_DEFAULTS.get(prop["identifier"], prop["default"])
+            prop_numbers[port_id("prop.", prop["identifier"])] = prop.get("ui")
             properties.append(property_row(prop["identifier"], port_id("prop.", prop["identifier"]), prop["name"], kind, items, default, prop_since))
             prop_ports.append((prop["identifier"], port_id("prop.", prop["identifier"]), prop["name"], kind, items, default, None))
         if node["type"] == "ShaderNodeOutputMaterial":
@@ -804,11 +901,14 @@ def main():
             description.port(port_id("out.", socket["identifier"]), label, kind, None, output=True, hidden=not socket["enabled"],
                              show=shown_when("out:" + socket["identifier"], socket), preview=node_since > oldest and index == 0)
         if any(group for *_rest, group in prop_ports):
-            description.group("group.material", "Material Settings", True, False)
+            # The material's own settings (Material Output only) in a tab of their own, apart from
+            # the node's inputs (the maintainer, 2026-11-24, F11 step 2). Before, a foldable
+            # section of the Inputs tab; the group and its ports keep their ids.
+            description.tab("group.material", "Material Settings")
         for identifier, port, label, kind, items, default, group in prop_ports:
             # A setting: no wire can go in, and it does not show on the node.
             description.port(port, label, kind, default, group=group, hidden=True, constant=True, options=options_of(items),
-                             show=prop_show.get(port))
+                             show=prop_show.get(port), number=(prop_numbers.get(port) or own_number(port)) if kind in ("f", "i") else None)
             if kind == "u":
                 # Under a file: make its path relative to the document's folder, or absolute again.
                 description.buttons("group.path", "Path", PATH_COMMANDS)
@@ -821,7 +921,7 @@ def main():
             show = shown_when("in:" + socket["identifier"], socket)
             # A socket Blender does not show for the node's default settings starts hidden on the node.
             description.port(port_id("in.", socket["identifier"]), label, kind, socket["default"], group=group,
-                             hidden=not socket["enabled"], show=show)
+                             hidden=not socket["enabled"], show=show, number=socket.get("ui"))
         descriptions.append(description)
 
         for kind_name, rows, struct in (("INPUTS", inputs, "CyclesSocket"), ("OUTPUTS", outputs, "CyclesSocket"), ("PROPERTIES", properties, "CyclesProperty")):
@@ -846,7 +946,8 @@ def main():
     lines += ["// The folders of the nodes in the Asset Browser: id, name, id of the folder it is in.",
               "static const CyclesNodeFolder CYCLES_NODE_FOLDERS[] =", "{"]
     for path, label, parent in folders:
-        lines.append(f'\t{{ {c_string(category_id(path))}, {c_string(label)}, {c_string(category_id(parent)) if parent is not None else "nullptr"} }},')
+        parent_id = category_id(parent) if parent is not None else CATEGORY_ROOT_PARENT
+        lines.append(f'\t{{ {c_string(category_id(path))}, {c_string(label)}, {c_string(parent_id)} }},')
     lines += ["};", "", "#endif // CYCLES_NODES_TABLE_H__", ""]
 
     os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)

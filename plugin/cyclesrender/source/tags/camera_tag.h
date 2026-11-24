@@ -41,6 +41,13 @@ cinema::Bool RegisterCameraTag();
 /// belong to that camera alone. Null when the camera has none.
 const cinema::BaseTag* FindCameraTag(const cinema::BaseObject* camera);
 
+/// The focus distance of @p camera as the camera has it, in document units, for the tag's button "Take
+/// from Camera": with a focus object linked, that object's distance along the view axis; otherwise the
+/// distance the camera keeps (for the Redshift camera with "Auto Focus Distance" on, the distance to what
+/// lies ahead, which the camera writes there itself). Cinema 4D's camera and the Redshift camera.
+/// @return  False when @p camera is no camera.
+maxon::Bool CameraFocusDistance(const cinema::BaseObject* camera, maxon::Float64& distance);
+
 } // namespace cyclesrender
 
 #endif // CYCLESRENDER_CAMERA_TAG_H__

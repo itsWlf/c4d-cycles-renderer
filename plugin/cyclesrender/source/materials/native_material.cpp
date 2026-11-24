@@ -699,7 +699,7 @@ cinema::Bool RegisterNativeMaterial()
 		cinema::BaseBitmap* icon = cinema::BaseBitmap::Alloc();
 		if (icon && icon->Init(cinema::GeGetPluginResourcePath() + cinema::Filename("icons"_s) + cinema::Filename("cyclesrender_grey.png"_s)) != cinema::IMAGERESULT::OK)
 			cinema::BaseBitmap::Free(icon);
-		const cinema::Bool commandRegistered = cinema::RegisterCommandPlugin(ID_NATIVE_MATERIAL, cinema::GeLoadString(IDS_NATIVE_MATERIAL_NAME), 0, icon,
+		const cinema::Bool commandRegistered = cinema::RegisterCommandPlugin(ID_NATIVE_MATERIAL, cinema::GeLoadString(IDS_NATIVE_MATERIAL_NAME), PLUGINFLAG_HIDEPLUGINMENU, icon,
 			"Create a material that is edited in Blender's Shader Editor"_s, command);
 		cinema::BaseBitmap::Free(icon);
 		if (!commandRegistered)

@@ -25,6 +25,7 @@
 #include "objects/fog_object.h"
 #include "objects/proxy_object.h"
 #include "objects/scatter_object.h"
+#include "plugin_menu.h"
 #include "prefs/prefs_page.h"
 #include "prefs/settings.h"
 #include "scene/scene_dump.h"
@@ -76,6 +77,8 @@ auto cinema::PluginStart() -> cinema::Bool
 			cyclesrender::ID_NATIVE_MATERIAL_EDITS);
 	if (!cyclesrender::RegisterIprCommand())
 		ApplicationOutput("Cycles Render: could not register the IPR command.");
+	if (!cyclesrender::RegisterCameraCommand())
+		ApplicationOutput("Cycles Render: could not register the Cycles Camera command (id @).", cyclesrender::ID_CAMERA_COMMAND);
 	// Without the hook no evaluation inside a modal loop is followed (ipr/ipr_scenehook.h): the meshes of
 	// parametric objects and deformers arrive when the drag has ended, lights and the camera when a frame
 	// happens to arrive during it (the frame thread's call still sends those) or at its end.
@@ -116,6 +119,13 @@ auto cinema::PluginMessage(cinema::Int32 id, void* data) -> cinema::Bool
 		{
 			// The resource system must be up before any plugin of this module can register.
 			return cinema::g_resource.Init();
+		}
+		case C4DPL_BUILDMENU:
+		{
+			// The plugin's commands and objects are hidden from the list Cinema 4D makes by itself; they
+			// are listed in a submenu of the plugin's own, in the order the maintainer chose (plugin_menu.h).
+			cyclesrender::AddPluginMenu();
+			return true;
 		}
 		case C4DPL_STARTACTIVITY:
 		{

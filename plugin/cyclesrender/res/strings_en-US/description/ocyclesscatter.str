@@ -8,6 +8,7 @@ STRINGTABLE Ocyclesscatter
 	CYCLESSCATTER_MODE_VERTICES             "Vertices";
 	CYCLESSCATTER_MODE_SURFACE              "Surface";
 	CYCLESSCATTER_MODE_POISSON              "Poisson";
+	CYCLESSCATTER_MODE_VOLUME               "Volume";
 	CYCLESSCATTER_MODE_FILE                 "CSV File";
 	CYCLESSCATTER_SURFACE                   "Surface";
 	CYCLESSCATTER_FILE                      "File";
@@ -16,6 +17,7 @@ STRINGTABLE Ocyclesscatter
 	CYCLESSCATTER_COUNT                     "Count";
 	CYCLESSCATTER_POISSON_RADIUS            "Radius";
 	CYCLESSCATTER_POISSON_SAMPLES           "Samples";
+	CYCLESSCATTER_POISSON_LIMIT             "Limit to Count";
 	CYCLESSCATTER_SEED                      "Seed";
 	CYCLESSCATTER_CHILD_ORDER               "Children";
 	CYCLESSCATTER_CHILD_ORDER_RANDOM        "Random";
@@ -25,7 +27,7 @@ STRINGTABLE Ocyclesscatter
 	CYCLESSCATTER_NORMAL_ALIGN              "Normal Align";
 	CYCLESSCATTER_UP_VECTOR                 "Up Vector";
 
-	CYCLESSCATTER_GROUP_RESTRICT            "Where Copies Go";
+	CYCLESSCATTER_GROUP_RESTRICT            "Shader Distribution";
 	CYCLESSCATTER_VERTEX_MAP                "Vertex Map";
 	CYCLESSCATTER_VERTEX_MAP_LIMIT          "Limit";
 	CYCLESSCATTER_DENSITY_SHADER            "Density";
@@ -34,15 +36,33 @@ STRINGTABLE Ocyclesscatter
 	CYCLESSCATTER_NORMAL_THRESHOLD          "Normal Threshold";
 
 	CYCLESSCATTER_GROUP_VARY                "Vary by Shader";
-	CYCLESSCATTER_POSITION_SHADER           "Position";
-	CYCLESSCATTER_POSITION_DISTANCE         "Position Distance";
-	CYCLESSCATTER_SCALE_SHADER              "Scale";
+	CYCLESSCATTER_GROUP_VARY_POSITION       "Position";
+	CYCLESSCATTER_POSITION_SHADER           "Shader";
+	CYCLESSCATTER_POSITION_U_MIN            "Across U Min";
+	CYCLESSCATTER_POSITION_U_MAX            "Across U Max";
+	CYCLESSCATTER_POSITION_V_MIN            "Across V Min";
+	CYCLESSCATTER_POSITION_V_MAX            "Across V Max";
+	CYCLESSCATTER_POSITION_Y_MIN            "Along Y Min";
+	CYCLESSCATTER_POSITION_DISTANCE         "Along Y Max";
+	CYCLESSCATTER_GROUP_VARY_ROTATION       "Rotation";
+	CYCLESSCATTER_ROTATION_SHADER           "Shader";
+	CYCLESSCATTER_ROTATION_H_MIN            "Heading Min";
+	CYCLESSCATTER_ROTATION_H_MAX            "Heading Max";
+	CYCLESSCATTER_ROTATION_P_MIN            "Pitch Min";
+	CYCLESSCATTER_ROTATION_ANGLE            "Pitch Max";
+	CYCLESSCATTER_ROTATION_B_MIN            "Bank Min";
+	CYCLESSCATTER_ROTATION_B_MAX            "Bank Max";
+	CYCLESSCATTER_GROUP_VARY_SCALE          "Scale";
+	CYCLESSCATTER_SCALE_SHADER              "Shader";
+	CYCLESSCATTER_SCALE_UNIFORM             "Uniform";
 	CYCLESSCATTER_SCALE_MIN                 "Scale Min";
 	CYCLESSCATTER_SCALE_MAX                 "Scale Max";
-	CYCLESSCATTER_ROTATION_SHADER           "Rotation";
-	CYCLESSCATTER_ROTATION_ANGLE            "Rotation Angle";
+	CYCLESSCATTER_SCALE_MIN_AXES            "Scale Min";
+	CYCLESSCATTER_SCALE_MAX_AXES            "Scale Max";
 
 	CYCLESSCATTER_GROUP_EFFECTORS           "Effectors";
+	CYCLESSCATTER_GROUP_EFFECTOR_LIST       "Effectors";
+	CYCLESSCATTER_GROUP_FIELD_LIST          "Fields";
 	CYCLESSCATTER_EFFECTORS                 "Effectors";
 	CYCLESSCATTER_FIELDS_AFFECT             "Fields Weight";
 	CYCLESSCATTER_FIELDS_AFFECT_DENSITY     "Density";

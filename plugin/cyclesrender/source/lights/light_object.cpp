@@ -85,9 +85,13 @@ public:
 				break;
 			}
 			case CYCLESLIGHT_TYPE_SUN:
-				*rad = cinema::Vector(SYMBOL_SIZE, SYMBOL_SIZE, SUN_RAY_LENGTH * 0.5);
+			{
+				// (With the cone of its Angle: DrawSunAngle.)
+				const maxon::Float64 r = maxon::Max(SYMBOL_SIZE, SUN_RAY_LENGTH * maxon::Sin(maxon::ClampValue(data.GetFloat(CYCLESLIGHT_ANGLE), 0.0, maxon::PI) * 0.5));
+				*rad = cinema::Vector(r, r, SUN_RAY_LENGTH * 0.5);
 				*mp = cinema::Vector(0.0, 0.0, SUN_RAY_LENGTH * 0.5);
 				break;
+			}
 			default:
 				*rad = cinema::Vector(maxon::Max(SYMBOL_SIZE, data.GetFloat(CYCLESLIGHT_RADIUS)));
 				break;
@@ -120,6 +124,7 @@ public:
 				bd->DrawLine(cinema::Vector(0.0), cinema::Vector(0.0, 0.0, SUN_RAY_LENGTH), 0);
 				bd->DrawLine(cinema::Vector(0.0, 0.0, SUN_RAY_LENGTH), cinema::Vector(SYMBOL_SIZE * 0.5, 0.0, SUN_RAY_LENGTH - SYMBOL_SIZE), 0);
 				bd->DrawLine(cinema::Vector(0.0, 0.0, SUN_RAY_LENGTH), cinema::Vector(-SYMBOL_SIZE * 0.5, 0.0, SUN_RAY_LENGTH - SYMBOL_SIZE), 0);
+				DrawSunAngle(bd, data.GetFloat(CYCLESLIGHT_ANGLE));
 				break;
 			case CYCLESLIGHT_TYPE_SPOT:
 				DrawStar(bd);
@@ -137,7 +142,136 @@ public:
 		return cinema::DRAWRESULT::OK;
 	}
 
+	// Handles (0.3.0, F11 step 4), drawn by the base class's DRAWPASS::HANDLES and moved by Cinema 4D's
+	// own handle dragging (undo and the Attribute Manager included), each on the shape as Draw() draws it
+	// and moving along its axis (LightHandles):
+	// - area: the size on the +X edge; for a Rectangle and an Ellipse the size Y on the +Y edge;
+	// - point and spot: the radius on the +X side of its circle;
+	// - spot: the cone's size on the +X side of its rim; with "Show Cone", the blend on the +Y side of the inner
+	//   circle (on the rim while the blend is 0).
+	// The sun has none: its angle is not drawn.
+	virtual cinema::Int32 GetHandleCount(const cinema::BaseObject* op) const override
+	{
+		return LightHandles(op->GetDataInstanceRef(), nullptr);
+	}
+
+	virtual void GetHandle(cinema::BaseObject* op, cinema::Int32 i, cinema::HandleInfo& info) override
+	{
+		LightHandle handles[LIGHT_HANDLES_MAX];
+		const maxon::Int32 count = LightHandles(op->GetDataInstanceRef(), handles);
+		if (i < 0 || i >= count)
+			return;
+		info.position = handles[i].position;
+		info.direction = handles[i].direction;
+		info.type = cinema::HANDLECONSTRAINTTYPE::LINEAR;
+	}
+
+	virtual void SetHandle(cinema::BaseObject* op, cinema::Int32 i, cinema::Vector p, const cinema::HandleInfo& info) override
+	{
+		cinema::BaseContainer& data = op->GetDataInstanceRef();
+		LightHandle handles[LIGHT_HANDLES_MAX];
+		const maxon::Int32 count = LightHandles(data, handles);
+		if (i < 0 || i >= count)
+			return;
+		// How far along its axis the handle now is, from the axis of the light (never below 0).
+		const maxon::Float64 along = maxon::Max(0.0, Dot(p, handles[i].direction));
+		switch (handles[i].parameter)
+		{
+			case CYCLESLIGHT_SIZE:
+			case CYCLESLIGHT_SIZE_Y:
+				data.SetFloat(handles[i].parameter, 2.0 * along);
+				break;
+			case CYCLESLIGHT_RADIUS:
+				data.SetFloat(CYCLESLIGHT_RADIUS, along);
+				break;
+			case CYCLESLIGHT_SPOT_SIZE:
+			{
+				// The rim's radius at the cone's length gives the half angle (the description's 1 to 180 degrees).
+				const maxon::Float64 size = 2.0 * maxon::ATan2(along, ConeLength(data));
+				data.SetFloat(CYCLESLIGHT_SPOT_SIZE, maxon::ClampValue(size, maxon::DegToRad(1.0), maxon::PI));
+				break;
+			}
+			case CYCLESLIGHT_SPOT_BLEND:
+			{
+				// The inverse of DrawCone's inner circle: the cosine of its angle, as a part of the cone's.
+				const maxon::Float64 half = maxon::Min(data.GetFloat(CYCLESLIGHT_SPOT_SIZE), maxon::PI * 0.99) * 0.5;
+				const maxon::Float64 cosOuter = maxon::Cos(half);
+				const maxon::Float64 inner = maxon::Min(maxon::ATan2(along, ConeLength(data)), half);
+				const maxon::Float64 blend = cosOuter < 1.0 ? (maxon::Cos(inner) - cosOuter) / (1.0 - cosOuter) : 0.0;
+				data.SetFloat(CYCLESLIGHT_SPOT_BLEND, maxon::Clamp01(blend));
+				break;
+			}
+			default:
+				break;
+		}
+	}
+
 private:
+	static const maxon::Int32 LIGHT_HANDLES_MAX = 3;
+
+	// One handle: where it sits (object space), the axis it moves along, and the parameter it sets.
+	struct LightHandle
+	{
+		cinema::Vector position;
+		cinema::Vector direction;
+		maxon::Int32 parameter = 0;
+	};
+
+	static maxon::Float64 ConeLength(const cinema::BaseContainer& data)
+	{
+		return data.GetBool(CYCLESLIGHT_SHOW_CONE) ? SHOWN_CONE_LENGTH : CONE_LENGTH;
+	}
+
+	// The handles of the light as it is set now (GetHandleCount's comment); fills @p handles when given
+	// (LIGHT_HANDLES_MAX entries) and returns how many there are.
+	static maxon::Int32 LightHandles(const cinema::BaseContainer& data, LightHandle* handles)
+	{
+		maxon::Int32 count = 0;
+		auto add = [&](const cinema::Vector& position, const cinema::Vector& direction, maxon::Int32 parameter)
+		{
+			if (handles)
+				handles[count] = LightHandle { position, direction, parameter };
+			++count;
+		};
+		const cinema::Vector xAxis(1.0, 0.0, 0.0);
+		const cinema::Vector yAxis(0.0, 1.0, 0.0);
+		switch (data.GetInt32(CYCLESLIGHT_TYPE, CYCLESLIGHT_TYPE_POINT))
+		{
+			case CYCLESLIGHT_TYPE_AREA:
+			{
+				const maxon::Int32 shape = data.GetInt32(CYCLESLIGHT_SHAPE, CYCLESLIGHT_SHAPE_SQUARE);
+				const maxon::Float64 x = maxon::Max(0.0, data.GetFloat(CYCLESLIGHT_SIZE)) * 0.5;
+				add(xAxis * x, xAxis, CYCLESLIGHT_SIZE);
+				if (shape == CYCLESLIGHT_SHAPE_RECTANGLE || shape == CYCLESLIGHT_SHAPE_ELLIPSE)
+					add(yAxis * (maxon::Max(0.0, data.GetFloat(CYCLESLIGHT_SIZE_Y)) * 0.5), yAxis, CYCLESLIGHT_SIZE_Y);
+				break;
+			}
+			case CYCLESLIGHT_TYPE_SPOT:
+			{
+				add(xAxis * maxon::Max(0.0, data.GetFloat(CYCLESLIGHT_RADIUS)), xAxis, CYCLESLIGHT_RADIUS);
+				// As DrawCone() draws the rim and the inner circle.
+				const maxon::Float64 length = ConeLength(data);
+				const maxon::Float64 half = maxon::Min(data.GetFloat(CYCLESLIGHT_SPOT_SIZE), maxon::PI * 0.99) * 0.5;
+				add(cinema::Vector(length * maxon::Tan(half), 0.0, length), xAxis, CYCLESLIGHT_SPOT_SIZE);
+				// (With no blend the inner circle is not drawn and the handle sits on the rim.)
+				const maxon::Float64 blend = data.GetFloat(CYCLESLIGHT_SPOT_BLEND);
+				if (data.GetBool(CYCLESLIGHT_SHOW_CONE))
+				{
+					const maxon::Float64 cosOuter = maxon::Cos(half);
+					const maxon::Float64 inner = maxon::ACos(maxon::Clamp01(cosOuter + maxon::Clamp01(blend) * (1.0 - cosOuter)));
+					add(cinema::Vector(0.0, length * maxon::Tan(inner), length), yAxis, CYCLESLIGHT_SPOT_BLEND);
+				}
+				break;
+			}
+			case CYCLESLIGHT_TYPE_SUN:
+				break;
+			default:
+				add(xAxis * maxon::Max(0.0, data.GetFloat(CYCLESLIGHT_RADIUS)), xAxis, CYCLESLIGHT_RADIUS);
+				break;
+		}
+		return count;
+	}
+
 	// Three short crossing lines: where a point, spot or sun sits.
 	static void DrawStar(cinema::BaseDraw* bd)
 	{
@@ -161,6 +295,28 @@ private:
 		bd->DrawCircle(m);
 		maxon::Swap(m.sqmat.v1, m.sqmat.v3);
 		bd->DrawCircle(m);
+	}
+
+	// A sun's Angle (how large the sun's disc is in the sky, which is what softens its shadows): a cone
+	// around the ray, as wide as the angle, its edges as long as the ray, so that it stays in bounds up to
+	// 180 degrees (a half sphere's rim). Nothing for an angle of 0.
+	static void DrawSunAngle(cinema::BaseDraw* bd, maxon::Float64 angle)
+	{
+		const maxon::Float64 half = maxon::ClampValue(angle, 0.0, maxon::PI) * 0.5;
+		if (half <= 0.0)
+			return;
+		const maxon::Float64 r = SUN_RAY_LENGTH * maxon::Sin(half);
+		const maxon::Float64 z = SUN_RAY_LENGTH * maxon::Cos(half);
+		cinema::Matrix rim;
+		rim.off = cinema::Vector(0.0, 0.0, z);
+		rim.sqmat.v1 = cinema::Vector(r, 0.0, 0.0);
+		rim.sqmat.v2 = cinema::Vector(0.0, r, 0.0);
+		rim.sqmat.v3 = cinema::Vector(0.0, 0.0, 1.0);
+		bd->DrawCircle(rim);
+		bd->DrawLine(cinema::Vector(0.0), cinema::Vector(r, 0.0, z), 0);
+		bd->DrawLine(cinema::Vector(0.0), cinema::Vector(-r, 0.0, z), 0);
+		bd->DrawLine(cinema::Vector(0.0), cinema::Vector(0.0, r, z), 0);
+		bd->DrawLine(cinema::Vector(0.0), cinema::Vector(0.0, -r, z), 0);
 	}
 
 	// A spot's cone along +Z: four edges and the rim; with "Show Cone" longer, and with the circle
@@ -229,7 +385,7 @@ cinema::Bool RegisterLightObject()
 	// Cinema 4D's own light has, without making it a generator (no cache is built). The
 	// check is the object's deform mode, which every object keeps and which is on for an object
 	// saved before the flag (measured; the exporter reads it: scene/light_export.h, IsLightSwitchedOn).
-	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_LIGHT_OBJECT, cinema::GeLoadString(IDS_LIGHT_OBJECT_NAME), OBJECT_HASDEFORMMODE, LightObject::Alloc,
+	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_LIGHT_OBJECT, cinema::GeLoadString(IDS_LIGHT_OBJECT_NAME), OBJECT_HASDEFORMMODE | PLUGINFLAG_HIDEPLUGINMENU, LightObject::Alloc,
 		"Ocycleslight"_s, icon, 0, cinema::OBJECTCATEGORY::LIGHT);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

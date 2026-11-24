@@ -130,7 +130,7 @@ cinema::Bool RegisterCyclesWorldMaterial()
 	cinema::BaseBitmap* icon = cinema::BaseBitmap::Alloc();
 	if (icon && icon->Init(cinema::GeGetPluginResourcePath() + cinema::Filename("icons"_s) + cinema::Filename("environment_object.png"_s)) != cinema::IMAGERESULT::OK)
 		cinema::BaseBitmap::Free(icon);
-	const cinema::Bool registered = cinema::RegisterCommandPlugin(ID_CYCLES_WORLD_MATERIAL, cinema::GeLoadString(IDS_CYCLES_WORLD_MATERIAL_NAME), 0, icon,
+	const cinema::Bool registered = cinema::RegisterCommandPlugin(ID_CYCLES_WORLD_MATERIAL, cinema::GeLoadString(IDS_CYCLES_WORLD_MATERIAL_NAME), PLUGINFLAG_HIDEPLUGINMENU, icon,
 		"Create a material of Cycles nodes set up as a world, for a Cycles Environment of the type Material"_s, command);
 	cinema::BaseBitmap::Free(icon);
 	return registered;
@@ -145,7 +145,7 @@ cinema::Bool RegisterCyclesMaterial()
 	cinema::BaseBitmap* icon = cinema::BaseBitmap::Alloc();
 	if (icon && icon->Init(cinema::GeGetPluginResourcePath() + cinema::Filename("icons"_s) + cinema::Filename("cyclesrender_grey.png"_s)) != cinema::IMAGERESULT::OK)
 		cinema::BaseBitmap::Free(icon);
-	const cinema::Bool registered = cinema::RegisterCommandPlugin(ID_CYCLES_MATERIAL, cinema::GeLoadString(IDS_CYCLES_MATERIAL_NAME), 0, icon,
+	const cinema::Bool registered = cinema::RegisterCommandPlugin(ID_CYCLES_MATERIAL, cinema::GeLoadString(IDS_CYCLES_MATERIAL_NAME), PLUGINFLAG_HIDEPLUGINMENU, icon,
 		"Create a material of Cycles nodes"_s, command);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

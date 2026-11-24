@@ -64,6 +64,7 @@ enum
 	ID_TEXT_DEVICE,
 	ID_GROUP_TOOLBAR,
 	ID_GROUP_STATUS,
+	ID_AREA_STATUS,						// the status line's texts (IprStatusArea); the ID_TEXT_ numbers above are no longer shown
 
 	ID_MENU_SNAPSHOT = 2000,
 	ID_MENU_SAVE,
@@ -150,6 +151,116 @@ static void CollectCameras(cinema::BaseObject* first, maxon::BaseArray<cinema::B
 		CollectCameras(op->GetDown(), cameras);
 	}
 }
+
+//----------------------------------------------------------------------------------------
+/// The texts at the left of the status line (the time, the memory, the graphics memory, and what
+/// renders as Blender reports it), drawn in columns. A static text would not let the window get
+/// narrower than its text; this area can shrink to nothing: a text that does not fit is cut off
+/// with "..." and shown whole in a bubble while the pointer rests on it.
+//----------------------------------------------------------------------------------------
+class IprStatusArea : public cinema::GeUserArea
+{
+public:
+	enum { TIME, RAM, VRAM, DEVICE, COUNT };
+
+	virtual cinema::Bool GetMinSize(cinema::Int32& w, cinema::Int32& h) override
+	{
+		w = 0;
+		h = 22;
+		return true;
+	}
+
+	virtual void DrawMsg(cinema::Int32 x1, cinema::Int32 y1, cinema::Int32 x2, cinema::Int32 y2, const cinema::BaseContainer& msg) override
+	{
+		OffScreenOn();
+		const cinema::Int32 width = GetWidth();
+		const cinema::Int32 height = GetHeight();
+		DrawSetPen(COLOR_BG);
+		DrawRectangle(0, 0, width, height);
+		DrawSetTextCol(COLOR_TEXT, COLOR_BG);
+		// Where there is room, each text has its column, so that nothing moves when a number changes. In a
+		// narrow window the columns close up to their texts, and what still does not fit is cut off.
+		cinema::Int32 needed = 0;
+		for (maxon::Int i = 0; i < COUNT; ++i)
+			needed += i == DEVICE ? DrawGetTextWidth(_texts[i]) : COLUMN_WIDTHS[i] + COLUMN_GAP;
+		const maxon::Bool packed = needed > width;
+		cinema::Int32 x = 0;
+		for (maxon::Int i = 0; i < COUNT; ++i)
+		{
+			const cinema::Int32 column = packed || i == DEVICE ? DrawGetTextWidth(_texts[i]) : COLUMN_WIDTHS[i];
+			const cinema::Int32 room = maxon::Max(cinema::Int32(0), maxon::Min(column, width - x));
+			_left[i] = x;
+			_right[i] = x + room;
+			const maxon::String shown = Fit(_texts[i], room);
+			_cut[i] = shown != _texts[i];
+			if (shown.IsPopulated())
+				DrawText(shown, x, height / 2, DRAWTEXT_HALIGN_LEFT | DRAWTEXT_VALIGN_CENTER);
+			if (_texts[i].IsPopulated())
+				x += column + (packed ? PACKED_GAP : COLUMN_GAP);
+		}
+	}
+
+	virtual cinema::Int32 Message(const cinema::BaseContainer& msg, cinema::BaseContainer& result) override
+	{
+		if (msg.GetId() == cinema::BFM_GETCURSORINFO)
+		{
+			// The whole text of the column under the pointer, when it is cut off there.
+			cinema::Int32 x = msg.GetInt32(cinema::BFM_DRAG_SCREENX);
+			cinema::Int32 y = msg.GetInt32(cinema::BFM_DRAG_SCREENY);
+			Screen2Local(&x, &y);
+			for (maxon::Int i = 0; i < COUNT; ++i)
+			{
+				if (_cut[i] && x >= _left[i] && x < maxon::Max(_right[i], _left[i] + COLUMN_GAP))
+				{
+					result.SetId(cinema::BFM_GETCURSORINFO);
+					result.SetString(cinema::RESULT_BUBBLEHELP, _texts[i]);
+					return true;
+				}
+			}
+		}
+		return cinema::GeUserArea::Message(msg, result);
+	}
+
+	void Set(maxon::Int which, const maxon::String& text)
+	{
+		if (which < 0 || which >= COUNT || _texts[which] == text)
+			return;
+		_texts[which] = text;
+		Redraw();
+	}
+
+	/// Whether the text of @p which was cut off when the area was drawn last; for tests.
+	maxon::Bool IsCut(maxon::Int which) const { return which >= 0 && which < COUNT && _cut[which]; }
+
+private:
+	// @p text as it fits into @p room pixels: whole, or its start with "..." (nothing where not even that fits).
+	maxon::String Fit(const maxon::String& text, cinema::Int32 room)
+	{
+		if (text.IsEmpty() || DrawGetTextWidth(text) <= room)
+			return text;
+		const maxon::String dots = "..."_s;
+		maxon::Int low = 0;
+		maxon::Int high = text.GetLength();
+		while (low < high)
+		{
+			const maxon::Int middle = (low + high + 1) / 2;
+			if (DrawGetTextWidth(text.GetLeftPart(middle) + dots) <= room)
+				low = middle;
+			else
+				high = middle - 1;
+		}
+		return low > 0 ? text.GetLeftPart(low) + dots : maxon::String();
+	}
+
+	static constexpr cinema::Int32 COLUMN_WIDTHS[COUNT] = { 170, 190, 190, 0 };
+	static constexpr cinema::Int32 COLUMN_GAP = 12;
+	static constexpr cinema::Int32 PACKED_GAP = 16;
+
+	maxon::String _texts[COUNT] = { "Time:  00:00:00"_s, "RAM:  0.0 GB"_s, "VRAM:  0.0 GB"_s, maxon::String() };
+	cinema::Int32 _left[COUNT] = {};
+	cinema::Int32 _right[COUNT] = {};
+	maxon::Bool _cut[COUNT] = {};
+};
 
 //----------------------------------------------------------------------------------------
 /// The bar at the right of the status line: "512 / 1024 Samples" over a bar filled to match.
@@ -262,6 +373,7 @@ private:
 	IprNavigation _navigation;
 	maxon::Float64 _nextViewRedraw = 0.0;	///< GeGetMilliSeconds() before which the view is not drawn again
 	maxon::Bool _viewBehind = false;			///< the camera moved since the view was last drawn
+	IprStatusArea _status;
 	IprProgressArea _progress;
 	cinema::BitmapButtonCustomGui* _startButton = nullptr;
 	cinema::BitmapButtonCustomGui* _pauseButton = nullptr;
@@ -320,6 +432,12 @@ void IprDialog::SetButtonIcon(cinema::BitmapButtonCustomGui* button, ICON icon)
 	button->Redraw();
 }
 
+// A menu entry's text with the icon registered under @p iconId in front of it.
+static maxon::String WithIcon(cinema::Int32 iconId, cinema::Int32 nameId)
+{
+	return FormatString("&i@&@", iconId, cinema::GeLoadString(nameId));
+}
+
 cinema::Bool IprDialog::CreateLayout()
 {
 	SetTitle("Cycles Render - IPR"_s);
@@ -331,22 +449,22 @@ cinema::Bool IprDialog::CreateLayout()
 	MenuAddSeparator();
 	MenuAddString(ID_MENU_CLOSE, "Close"_s);
 	MenuSubEnd();
-	// What the plugin offers, added to the active document (ipr_add.h).
-	MenuSubBegin("Add"_s);
-	MenuAddString(ID_MENU_ADD_MATERIAL, "Cycles Material"_s);
-	MenuAddString(ID_MENU_ADD_WORLD_MATERIAL, "Cycles World Material"_s);
-	MenuAddSeparator();
-	MenuAddString(ID_MENU_ADD_CAMERA, "Camera with Cycles Camera Tag"_s);
-	MenuAddString(ID_MENU_ADD_CAMERA_TAG, "Cycles Camera Tag on Selected Cameras"_s);
-	MenuAddString(ID_MENU_ADD_OBJECT_TAG, "Cycles Object Tag on Selected Objects"_s);
-	MenuAddSeparator();
-	MenuAddString(ID_MENU_ADD_LIGHT, "Cycles Light"_s);
-	MenuAddString(ID_MENU_ADD_LIGHT_TAG, "Cycles Light Tag on Selected Lights"_s);
-	MenuAddSeparator();
-	MenuAddString(ID_MENU_ADD_FOG, "Cycles Fog"_s);
-	MenuAddString(ID_MENU_ADD_ENVIRONMENT, "Cycles Environment"_s);
-	MenuAddString(ID_MENU_ADD_SCATTER, "Cycles Scatter"_s);
-	MenuAddString(ID_MENU_ADD_PROXY, "Cycles Proxy"_s);
+	// What the plugin offers, added to the active document (ipr_add.h), each with the icon its command or
+	// object type is registered with: a menu entry's text may start with "&i<icon id>&". The objects in
+	// the order of the plugin's submenu of the Extensions menu (plugin_menu.cpp). The tags on the selected
+	// objects are no entries since F11 (0.3.0); their ids stay for the test hook.
+	MenuSubBegin("Objects"_s);
+	MenuAddString(ID_MENU_ADD_CAMERA, WithIcon(ID_CAMERA_COMMAND, IDS_CAMERA_COMMAND_NAME));
+	MenuAddString(ID_MENU_ADD_LIGHT, WithIcon(ID_LIGHT_OBJECT, IDS_LIGHT_OBJECT_NAME));
+	MenuAddString(ID_MENU_ADD_ENVIRONMENT, WithIcon(ID_ENVIRONMENT_OBJECT, IDS_ENVIRONMENT_OBJECT_NAME));
+	MenuAddString(ID_MENU_ADD_FOG, WithIcon(ID_FOG_OBJECT, IDS_FOG_OBJECT_NAME));
+	MenuAddString(ID_MENU_ADD_SCATTER, WithIcon(ID_SCATTER_OBJECT, IDS_SCATTER_OBJECT_NAME));
+	MenuAddString(ID_MENU_ADD_PROXY, WithIcon(ID_PROXY_OBJECT, IDS_PROXY_OBJECT_NAME));
+	MenuSubEnd();
+	// The material types; presets of a type will be listed below its entry (F9).
+	MenuSubBegin("Materials"_s);
+	MenuAddString(ID_MENU_ADD_MATERIAL, WithIcon(ID_CYCLES_MATERIAL, IDS_CYCLES_MATERIAL_NAME));
+	MenuAddString(ID_MENU_ADD_WORLD_MATERIAL, WithIcon(ID_CYCLES_WORLD_MATERIAL, IDS_CYCLES_WORLD_MATERIAL_NAME));
 	MenuSubEnd();
 	MenuSubBegin("Options"_s);
 	MenuSubBegin("IPR Resolution"_s);
@@ -394,11 +512,10 @@ cinema::Bool IprDialog::CreateLayout()
 	{
 		GroupBorderSpace(6, 2, 6, 3);
 		GroupSpace(12, 0);
-		AddStaticText(ID_TEXT_TIME, cinema::BFH_LEFT, 170, 0, "Time:  00:00:00"_s, 0);
-		AddStaticText(ID_TEXT_RAM, cinema::BFH_LEFT, 190, 0, "RAM:  0.0 GB"_s, 0);
-		AddStaticText(ID_TEXT_VRAM, cinema::BFH_LEFT, 190, 0, "VRAM:  0.0 GB"_s, 0);
-		// What renders, as Blender reports it: takes the room up to the samples bar.
-		AddStaticText(ID_TEXT_DEVICE, cinema::BFH_SCALEFIT, 0, 0, maxon::String(), 0);
+		// The time, the memory and what renders, as Blender reports it: one area that takes the room up to
+		// the samples bar and gives way when the window gets narrow (IprStatusArea).
+		AddUserArea(ID_AREA_STATUS, cinema::BFH_SCALEFIT, 0, 0);
+		AttachUserArea(_status, ID_AREA_STATUS);
 		AddUserArea(ID_AREA_PROGRESS, cinema::BFH_RIGHT, 290, 0);
 		AttachUserArea(_progress, ID_AREA_PROGRESS);
 	}
@@ -549,7 +666,7 @@ void IprDialog::RefreshStatus()
 	if (time != _shownTime)
 	{
 		_shownTime = time;
-		SetString(ID_TEXT_TIME, time);
+		_status.Set(IprStatusArea::TIME, time);
 	}
 
 	const IprMemory memory = ipr.GetMemory();
@@ -557,13 +674,13 @@ void IprDialog::RefreshStatus()
 	if (ram != _shownRam)
 	{
 		_shownRam = ram;
-		SetString(ID_TEXT_RAM, ram);
+		_status.Set(IprStatusArea::RAM, ram);
 	}
 	const maxon::String vram = "VRAM:  "_s + MemoryText(memory.vram, memory.vramTotal);
 	if (vram != _shownVram)
 	{
 		_shownVram = vram;
-		SetString(ID_TEXT_VRAM, vram);
+		_status.Set(IprStatusArea::VRAM, vram);
 	}
 
 	// (The manual mode: a change that was not sent is said where the device is named, until Reload.)
@@ -571,7 +688,7 @@ void IprDialog::RefreshStatus()
 	if (device != _shownDevice)
 	{
 		_shownDevice = device;
-		SetString(ID_TEXT_DEVICE, device);
+		_status.Set(IprStatusArea::DEVICE, device);
 	}
 
 	_progress.Set(status.state == VIEWSTATE::STOPPED ? 0 : status.sample, status.state == VIEWSTATE::STOPPED ? 0 : status.samples);
@@ -1258,7 +1375,7 @@ cinema::Bool RegisterIprCommand()
 		cinema::BaseBitmap::Free(icon);
 		return false;
 	}
-	const maxon::Bool registered = cinema::RegisterCommandPlugin(ID_IPR_COMMAND, cinema::GeLoadString(IDS_IPR_COMMAND_NAME), 0, icon,
+	const maxon::Bool registered = cinema::RegisterCommandPlugin(ID_IPR_COMMAND, cinema::GeLoadString(IDS_IPR_COMMAND_NAME), PLUGINFLAG_HIDEPLUGINMENU, icon,
 		"Opens the live render window of Cycles Render."_s, command);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

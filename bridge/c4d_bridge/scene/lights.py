@@ -48,32 +48,42 @@ def build_light(scene, item, blobs):
     for name, value in item.get("visibility", {}).items():
         if name in _VISIBILITY:
             setattr(obj, _VISIBILITY[name], bool(value))
-    scene.light_links[item["id"]] = item.get("linking")
+    linking, shadows = item.get("linking"), item.get("shadow_linking")
+    specs = {"light": linking, "shadow": shadows if shadows is not None else linking}
+    scene.light_links[item["id"]] = specs if linking or shadows else None
 
 
 def apply_links(scene):
-    """Light linking: give every light with a list the collection of objects it lights or
-    spares. Done after each request, because an object that was sent again is a new object."""
+    """Light and shadow linking: give every light with a list the collection of objects it lights
+    (receivers) and the collection of objects that cast its shadows (blockers). Done after each
+    request, because an object that was sent again is a new object. Without a `shadow_linking` the
+    shadows follow the `linking`, which is what an object excluded from a light of Cinema 4D does
+    (measured): Blender keeps the two apart (an object that is not lit still casts a shadow unless it
+    is also left out of the blockers; docs/reference/blender.md, "Light and shadow linking")."""
     for light_id in list(scene.light_links):
         obj = scene.objects.get(light_id)
         if obj is None:
             del scene.light_links[light_id]
-        name = "links_" + light_id
-        old = bpy.data.collections.get(name)
-        if old is not None:
-            bpy.data.collections.remove(old)
-        spec = scene.light_links.get(light_id)
-        if obj is None or not spec:
-            continue
-        collection = bpy.data.collections.new(name)
-        for object_id in spec.get("objects", ()):
-            member = scene.objects.get(object_id)
-            if member is not None and member.name not in collection.objects:
-                collection.objects.link(member)
-        if spec.get("mode") == "EXCLUDE":
-            for entry in collection.collection_objects:
-                entry.light_linking.link_state = 'EXCLUDE'
-        # The same list decides what this light lights and what casts its shadows: an object
-        # Cinema 4D excludes from a light throws no shadow from it either (measured).
-        obj.light_linking.receiver_collection = collection
-        obj.light_linking.blocker_collection = collection
+        specs = scene.light_links.get(light_id) if obj is not None else None
+        for role, prefix in (("light", "links_"), ("shadow", "shadow_links_")):
+            name = prefix + light_id
+            old = bpy.data.collections.get(name)
+            if old is not None:
+                bpy.data.collections.remove(old)
+            spec = specs.get(role) if specs else None
+            collection = None
+            if spec:
+                collection = bpy.data.collections.new(name)
+                for object_id in spec.get("objects", ()):
+                    member = scene.objects.get(object_id)
+                    if member is not None and member.name not in collection.objects:
+                        collection.objects.link(member)
+                if spec.get("mode") == "EXCLUDE":
+                    for entry in collection.collection_objects:
+                        entry.light_linking.link_state = 'EXCLUDE'
+            if obj is None:
+                continue
+            if role == "light":
+                obj.light_linking.receiver_collection = collection
+            else:
+                obj.light_linking.blocker_collection = collection

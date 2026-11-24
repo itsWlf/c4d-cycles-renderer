@@ -7,6 +7,7 @@
 #include "c4d_resource.h"
 #include "c4d_symbols.h"
 #include "c4d_tagdata.h"
+#include "ocamera.h"
 
 #include "tcyclescamera.h"
 
@@ -132,17 +133,45 @@ public:
 	{
 		const cinema::BaseList2D* const item = static_cast<const cinema::BaseList2D*>(node);
 		const maxon::Int32 parameter = id.GetDepth() > 0 ? id[0].id : 0;
-		if (item && parameter > CYCLESCAMERA_DOF_ENABLE && parameter <= CYCLESCAMERA_DOF_RATIO)
+		if (item && parameter > CYCLESCAMERA_DOF_ENABLE && parameter <= CYCLESCAMERA_DOF_TAKE_FOCUS)
 		{
 			const cinema::BaseContainer& values = item->GetDataInstanceRef();
 			if (!values.GetBool(CYCLESCAMERA_DOF_ENABLE, false))
 				return false;
-			if (parameter == CYCLESCAMERA_DOF_FOCUS_DISTANCE && values.GetObjectLink(CYCLESCAMERA_DOF_FOCUS_OBJECT, item->GetDocument()))
+			// The button writes the distance, so it is greyed out where the distance is.
+			if ((parameter == CYCLESCAMERA_DOF_FOCUS_DISTANCE || parameter == CYCLESCAMERA_DOF_TAKE_FOCUS)
+				&& values.GetObjectLink(CYCLESCAMERA_DOF_FOCUS_OBJECT, item->GetDocument()))
 				return false;
 		}
 		if (item && !IsImagerParameterEnabled(item->GetDataInstanceRef(), parameter))
 			return false;
 		return SUPER::GetDEnabling(node, id, data, flags, itemdesc);
+	}
+
+	// "Take from Camera": the focus distance of the camera the tag sits on, as the camera has it, into
+	// the tag's focus distance, in one undo step (camera_tag.h, CameraFocusDistance).
+	static void TakeFocusFromCamera(cinema::BaseTag* tag)
+	{
+		cinema::BaseObject* const camera = tag->GetObject();
+		maxon::Float64 distance = 0.0;
+		if (!CameraFocusDistance(camera, distance))
+		{
+			const maxon::String message = FormatString("Cycles Render: the Cycles Camera tag on \"@\" sits on no camera; there is no focus distance to take.",
+				camera ? camera->GetName() : maxon::String());
+			cinema::StatusSetText(message);
+			ApplicationOutput(message);
+			return;
+		}
+		cinema::BaseDocument* const doc = tag->GetDocument();
+		if (doc)
+		{
+			doc->StartUndo();
+			doc->AddUndo(cinema::UNDOTYPE::CHANGE_SMALL, tag);
+		}
+		tag->SetParameter(CreateDescID(cinema::DescLevel(CYCLESCAMERA_DOF_FOCUS_DISTANCE)), cinema::GeData(distance), cinema::DESCFLAGS_SET::NONE);
+		if (doc)
+			doc->EndUndo();
+		cinema::EventAdd();
 	}
 
 	// The menu "Add Effect" of the Imager tab adds a layer; it stores nothing.
@@ -168,6 +197,11 @@ public:
 		if (item && data && type == MSG_DESCRIPTION_COMMAND)
 		{
 			const cinema::DescriptionCommand* const command = static_cast<const cinema::DescriptionCommand*>(data);
+			if (command->_descId.GetDepth() > 0 && command->_descId[0].id == CYCLESCAMERA_DOF_TAKE_FOCUS)
+			{
+				TakeFocusFromCamera(static_cast<cinema::BaseTag*>(item));
+				return true;
+			}
 			if (command->_descId.GetDepth() > 0 && RunImagerCommand(item, command->_descId[0].id))
 				return true;
 		}
@@ -185,6 +219,35 @@ public:
 		return SUPER::Message(node, type, data);
 	}
 };
+
+maxon::Bool CameraFocusDistance(const cinema::BaseObject* camera, maxon::Float64& distance)
+{
+	// Orscamera is the camera Cinema 4D 2027 creates by default; it is no instance of Ocamera.
+	if (!camera || !(camera->IsInstanceOf(Ocamera) || camera->GetType() == Orscamera))
+		return false;
+	// Both keep the focus object under the same id (CAMERAOBJECT_TARGETOBJECT, RSCAMERAOBJECT_TARGETOBJECT).
+	cinema::GeData link;
+	const cinema::BaseObject* focus = nullptr;
+	if (camera->GetParameter(CreateDescID(cinema::DescLevel(CAMERAOBJECT_TARGETOBJECT)), link, cinema::DESCFLAGS_GET::NONE))
+		focus = static_cast<const cinema::BaseObject*>(link.GetLinkAtom(camera->GetDocument(), Obase));
+	if (focus)
+	{
+		// Along the view axis, as both cameras measure it (and as the exporter measures the tag's own
+		// focus object). Computed here: the Redshift camera's stored distance stayed where it was when
+		// only the camera moved (measured, 2027.0.0).
+		const cinema::Matrix mg = camera->GetMg();
+		distance = maxon::Abs(Dot(mg.sqmat.v3.GetNormalized(), focus->GetMg().off - mg.off));
+		return true;
+	}
+	// The distance the camera keeps (CAMERAOBJECT_TARGETDISTANCE, RSCAMERAOBJECT_FOCUS_DISTANCE: the same
+	// id, in document units). The Redshift camera's "Auto Focus Distance" writes the distance to what lies
+	// ahead into it when the document is evaluated (measured: 700 for a face 700 ahead).
+	cinema::GeData value;
+	if (!camera->GetParameter(CreateDescID(cinema::DescLevel(CAMERAOBJECT_TARGETDISTANCE)), value, cinema::DESCFLAGS_GET::NONE) || value.GetType() != cinema::DA_REAL)
+		return false;
+	distance = value.GetFloat();
+	return true;
+}
 
 const cinema::BaseTag* FindCameraTag(const cinema::BaseObject* camera)
 {

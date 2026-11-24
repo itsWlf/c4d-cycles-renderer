@@ -20,6 +20,11 @@ STRINGTABLE Tcyclesobject
 	CYCLESOBJECT_LINKING_MODE_EXCLUDE     "Exclude: these lights do not light the object";
 	CYCLESOBJECT_LINKING_MODE_INCLUDE     "Include: only these lights light the object";
 	CYCLESOBJECT_LINKING_LIGHTS           "Lights";
+	CYCLESOBJECT_SHADOW_LINKING_ENABLE    "Override Shadow Linking";
+	CYCLESOBJECT_SHADOW_LINKING_MODE      "Mode";
+	CYCLESOBJECT_SHADOW_LINKING_MODE_EXCLUDE "Exclude: the object casts no shadow of these lights";
+	CYCLESOBJECT_SHADOW_LINKING_MODE_INCLUDE "Include: the object casts shadows of these lights only";
+	CYCLESOBJECT_SHADOW_LINKING_LIGHTS    "Shadow Lights";
 
 	CYCLESOBJECT_GROUP_INSTANCES          "Instances";
 	CYCLESOBJECT_INSTANCES_ENABLE         "Instance Objects on Particles or Matrices";

@@ -10,6 +10,7 @@
 
 #include "ocyclesfog.h"
 
+#include "../materials/material_export.h"
 #include "../materials/node_graph.h"
 #include "../session/json_writer.h"
 #include "fog_export.h"
@@ -128,11 +129,36 @@ static maxon::Result<maxon::Bool> WriteFogMaterial(SceneWriter& writer, const Do
 	return true;
 }
 
-// --- the noise -------------------------------------------------------------------------------------
+// --- the grid: the noise and the texture ------------------------------------------------------------
 
-maxon::Bool HasFogNoise(const cinema::BaseObject* fog)
+static maxon::Bool HasFogNoise(const cinema::BaseObject* fog)
 {
 	return GetBoolParameter(fog, CYCLESFOG_NOISE_ENABLE, false);
+}
+
+cinema::BaseShader* GetFogTexture(const cinema::BaseObject* fog, const cinema::BaseDocument* doc)
+{
+	return fog ? GetShaderParameter(fog, CYCLESFOG_TEXTURE, doc ? doc : fog->GetDocument()) : nullptr;
+}
+
+maxon::Bool HasFogGrid(const cinema::BaseObject* fog, const cinema::BaseDocument* doc)
+{
+	return HasFogNoise(fog) || GetFogTexture(fog, doc) != nullptr;
+}
+
+void GetFogGridCells(const cinema::BaseObject* fog, maxon::Int32 (&cells)[3])
+{
+	cells[0] = cells[1] = cells[2] = 0;
+	const cinema::Vector size = GetVectorParameter(fog, CYCLESFOG_SIZE, cinema::Vector(FOG_DEFAULT_SIZE));
+	if (size.x <= 0.0 || size.y <= 0.0 || size.z <= 0.0)
+		return;
+	// Cubes of the longest edge over the resolution, as many as fit along each edge (the export stretches
+	// them a little so that they fill it exactly).
+	const maxon::Int32 resolution = maxon::ClampValue(GetIntParameter(fog, CYCLESFOG_NOISE_RESOLUTION, FOG_DEFAULT_NOISE_RESOLUTION), maxon::Int32(1), maxon::Int32(1024));
+	const maxon::Float64 edge = maxon::Max(size.x, maxon::Max(size.y, size.z)) / maxon::Float64(resolution);
+	const maxon::Float64 sides[3] = { size.x, size.y, size.z };
+	for (maxon::Int axis = 0; axis < 3; ++axis)
+		cells[axis] = maxon::Max(maxon::Int32(1), maxon::Int32(maxon::Floor(sides[axis] / edge + 0.5)));
 }
 
 static FogNoiseStats g_lastNoise;
@@ -172,9 +198,69 @@ struct FogNoise
 		return v;
 	}
 };
+
+/// The fog's texture between InitRender() and FreeRender(), sampled at a voxel's place in the box.
+class FogTexture
+{
+public:
+	FogTexture() = default;
+	~FogTexture() { Free(); }
+	MAXON_DISALLOW_COPY_AND_ASSIGN(FogTexture);
+
+	/// Prepares @p shader for sampling in @p doc. @return False when it cannot render.
+	maxon::Bool Init(cinema::BaseShader* shader, const cinema::BaseDocument* doc, maxon::Int32 projection)
+	{
+		Free();
+		const cinema::InitRenderStruct irs(doc);
+		if (!shader || shader->InitRender(irs) != cinema::INITRENDERRESULT::OK)
+			return false;
+		_shader = shader;
+		_time = doc->GetTime().Get();
+		_projection = projection;
+		return true;
+	}
+
+	maxon::Bool IsActive() const { return _shader != nullptr; }
+
+	/// The share of the density at @p at, the place in the box as fractions 0..1 of its edges along X,
+	/// Y and Z: the mean of the shader's colour there, limited to 0..1. Called from many threads at once,
+	/// as Cinema 4D's renderers call a shader (ShaderData::Output is called in a threaded context).
+	maxon::Float64 Sample(const cinema::Vector& at) const
+	{
+		cinema::ChannelData cd;
+		// U and V along the projection's two axes, V downwards as on a Cube's side, W along the third.
+		if (_projection == CYCLESFOG_TEXTURE_PROJECTION_RIGHT)
+			cd.p = cinema::Vector(at.z, 1.0 - at.y, at.x);
+		else if (_projection == CYCLESFOG_TEXTURE_PROJECTION_TOP)
+			cd.p = cinema::Vector(at.x, 1.0 - at.z, at.y);
+		else
+			cd.p = cinema::Vector(at.x, 1.0 - at.y, at.z);
+		cd.n = cinema::Vector(0.0, 0.0, -1.0);
+		cd.d = cinema::Vector(0.0);
+		cd.t = _time;
+		cd.texflag = TEX_TILE;
+		cd.vd = nullptr;
+		cd.off = 0.0;
+		cd.scale = 0.0;
+		const cinema::Vector color = _shader->Sample(&cd);
+		return maxon::Clamp01((color.x + color.y + color.z) / 3.0);
+	}
+
+	void Free()
+	{
+		if (_shader)
+			_shader->FreeRender();
+		_shader = nullptr;
+	}
+
+private:
+	cinema::BaseShader* _shader = nullptr;
+	maxon::Float64 _time = 0.0;
+	maxon::Int32 _projection = CYCLESFOG_TEXTURE_PROJECTION_FRONT;
+};
 }
 
-maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseDocument* doc,
+maxon::Result<maxon::Bool> ExportFogGrid(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseDocument* doc,
 	const cinema::BaseObject* fog, const cinema::Matrix& mg, const maxon::String& id, const maxon::String& materialId)
 {
 	iferr_scope;
@@ -185,6 +271,10 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 		writer.Warn(FormatString("Fog \"@\": its box has no volume (Size @, @, @) and renders nothing.", fog->GetName(), size.x, size.y, size.z));
 		return false;
 	}
+
+	const maxon::Bool useNoise = HasFogNoise(fog);
+	cinema::BaseShader* const shader = GetFogTexture(fog, doc);
+	const maxon::Int32 projection = GetIntParameter(fog, CYCLESFOG_TEXTURE_PROJECTION, CYCLESFOG_TEXTURE_PROJECTION_FRONT);
 
 	FogNoise noise;
 	noise.type = GetIntParameter(fog, CYCLESFOG_NOISE_TYPE, cinema::NOISE_NOISE);
@@ -205,26 +295,37 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 	if (noise.type == cinema::NOISE_NONE || noise.type == cinema::NOISE_UNKNOWN)
 		noise.type = cinema::NOISE_NOISE;
 
-	// The cells: cubes of the longest edge over the resolution, as many as fit along each edge, then
+	// The voxels: cubes of the longest edge over the resolution, as many as fit along each edge, then
 	// stretched a little so that they fill it exactly.
 	const maxon::Int32 resolution = maxon::ClampValue(GetIntParameter(fog, CYCLESFOG_NOISE_RESOLUTION, FOG_DEFAULT_NOISE_RESOLUTION), maxon::Int32(1), maxon::Int32(1024));
-	const maxon::Float64 longest = maxon::Max(size.x, maxon::Max(size.y, size.z));
-	const maxon::Float64 edge = longest / maxon::Float64(resolution);
-	const maxon::Int32 nx = maxon::Max(maxon::Int32(1), maxon::Int32(maxon::Floor(size.x / edge + 0.5)));
-	const maxon::Int32 ny = maxon::Max(maxon::Int32(1), maxon::Int32(maxon::Floor(size.y / edge + 0.5)));
-	const maxon::Int32 nz = maxon::Max(maxon::Int32(1), maxon::Int32(maxon::Floor(size.z / edge + 0.5)));
+	maxon::Int32 cells[3];
+	GetFogGridCells(fog, cells);
+	const maxon::Int32 nx = cells[0], ny = cells[1], nz = cells[2];
 	const cinema::Vector cell(size.x / nx, size.y / ny, size.z / nz);
 	const cinema::Vector first = -size * 0.5 + cell * 0.5;   // the centre of cell (0, 0, 0), in the fog's axes
 
 	// Everything the grid follows from: the file is reused while it is the same, also by the copies of the
-	// document a render makes.
+	// document a render makes. A noise alone gives the key it gave before the texture came (0.3.0, F5).
 	maxon::UInt64 key = 0x666F67ull;
-	const maxon::Float64 numbers[] = { maxon::Float64(noise.type), noise.world ? 1.0 : 0.0, noise.scale.x, noise.scale.y, noise.scale.z, noise.octaves,
-		maxon::Float64(noise.seed), noise.absolute ? 1.0 : 0.0, noise.low, noise.high, noise.brightness, noise.contrast, noise.time,
-		size.x, size.y, size.z, maxon::Float64(resolution) };
-	key = HashBytes(reinterpret_cast<const maxon::Char*>(numbers), SIZEOF(numbers), key);
-	if (noise.world)
-		key = HashBytes(reinterpret_cast<const maxon::Char*>(&mg), SIZEOF(mg), key);
+	if (useNoise)
+	{
+		const maxon::Float64 numbers[] = { maxon::Float64(noise.type), noise.world ? 1.0 : 0.0, noise.scale.x, noise.scale.y, noise.scale.z, noise.octaves,
+			maxon::Float64(noise.seed), noise.absolute ? 1.0 : 0.0, noise.low, noise.high, noise.brightness, noise.contrast, noise.time,
+			size.x, size.y, size.z, maxon::Float64(resolution) };
+		key = HashBytes(reinterpret_cast<const maxon::Char*>(numbers), SIZEOF(numbers), key);
+		if (noise.world)
+			key = HashBytes(reinterpret_cast<const maxon::Char*>(&mg), SIZEOF(mg), key);
+	}
+	else
+	{
+		const maxon::Float64 numbers[] = { size.x, size.y, size.z, maxon::Float64(resolution) };
+		key = HashBytes(reinterpret_cast<const maxon::Char*>(numbers), SIZEOF(numbers), key ^ 0x746578ull);
+	}
+	if (shader)
+	{
+		key = ShaderFingerprint(shader, doc, (key ^ 0x7465787475726Bull) * 0x100000001B3ull);
+		key = ShaderSurroundings(shader, doc, (key ^ maxon::UInt64(projection + 1)) * 0x100000001B3ull);
+	}
 
 	FogNoiseStats stats;
 	stats.cells[0] = nx;
@@ -232,24 +333,32 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 	stats.cells[2] = nz;
 	stats.type = noise.type;
 	stats.seed = noise.seed;
+	stats.noise = useNoise;
+	stats.mainThread = cinema::GeIsMainThread();
 	cinema::Filename file = FindVolumeFile(id, key);
 	stats.reused = file.IsPopulated();
 	if (!stats.reused)
 	{
-		// Sampling: the noise at every cell's centre, slice by slice on all cores (the Noise shader samples
-		// one noise from many render threads).
+		// Sampling: the noise and the texture at every cell's centre, slice by slice on all cores (the Noise
+		// shader samples one noise from many render threads, and so do the renderers a shader).
 		const maxon::Float64 started = cinema::GeGetMilliSeconds();
-		cinema::C4DNoise* sampler = cinema::C4DNoise::Alloc2(noise.seed);
-		if (!sampler)
+		cinema::C4DNoise* sampler = useNoise ? cinema::C4DNoise::Alloc2(noise.seed) : nullptr;
+		if (useNoise && !sampler)
 		{
 			writer.Warn(FormatString("Fog \"@\": Cinema 4D's noise could not be made; the fog is left out.", fog->GetName()));
 			return false;
 		}
 		finally
 		{
-			cinema::C4DNoise::Free(sampler);
+			if (sampler)
+				cinema::C4DNoise::Free(sampler);
 		};
-		sampler->InitFbm(21, 2.1, 0.5);
+		if (sampler)
+			sampler->InitFbm(21, 2.1, 0.5);
+		FogTexture texture;
+		if (shader && !texture.Init(shader, doc, projection))
+			writer.Warn(FormatString("Fog \"@\": its texture \"@\" could not be prepared for sampling and is left out.", fog->GetName(), shader->GetName()));
+		stats.textured = texture.IsActive();
 		maxon::BaseArray<maxon::Float32> values;
 		values.Resize(maxon::Int(nx) * ny * nz) iferr_return;
 		maxon::ParallelFor::Dynamic(0, maxon::Int(nz), [&](maxon::Int k)
@@ -259,13 +368,21 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 				for (maxon::Int32 i = 0; i < nx; ++i)
 				{
 					const cinema::Vector local = first + cinema::Vector(cell.x * i, cell.y * j, cell.z * maxon::Float64(k));
-					const cinema::Vector at = noise.world ? mg * local : local;
-					const cinema::Vector p(at.x / noise.scale.x, at.y / noise.scale.y, at.z / noise.scale.z);
-					const maxon::Float64 n = sampler->Noise(cinema::NoiseType(noise.type), false, p, noise.time, noise.octaves, noise.absolute);
-					values[(k * ny + j) * nx + i] = maxon::Float32(noise.Map(n));
+					maxon::Float64 value = 1.0;
+					if (sampler)
+					{
+						const cinema::Vector at = noise.world ? mg * local : local;
+						const cinema::Vector p(at.x / noise.scale.x, at.y / noise.scale.y, at.z / noise.scale.z);
+						value = noise.Map(sampler->Noise(cinema::NoiseType(noise.type), false, p, noise.time, noise.octaves, noise.absolute));
+					}
+					// The texture where the noise left fog: the voxel's centre as 0..1 along each edge of the box.
+					if (value > 0.0 && texture.IsActive())
+						value *= texture.Sample(cinema::Vector((i + 0.5) / nx, (j + 0.5) / ny, (maxon::Float64(k) + 0.5) / nz));
+					values[(k * ny + j) * nx + i] = maxon::Float32(value);
 				}
 			}
 		});
+		texture.Free();
 		stats.sampleMs = cinema::GeGetMilliSeconds() - started;
 
 		// The grid: cell (i, j, k) at its centre in the fog's axes, which the item's matrix places.
@@ -292,6 +409,7 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 						if (value > 0.0f)
 						{
 							access.SetValue(maxon::IntVector32(i, j, k), value) iferr_return;
+							++stats.filled;
 						}
 					}
 				}
@@ -301,7 +419,7 @@ maxon::Result<maxon::Bool> ExportFogNoise(SceneWriter& writer, const Coords& coo
 		volumes.Append(std::move(volume)) iferr_return;
 		iferr (file = SaveVolumeFile(id, volumes, key))
 		{
-			writer.Warn(FormatString("Fog \"@\": its noise could not be written for Blender and the fog is left out. @", fog->GetName(), err));
+			writer.Warn(FormatString("Fog \"@\": its voxel grid could not be written for Blender and the fog is left out. @", fog->GetName(), err));
 			return false;
 		}
 		stats.saveMs = cinema::GeGetMilliSeconds() - saving;

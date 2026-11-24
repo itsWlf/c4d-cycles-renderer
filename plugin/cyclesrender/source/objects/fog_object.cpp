@@ -17,6 +17,30 @@
 namespace cyclesrender
 {
 
+// A count with a space between each three digits: 2 097 152.
+static maxon::String GroupedDigits(maxon::Int64 count)
+{
+	const maxon::String digits = maxon::String::IntToString(count);
+	maxon::String grouped;
+	const maxon::Int length = digits.GetLength();
+	for (maxon::Int i = 0; i < length; ++i)
+	{
+		if (i > 0 && (length - i) % 3 == 0)
+			grouped += " "_s;
+		grouped += digits.GetPart(i, 1);
+	}
+	return grouped;
+}
+
+// "64 x 45 x 64 = 184 320": the grid's voxels along X, Y and Z and in all. The time and the file they
+// cost are measured in docs/reference/blender.md ("The Cycles Fog object").
+static maxon::String DescribeFogGrid(const cinema::BaseObject* fog)
+{
+	maxon::Int32 cells[3];
+	GetFogGridCells(fog, cells);
+	return FormatString("@ x @ x @ = @", cells[0], cells[1], cells[2], GroupedDigits(maxon::Int64(cells[0]) * cells[1] * cells[2]));
+}
+
 class FogObject : public cinema::ObjectData
 {
 	INSTANCEOF(FogObject, cinema::ObjectData)
@@ -61,6 +85,10 @@ public:
 		data.SetFloat(CYCLESFOG_NOISE_CONTRAST, 0.0);
 		data.SetFloat(CYCLESFOG_NOISE_SPEED, 0.0);
 		data.SetInt32(CYCLESFOG_NOISE_RESOLUTION, FOG_DEFAULT_NOISE_RESOLUTION);
+		// No texture; one linked is the fog's own shader (inserted under it, as the Attribute Manager's
+		// shader menu does), which Cinema 4D copies, saves, loads and undoes with the object by itself
+		// (measured: internal/f11/probe_fog_texture.py).
+		data.SetInt32(CYCLESFOG_TEXTURE_PROJECTION, CYCLESFOG_TEXTURE_PROJECTION_FRONT);
 		return true;
 	}
 
@@ -75,15 +103,40 @@ public:
 		return SUPER::GetDDescription(node, description, flags);
 	}
 
-	// The noise's settings are greyed while it is off.
+	// The noise's settings are greyed while it is off, the projection while no texture is linked, and the
+	// voxel grid while neither makes one.
 	virtual cinema::Bool GetDEnabling(const cinema::GeListNode* node, const cinema::DescID& id, const cinema::GeData& data,
 		cinema::DESCFLAGS_ENABLE flags, const cinema::BaseContainer* itemdesc) const override
 	{
-		const cinema::BaseList2D* const item = static_cast<const cinema::BaseList2D*>(node);
+		const cinema::BaseObject* const op = static_cast<const cinema::BaseObject*>(node);
 		const maxon::Int32 parameter = id.GetDepth() > 0 ? id[0].id : 0;
-		if (item && parameter > CYCLESFOG_NOISE_ENABLE && parameter <= CYCLESFOG_NOISE_RESOLUTION && !item->GetDataInstanceRef().GetBool(CYCLESFOG_NOISE_ENABLE))
-			return false;
+		if (op)
+		{
+			const maxon::Bool noise = op->GetDataInstanceRef().GetBool(CYCLESFOG_NOISE_ENABLE);
+			if (parameter == CYCLESFOG_NOISE_RESOLUTION || parameter == CYCLESFOG_GRID_INFO)
+				return HasFogGrid(op, op->GetDocument());
+			if (parameter == CYCLESFOG_TEXTURE_PROJECTION)
+				return GetFogTexture(op, op->GetDocument()) != nullptr;
+			if (parameter > CYCLESFOG_NOISE_ENABLE && parameter < CYCLESFOG_NOISE_RESOLUTION && !noise)
+				return false;
+		}
 		return SUPER::GetDEnabling(node, id, data, flags, itemdesc);
+	}
+
+	// The line under Voxel Resolution: how many voxels the grid has, made when it is shown, so it follows
+	// the size and the resolution as they change.
+	virtual cinema::Bool GetDParameter(const cinema::GeListNode* node, const cinema::DescID& id, cinema::GeData& data, cinema::DESCFLAGS_GET& flags) const override
+	{
+		const cinema::BaseObject* const op = static_cast<const cinema::BaseObject*>(node);
+		const maxon::Int32 parameter = id.GetDepth() > 0 ? id[0].id : 0;
+		if (op && parameter == CYCLESFOG_GRID_INFO)
+		{
+			// Static text is not greyed by GetDEnabling (seen): without a grid the line says so instead.
+			data = cinema::GeData(HasFogGrid(op, op->GetDocument()) ? DescribeFogGrid(op) : "None: no texture, and the noise is off"_s);
+			flags |= cinema::DESCFLAGS_GET::PARAM_GET;
+			return true;
+		}
+		return SUPER::GetDParameter(node, id, data, flags);
 	}
 
 	// The box around the origin: what framing, selection and the view's clipping go by.
@@ -174,7 +227,7 @@ cinema::Bool RegisterFogObject()
 	// OBJECT_HASDEFORMMODE: the green "enabled" check, as the Cycles Light has (lights/light_object.cpp),
 	// without making it a generator. Cinema 4D's own Environment object, which has a fog, is in the
 	// scene category, so this is too.
-	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_FOG_OBJECT, cinema::GeLoadString(IDS_FOG_OBJECT_NAME), OBJECT_HASDEFORMMODE, FogObject::Alloc,
+	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_FOG_OBJECT, cinema::GeLoadString(IDS_FOG_OBJECT_NAME), OBJECT_HASDEFORMMODE | PLUGINFLAG_HIDEPLUGINMENU, FogObject::Alloc,
 		"Ocyclesfog"_s, icon, 0, cinema::OBJECTCATEGORY::SCENE);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

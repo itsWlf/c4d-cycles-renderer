@@ -37,8 +37,11 @@ struct CyclesWorldOutputs
 ///
 /// The Material Output node itself is not written; what is wired into its inputs is returned,
 /// and the caller connects it to the output it owns. The same for a World Output (a world material):
-/// not written, and what is wired into it handed back through @p world; without @p world (the
-/// material is on an object) a wired World Output is named in the console, as it renders nothing there.
+/// not written, and what is wired into it handed back through @p world. Of several outputs of a kind
+/// the one Blender would use for the engine counts (its Target, then "Active Output", then the first;
+/// MaterialExporter::IsEevee). With @p world (a Cycles Environment) the Material Outputs are not read;
+/// without it (the material is on an object) the World Outputs are not, and a material that has only a
+/// wired World Output, nothing wired into a Material Output, is named in the console, as it shows nothing there.
 ///
 /// @param[out] surface       What is wired into the Surface input; invalid if nothing is.
 /// @param[out] displacement  The same for Displacement.

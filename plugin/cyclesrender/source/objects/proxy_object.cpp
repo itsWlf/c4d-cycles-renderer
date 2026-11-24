@@ -274,7 +274,7 @@ cinema::Bool RegisterProxyObject()
 		cinema::BaseBitmap::Free(icon);
 	// OBJECT_HASDEFORMMODE: the green "enabled" check, as the Cycles Light, Fog and Environment have,
 	// without making it a generator.
-	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_PROXY_OBJECT, cinema::GeLoadString(IDS_PROXY_OBJECT_NAME), OBJECT_HASDEFORMMODE, ProxyObject::Alloc,
+	const cinema::Bool registered = cinema::RegisterObjectPlugin(ID_PROXY_OBJECT, cinema::GeLoadString(IDS_PROXY_OBJECT_NAME), OBJECT_HASDEFORMMODE | PLUGINFLAG_HIDEPLUGINMENU, ProxyObject::Alloc,
 		"Ocyclesproxy"_s, icon, 0, cinema::OBJECTCATEGORY::SCENE);
 	cinema::BaseBitmap::Free(icon);
 	return registered;

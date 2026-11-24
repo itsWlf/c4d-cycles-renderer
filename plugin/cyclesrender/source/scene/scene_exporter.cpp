@@ -203,6 +203,7 @@ maxon::Result<maxon::Bool> SceneExporter::WriteWorldAlone(SceneWriter& writer, c
 	}
 	MaterialExporter materials(writer, doc, settings.bakeResolution);
 	materials.SetBlenderVersion(settings.blenderVersion, settings.blenderVersionText);
+	materials.SetEevee(settings.eevee);
 	maxon::String read;
 	ExportWorldItem(materials, parts[0], parts[1], parts[2], settings.worldColor, settings.worldStrength, &read) iferr_return;
 	// Another image read (another type, file or colour space): what Blender holds of the old one is to go.
@@ -376,6 +377,7 @@ maxon::Result<void> SceneExporter::AddMeshLeaf(cinema::BaseObject* object, const
 	leaf.tail = inherited.tail;
 	leaf.followable = inherited.followable;
 	leaf.linkTag = inherited.linkTag;
+	leaf.shadowLinkTag = inherited.shadowLinkTag;
 	leaf.visibility = inherited.visibility;
 	leaf.nameKey = NameKey(inherited.keyPath);
 	leaf.objectId = inherited.objectId;
@@ -596,7 +598,9 @@ maxon::Result<void> SceneExporter::WalkScatter(cinema::BaseObject* op, const cin
 		_notes.Append(FormatString("Scatter \"@\": a Cycles Scatter inside a multi-instance is not exported.", name)) iferr_return;
 		return maxon::OK;
 	}
-	const ScatterResult* const result = GetScatterResult(op);
+	// Held for the whole walk: the object may publish its next result meanwhile (Cinema 4D's drawing thread may be
+	// evaluating the document), and this one, with the clones its sources show, stays whole until it is let go.
+	const ScatterResultRef result = GetScatterResult(op);
 	if (!result)
 	{
 		_notes.Append(FormatString(inCache ? "Scatter \"@\": a copy of a Cycles Scatter made by a generator is not exported."_s
@@ -606,7 +610,7 @@ maxon::Result<void> SceneExporter::WalkScatter(cinema::BaseObject* op, const cin
 	// The copies as the scene is now (a surface below the scatter in the Object Manager reaches it one evaluation late).
 	ScatterCopies fresh;
 	maxon::BaseArray<maxon::String> freshWarnings;
-	const ScatterCopies* const current = GetCurrentScatterCopies(op, _doc, fresh, freshWarnings) iferr_return;
+	const ScatterCopies* const current = GetCurrentScatterCopies(op, _doc, *result, fresh, freshWarnings) iferr_return;
 	for (const maxon::String& warning : current == &fresh ? freshWarnings : result->warnings)
 	{
 		_notes.Append(FormatString("Scatter \"@\": @", name, warning)) iferr_return;
@@ -775,6 +779,8 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 		}
 		if (GetBoolParameter(tag, CYCLESOBJECT_LINKING_ENABLE, false))
 			inherited.linkTag = tag;
+		if (GetBoolParameter(tag, CYCLESOBJECT_SHADOW_LINKING_ENABLE, false))
+			inherited.shadowLinkTag = tag;
 	}
 	// A Cycles Light tag works only on one of Cinema 4D's lights (lights/light_tag.h).
 	if (FindLightTag(op) && !IsTaggableLight(op))
@@ -890,6 +896,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			leaf.tail = inherited.tail;
 			leaf.followable = inherited.followable;
 			leaf.linkTag = inherited.linkTag;
+			leaf.shadowLinkTag = inherited.shadowLinkTag;
 			leaf.visibility = inherited.visibility;
 			_leaves.Append(std::move(leaf)) iferr_return;
 		}
@@ -931,6 +938,7 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			leaf.tail = inherited.tail;
 			leaf.followable = inherited.followable;
 			leaf.linkTag = inherited.linkTag;
+			leaf.shadowLinkTag = inherited.shadowLinkTag;
 			leaf.visibility = inherited.visibility;
 			_leaves.Append(std::move(leaf)) iferr_return;
 			// What the proxy does not take from its own tags.
@@ -1626,12 +1634,77 @@ maxon::UInt64 SceneExporter::MeshSignature(const Leaf& leaf, const maxon::String
 	return MixKeys(hash, scaleBits);
 }
 
+// Whether a Cycles Object tag keeps @p light away: in its list (@p listId) of the mode @p modeId, an
+// exclude list that names the light or an include list that does not. The two lists' modes have the
+// same values.
+static_assert(CYCLESOBJECT_SHADOW_LINKING_MODE_EXCLUDE == CYCLESOBJECT_LINKING_MODE_EXCLUDE
+	&& CYCLESOBJECT_SHADOW_LINKING_MODE_INCLUDE == CYCLESOBJECT_LINKING_MODE_INCLUDE, "The shadow list's modes are the light list's.");
+static maxon::Bool TagKeepsLight(const cinema::BaseDocument* doc, const cinema::BaseTag* tag, maxon::Int32 modeId, maxon::Int32 listId,
+	const cinema::BaseObject* light)
+{
+	maxon::Bool names = false;
+	const cinema::GeData tagData = GetParameterData(tag, listId);
+	if (const cinema::InExcludeData* const lights = tagData.GetCustomDataType<cinema::InExcludeData>())
+	{
+		for (maxon::Int32 i = 0; i < lights->GetObjectCount() && !names; ++i)
+			names = lights->ObjectFromIndex(doc, i) == light;
+	}
+	const maxon::Bool include = GetIntParameter(tag, modeId, CYCLESOBJECT_LINKING_MODE_EXCLUDE) == CYCLESOBJECT_LINKING_MODE_INCLUDE;
+	return include != names;
+}
+
+// The light's own list (@p include, @p listed) less what the tags keep away (@p kept): a light reaches
+// an object only when both agree.
+static maxon::Result<void> CombineLinking(maxon::Bool include, const maxon::BaseArray<maxon::String>& listed,
+	const maxon::BaseArray<maxon::String>& kept, maxon::Bool& resultInclude, maxon::BaseArray<maxon::String>& result)
+{
+	iferr_scope;
+	resultInclude = include;
+	result.Reset();
+	if (include)
+	{
+		// The light reaches what it lists, less what the tags keep away.
+		for (const maxon::String& itemId : listed)
+		{
+			if (!kept.Contains(itemId))
+			{
+				result.Append(itemId) iferr_return;
+			}
+		}
+	}
+	else
+	{
+		result.CopyFrom(listed) iferr_return;
+		for (const maxon::String& itemId : kept)
+		{
+			if (!result.Contains(itemId))
+			{
+				result.Append(itemId) iferr_return;
+			}
+		}
+	}
+	return maxon::OK;
+}
+
+// Whether two lists name the same items (in any order).
+static maxon::Bool SameItems(const maxon::BaseArray<maxon::String>& a, const maxon::BaseArray<maxon::String>& b)
+{
+	if (a.GetCount() != b.GetCount())
+		return false;
+	for (const maxon::String& itemId : a)
+	{
+		if (!b.Contains(itemId))
+			return false;
+	}
+	return true;
+}
+
 maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, const maxon::BaseArray<maxon::String>& itemIds, LightLinking& linking) const
 {
 	iferr_scope;
 
 	// The light's own list (the Cycles Light keeps it under ids of its own, with the modes the
-	// other way round).
+	// other way round). It counts for the light and its shadows alike, as Cinema 4D's own lists do.
 	const maxon::Bool own = light.object->GetType() == ID_LIGHT_OBJECT;
 	const cinema::GeData data = GetParameterData(light.object, own ? CYCLESLIGHT_LINKING_LIST : LIGHT_EXCLUSION_LIST);
 	const cinema::InExcludeData* const list = data.GetCustomDataType<cinema::InExcludeData>();
@@ -1646,70 +1719,63 @@ maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, con
 	}
 	const maxon::Bool includes = own ? GetIntParameter(light.object, CYCLESLIGHT_LINKING_MODE, CYCLESLIGHT_LINKING_MODE_EXCLUDE) == CYCLESLIGHT_LINKING_MODE_INCLUDE
 		: GetIntParameter(light.object, LIGHT_EXCLUSION_MODE, LIGHT_EXCLUSION_MODE_EXCLUDE) == LIGHT_EXCLUSION_MODE_INCLUDE;
-	linking.include = !listed.IsEmpty() && includes;
+	const maxon::Bool include = !listed.IsEmpty() && includes;
 	// A listed object stands for itself and everything below it.
+	maxon::BaseArray<maxon::String> listedItems;
 	for (maxon::Int index = 0; index < _leaves.GetCount() && !listed.IsEmpty(); ++index)
 	{
-		if (index >= itemIds.GetCount() || itemIds[index].IsEmpty() || linking.itemIds.Contains(itemIds[index]))
+		if (index >= itemIds.GetCount() || itemIds[index].IsEmpty() || listedItems.Contains(itemIds[index]))
 			continue;
 		for (const cinema::BaseObject* op = _leaves[index].ownerObject; op; op = op->GetUp())
 		{
 			if (listed.Contains(op))
 			{
-				linking.itemIds.Append(itemIds[index]) iferr_return;
+				listedItems.Append(itemIds[index]) iferr_return;
 				break;
 			}
 		}
 	}
 
-	// The objects whose Cycles Object tag keeps this light away. A light reaches an object only
-	// when both agree: the light's own list and the object's tag.
+	// The objects whose Cycles Object tag keeps this light away, and those whose tag keeps its
+	// shadow away: the shadow list where a tag has one switched on ("Override Shadow Linking"), else
+	// the light list, so that an object's shadows follow its light linking as they did before the
+	// shadow list existed (docs/reference/c4d-sdk.md, "Light linking and shadow linking").
 	maxon::BaseArray<maxon::String> kept;
+	maxon::BaseArray<maxon::String> keptShadows;
+	maxon::Bool shadowTags = false;
 	for (maxon::Int index = 0; index < _leaves.GetCount(); ++index)
 	{
-		const cinema::BaseTag* const tag = _leaves[index].linkTag;
-		if (!tag || index >= itemIds.GetCount() || itemIds[index].IsEmpty() || kept.Contains(itemIds[index]))
+		const Leaf& leaf = _leaves[index];
+		if (index >= itemIds.GetCount() || itemIds[index].IsEmpty())
 			continue;
-		maxon::Bool names = false;
-		const cinema::GeData tagData = GetParameterData(tag, CYCLESOBJECT_LINKING_LIGHTS);
-		if (const cinema::InExcludeData* const lights = tagData.GetCustomDataType<cinema::InExcludeData>())
+		const maxon::String& itemId = itemIds[index];
+		const maxon::Bool lightKept = leaf.linkTag && TagKeepsLight(_doc, leaf.linkTag, CYCLESOBJECT_LINKING_MODE, CYCLESOBJECT_LINKING_LIGHTS, light.object);
+		if (lightKept && !kept.Contains(itemId))
 		{
-			for (maxon::Int32 i = 0; i < lights->GetObjectCount() && !names; ++i)
-				names = lights->ObjectFromIndex(_doc, i) == light.object;
+			kept.Append(itemId) iferr_return;
 		}
-		const maxon::Bool include = GetIntParameter(tag, CYCLESOBJECT_LINKING_MODE, CYCLESOBJECT_LINKING_MODE_EXCLUDE) == CYCLESOBJECT_LINKING_MODE_INCLUDE;
-		if (include != names)
+		shadowTags = shadowTags || leaf.shadowLinkTag;
+		const maxon::Bool shadowKept = leaf.shadowLinkTag
+			? TagKeepsLight(_doc, leaf.shadowLinkTag, CYCLESOBJECT_SHADOW_LINKING_MODE, CYCLESOBJECT_SHADOW_LINKING_LIGHTS, light.object) : lightKept;
+		if (shadowKept && !keptShadows.Contains(itemId))
 		{
-			kept.Append(itemIds[index]) iferr_return;
+			keptShadows.Append(itemId) iferr_return;
 		}
 	}
-	if (listed.IsEmpty() && kept.IsEmpty())
-		return false;
-
-	if (linking.include)
+	linking.lightLinked = !listed.IsEmpty() || !kept.IsEmpty();
+	CombineLinking(include, listedItems, kept, linking.include, linking.itemIds) iferr_return;
+	if (shadowTags)
 	{
-		// The light lights what it lists, less what the tags keep away.
-		maxon::BaseArray<maxon::String> remaining;
-		for (const maxon::String& itemId : linking.itemIds)
-		{
-			if (!kept.Contains(itemId))
-			{
-				remaining.Append(itemId) iferr_return;
-			}
-		}
-		linking.itemIds = std::move(remaining);
+		CombineLinking(include, listedItems, keptShadows, linking.shadowInclude, linking.shadowItemIds) iferr_return;
+		// Sent only when the shadows go another way than the light: a scene whose shadow lists change
+		// nothing sends what it sent before they existed. Without a list of lighting the light lights
+		// everything; its shadows then need a list of their own only when something is kept from them.
+		const maxon::Bool shadowsLinked = !listed.IsEmpty() || !keptShadows.IsEmpty();
+		const maxon::Bool same = linking.lightLinked ? (linking.shadowInclude == linking.include && SameItems(linking.shadowItemIds, linking.itemIds))
+			: !shadowsLinked;
+		linking.shadowsApart = !same;
 	}
-	else
-	{
-		for (const maxon::String& itemId : kept)
-		{
-			if (!linking.itemIds.Contains(itemId))
-			{
-				linking.itemIds.Append(itemId) iferr_return;
-			}
-		}
-	}
-	return true;
+	return linking.lightLinked || linking.shadowsApart;
 }
 
 template <typename VISIBILITY> static void WriteVisibility(JsonWriter& json, const VISIBILITY& visibility)
@@ -2115,6 +2181,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 
 	WriteState state(writer, _doc, _settings);
 	state.materials.SetBlenderVersion(_settings.blenderVersion, _settings.blenderVersionText);
+	state.materials.SetEevee(_settings.eevee);
 	if (_partial)
 	{
 		// Only meshes and the items that show them, with the materials the last whole export wrote, fog
@@ -2249,8 +2316,8 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		}
 		if (leaf.kind == LEAF::FOG)
 		{
-			// With a noise: the noise's grid as a `volume`, which only a whole export writes (as other volumes).
-			if (HasFogNoise(leaf.object))
+			// With a noise or a texture: their grid as a `volume`, which only a whole export writes (as other volumes).
+			if (HasFogGrid(leaf.object, _doc))
 			{
 				if (_partial)
 				{
@@ -2258,7 +2325,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 					return maxon::OK;
 				}
 				const maxon::String volumeId = KeyId("fog_", leaf.key);
-				const maxon::Bool written = ExportFogNoise(writer, _coords, _colors, _doc, leaf.object, leaf.mg, volumeId, volumeId + ".material"_s) iferr_return;
+				const maxon::Bool written = ExportFogGrid(writer, _coords, _colors, _doc, leaf.object, leaf.mg, volumeId, volumeId + ".material"_s) iferr_return;
 				if (written)
 				{
 					NoteOwned(leaf.ownerObject, volumeId) iferr_return;

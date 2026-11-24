@@ -687,17 +687,25 @@ maxon::String BackLightId(const maxon::String& id)
 	return id + "_back"_s;
 }
 
+static void WriteLinkList(JsonWriter& json, const maxon::Char* name, maxon::Bool include, const maxon::BaseArray<maxon::String>& itemIds)
+{
+	json.BeginObject(name);
+	json.String("mode", include ? "INCLUDE"_s : "EXCLUDE"_s);
+	json.BeginArray("objects");
+	for (const maxon::String& itemId : itemIds)
+		json.String(nullptr, itemId);
+	json.EndArray();
+	json.EndObject();
+}
+
 static void WriteLinking(JsonWriter& json, const LightLinking* linking)
 {
 	if (!linking)
 		return;
-	json.BeginObject("linking");
-	json.String("mode", linking->include ? "INCLUDE"_s : "EXCLUDE"_s);
-	json.BeginArray("objects");
-	for (const maxon::String& itemId : linking->itemIds)
-		json.String(nullptr, itemId);
-	json.EndArray();
-	json.EndObject();
+	if (linking->lightLinked)
+		WriteLinkList(json, "linking", linking->include, linking->itemIds);
+	if (linking->shadowsApart)
+		WriteLinkList(json, "shadow_linking", linking->shadowInclude, linking->shadowItemIds);
 }
 
 // Writes the item. A translated light sends what it sent before the plugin had lights of its own,

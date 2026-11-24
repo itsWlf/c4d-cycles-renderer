@@ -31,6 +31,7 @@ struct PlacedNode
 	maxon::Int index = NOTOK;     ///< in the Blender graph; NOTOK for the Material Output, a World Output and a node left out
 	maxon::Bool leftOut = false;  ///< the Blender in use does not have this node (CyclesNode::since)
 	maxon::Bool worldOutput = false;  ///< a World Output (a world material's end)
+	maxon::Bool materialOutput = false;  ///< a Material Output
 };
 
 // Whether the Blender in use has what came with version @p since (the table's "since",
@@ -369,6 +370,62 @@ static maxon::Result<maxon::String> ColorRampJson(const maxon::GraphNode& inputs
 	return json + "]}"_s;
 }
 
+// The output of a kind (Material Outputs, or World Outputs) that counts for the engine, as Blender chooses it
+// (ntreeShaderOutputNode, measured on Blender 5.0 to 5.3: docs/reference/blender.md, "Several output nodes"):
+// only outputs whose Target is All or the engine's; one of the engine's beats one for All; of the outputs of
+// that Target the first marked "Active Output", else the first. "First" is the order of the walk
+// (GetInnerNodes). Blender keeps one output of a kind marked; the Node Editor cannot, so of several marked the
+// first counts. Nothing marked (every material saved before 0.3.0) and every Target All: the first, as before.
+// NOTOK when no output of the kind fits the engine (@p others then says whether there are outputs of it).
+static maxon::Result<maxon::Int> ChooseOutput(const maxon::BaseArray<PlacedNode>& placed, maxon::Bool world, maxon::Bool eevee, maxon::Bool& others)
+{
+	iferr_scope;
+	others = false;
+	const maxon::String engineTarget = eevee ? "\"EEVEE\""_s : "\"CYCLES\""_s;
+	maxon::Int chosen = NOTOK;
+	maxon::Bool chosenExact = false;
+	maxon::Bool chosenMarked = false;
+	for (maxon::Int i = 0; i < placed.GetCount(); ++i)
+	{
+		const PlacedNode& entry = placed[i];
+		if (entry.leftOut || (world ? !entry.worldOutput : !entry.materialOutput))
+			continue;
+		others = true;
+		const maxon::GraphNode inputs = entry.node.GetInputs() iferr_return;
+		maxon::String target = "\"ALL\""_s;
+		maxon::Bool marked = false;
+		for (maxon::Int p = 0; p < entry.definition->propertyCount; ++p)
+		{
+			const CyclesProperty& property = entry.definition->properties[p];
+			const maxon::CString identifier(property.identifier);
+			if (identifier != "target"_cs && identifier != "is_active_output"_cs)
+				continue;
+			const maxon::Id id = PortId(property.port) iferr_return;
+			const maxon::GraphNode port = inputs.FindChild(id) iferr_return;
+			if (!port.IsValid())
+				continue;
+			if (identifier == "target"_cs)
+			{
+				target = PropertyJson(port, property) iferr_return;
+			}
+			else
+			{
+				marked = port.GetEffectivePortValue<maxon::Bool>().GetValueOr(false) iferr_return;
+			}
+		}
+		const maxon::Bool exact = target == engineTarget;
+		if (!exact && target != "\"ALL\""_s)
+			continue;
+		if (chosen == NOTOK || (exact && !chosenExact) || (exact == chosenExact && marked && !chosenMarked))
+		{
+			chosen = i;
+			chosenExact = exact;
+			chosenMarked = marked;
+		}
+	}
+	return chosen;
+}
+
 maxon::Bool IsCyclesNodeMaterial(const cinema::BaseMaterial* material)
 {
 	return material && material->GetType() == Mmaterial && static_cast<const cinema::NodeMaterial*>(material)->HasSpace(maxon::Id(CYCLES_NODESPACE_ID));
@@ -480,7 +537,8 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 				return true;
 			}
 			entry.worldOutput = maxon::CString(entry.definition->type) == "ShaderNodeOutputWorld"_cs;
-			if (maxon::CString(entry.definition->asset) != maxon::CString(CYCLES_OUTPUT_NODE_ID) && !entry.worldOutput)
+			entry.materialOutput = maxon::CString(entry.definition->asset) == maxon::CString(CYCLES_OUTPUT_NODE_ID);
+			if (!entry.materialOutput && !entry.worldOutput)
 			{
 				if (Lacks(exporter, entry.definition->since))
 				{
@@ -539,11 +597,28 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		return NodeOutput();
 	};
 	maxon::Bool surfaceDropped = false;
-	maxon::Bool worldOutputSeen = false;
+	maxon::Bool worldOutputWired = false;   // on an object: a World Output with something wired in
 
-	maxon::Bool hasOutput = false;
-	for (const PlacedNode& entry : placed)
+	// Which output counts, for the engine that renders (ChooseOutput): on an object the Material Output, for a
+	// Cycles Environment the World Output. The other kind is not used there, and is passed over without a word.
+	maxon::Bool hasMaterialOutputs = false;
+	maxon::Bool hasWorldOutputs = false;
+	const maxon::Int chosenMaterial = ChooseOutput(placed, false, exporter.IsEevee(), hasMaterialOutputs) iferr_return;
+	const maxon::Int chosenWorld = ChooseOutput(placed, true, exporter.IsEevee(), hasWorldOutputs) iferr_return;
+	const maxon::String engineName = exporter.IsEevee() ? "Eevee"_s : "Cycles"_s;
+	if (world && hasWorldOutputs && chosenWorld == NOTOK)
 	{
+		exporter.Warn(FormatString("Material \"@\": no World Output is for @ (each one's Target is another engine); the world is black.", materialName, engineName));
+	}
+	if (!world && hasMaterialOutputs && chosenMaterial == NOTOK)
+	{
+		exporter.Warn(FormatString("Material \"@\": no Material Output is for @ (each one's Target is another engine); it shows nothing.", materialName, engineName));
+		surfaceDropped = true;   // said: not also "nothing is wired"
+	}
+
+	for (maxon::Int placedIndex = 0; placedIndex < placed.GetCount(); ++placedIndex)
+	{
+		const PlacedNode& entry = placed[placedIndex];
 		if (entry.leftOut)
 			continue;
 		const maxon::GraphNode inputs = entry.node.GetInputs() iferr_return;
@@ -551,8 +626,9 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 
 		if (entry.worldOutput)
 		{
-			worldOutputSeen = true;
-			// A World Output: what is wired into it is the world (the first one counts); on an object it is nothing.
+			// A World Output: what is wired into the chosen one is the world; on an object it is nothing.
+			if (world ? placedIndex != chosenWorld : worldOutputWired)
+				continue;
 			NodeOutput worldSurface;
 			NodeOutput worldVolume;
 			const maxon::GraphNode surfacePort = inputs.FindChild(maxon::Id("in.surface")) iferr_return;
@@ -565,25 +641,24 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 			{
 				worldVolume = source(volumePort) iferr_return;
 			}
-			if (world && !world->found)
+			if (world)
 			{
 				world->found = true;
 				world->surface = worldSurface;
 				world->volume = worldVolume;
 			}
-			else if (!world && (worldSurface.IsValid() || worldVolume.IsValid()))
+			else
 			{
-				exporter.Warn(FormatString("Material \"@\" is a world material (it has a World Output); on an object it shows nothing of it. "
-					"Put it on a Cycles Environment of the type Material.", materialName));
+				worldOutputWired = worldSurface.IsValid() || worldVolume.IsValid();   // named below if nothing else shows
 			}
 			continue;
 		}
-		if (entry.index == NOTOK)
+		if (entry.materialOutput)
 		{
-			// The Material Output: hand back what is wired into it. The first one counts.
-			if (hasOutput)
+			// The Material Output that counts (ChooseOutput): hand back what is wired into it. For the world
+			// (a Cycles Environment) it is not used.
+			if (world || placedIndex != chosenMaterial)
 				continue;
-			hasOutput = true;
 			const maxon::GraphNode surfacePort = inputs.FindChild(maxon::Id("in.surface")) iferr_return;
 			if (surfacePort.IsValid())
 			{
@@ -835,9 +910,20 @@ maxon::Result<maxon::Bool> BuildCyclesNodeSurface(MaterialExporter& exporter, No
 		}
 	}
 
-	// A world material's Material Output stays empty: it is read for the world (or named above, on an object).
-	if (world || worldOutputSeen)
+	// For the world the Material Output is not read.
+	if (world)
 		return true;
+	// On an object: a material whose only use is a World Output shows nothing of it there, which is said. With
+	// something wired into its Material Output too it is a material for both places, and nothing is said.
+	if (!surface.IsValid() && !displacement.IsValid() && hasWorldOutputs)
+	{
+		if (worldOutputWired)
+		{
+			exporter.Warn(FormatString("Material \"@\" is a world material (it has a World Output); on an object it shows nothing of it. "
+				"Put it on a Cycles Environment of the type Material.", materialName));
+		}
+		return true;
+	}
 	if (!surface.IsValid() && !displacement.IsValid())
 	{
 		// (A surface wired from a node this Blender lacks was named above.)

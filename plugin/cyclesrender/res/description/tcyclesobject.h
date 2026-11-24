@@ -51,6 +51,13 @@ enum
 		CYCLESOBJECT_LINKING_MODE_EXCLUDE = 0,        // the listed lights do not light the object
 		CYCLESOBJECT_LINKING_MODE_INCLUDE = 1,        // only the listed lights do
 	CYCLESOBJECT_LINKING_LIGHTS = 1202,
+	// Shadow linking (0.3.0, F11), in the same tab: which lights' shadows the object casts. While it is
+	// off the object's shadows follow its light linking, as before it existed.
+	CYCLESOBJECT_SHADOW_LINKING_ENABLE = 1203,
+	CYCLESOBJECT_SHADOW_LINKING_MODE = 1204,        // the same values as CYCLESOBJECT_LINKING_MODE
+		CYCLESOBJECT_SHADOW_LINKING_MODE_EXCLUDE = 0, // the object casts no shadow of the listed lights
+		CYCLESOBJECT_SHADOW_LINKING_MODE_INCLUDE = 1, // it casts shadows of the listed lights only
+	CYCLESOBJECT_SHADOW_LINKING_LIGHTS = 1205,
 
 	// Instances on the particles of a particle group or the matrices of a Matrix object
 	CYCLESOBJECT_INSTANCES_ENABLE = 1300,
