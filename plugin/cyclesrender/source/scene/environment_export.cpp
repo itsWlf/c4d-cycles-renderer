@@ -17,8 +17,10 @@
 #include "ocyclesenvironment.h"
 
 #include "../ids.h"
+#include "../sdk_compat.h"
 #include "../materials/cycles_node_material.h"
 #include "environment_export.h"
+#include "light_export.h"
 #include "parameters.h"
 #include "redshift_ids.h"
 #include "../session/blender_install.h"
@@ -160,15 +162,21 @@ static maxon::Result<NodeOutput> AddSkyObject(MaterialExporter& materials, NodeG
 	return AddPanorama(graph, image, skyMg, cinema::Vector(1.0), false);
 }
 
-// A Redshift dome light: its map as a spherical panorama turned with the light, times 2^exposure;
-// without a map, its colour.
+// A Redshift dome light: its map as a spherical panorama turned with the light, times its Intensity and
+// 2^exposure; without a map, its colour times its Intensity. Measured with Redshift 2027.0.0, seen by the camera
+// (internal/f13/probe_batch1.py, "dome"): the Intensity (REDSHIFT_LIGHT_DOME_MULTIPLIER, 12024) multiplies the map and
+// the colour alike (2: 2.000, 0.3: 0.300), the exposure only the map (a colour of 0.5 at Intensity 2 and exposure 1
+// shows 1.0); before 0.3.0 neither the Intensity was read nor the exposure kept off the colour. In a document with
+// Basic colour management Redshift decodes the colour as a colour parameter (0.5 shows 0.214, 2 shows 4.95: the curve
+// continued above 1), not the map.
 static maxon::Result<NodeOutput> AddDome(MaterialExporter& materials, NodeGraph& graph, const cinema::BaseObject* dome, const cinema::Matrix& domeMg, maxon::String& images)
 {
 	iferr_scope;
 
 	SceneWriter& writer = materials.GetWriter();
-	const maxon::Float64 strength = maxon::Pow(2.0, GetFloatParameter(dome, REDSHIFT_LIGHT_DOME_EXPOSURE0, 0.0));
-	const cinema::Vector color = GetVectorParameter(dome, REDSHIFT_LIGHT_DOME_COLOR, cinema::Vector(1.0));
+	const maxon::Float64 intensity = maxon::Max(0.0, GetFloatParameter(dome, REDSHIFT_LIGHT_DOME_MULTIPLIER, 1.0));
+	const maxon::Float64 strength = intensity * maxon::Pow(2.0, GetFloatParameter(dome, REDSHIFT_LIGHT_DOME_EXPOSURE0, 0.0));
+	const cinema::Vector color = materials.GetColors().Input(GetVectorParameter(dome, REDSHIFT_LIGHT_DOME_COLOR, cinema::Vector(1.0)));
 
 	// The texture is a parameter of Redshift's own file type (REDSHIFT_FILE_TYPE), and the path one of
 	// its parts: both levels of the id must name their type, or nothing comes back. The path is a URL.
@@ -180,7 +188,7 @@ static maxon::Result<NodeOutput> AddDome(MaterialExporter& materials, NodeGraph&
 		path = data.GetString();
 	}
 	if (path.IsEmpty())
-		return AddBackground(graph, color, strength);
+		return AddBackground(graph, color, intensity);
 
 	// As a path Blender can open: a "file://" URL as its path, a map of the Asset Browser ("asset:///...")
 	// copied out of its database, a name looked for as Cinema 4D looks for a bitmap's.
@@ -189,7 +197,7 @@ static maxon::Result<NodeOutput> AddDome(MaterialExporter& materials, NodeGraph&
 	if (problem.IsPopulated())
 		writer.Warn(FormatString("Light \"@\": its dome map: @", dome->GetName(), problem));
 	if (resolved.IsEmpty())
-		return AddBackground(graph, color, strength);
+		return AddBackground(graph, color, intensity);
 	const maxon::String image = materials.GetFileImageId(resolved, true) iferr_return;
 	NoteImage(images, image);
 	if (GetIntParameter(dome, REDSHIFT_LIGHT_DOME_ENVTYPE, 0) != 0)
@@ -198,6 +206,53 @@ static maxon::Result<NodeOutput> AddDome(MaterialExporter& materials, NodeGraph&
 	// A dome map runs the other way round than a Sky object's panorama (measured against Redshift:
 	// tests/c4d/redshift_dome.py); "Flip Horizontal" turns it back.
 	return AddPanorama(graph, image, domeMg, cinema::Vector(strength), !GetBoolParameter(dome, REDSHIFT_LIGHT_DOME_FLIP_HORIZONTAL, false));
+}
+
+// Cinema 4D's Background object (0.3.0): what the camera sees where nothing else is, unlit. Measured with the Standard
+// renderer in an OCIO document (internal/f13/probe_batch1.py, "background"): its material's colour channel (the colour
+// times its brightness: 2 gives twice) and its luminance channel added ((0.8, 0.2, 0.1) and (0.1, 0.7, 0.2) show
+// (0.9, 0.9, 0.3)), the same under a light; without a material the grey of an object without one (0.604 in 2027). A
+// shader in either channel is not translated (named); its plain colour counts.
+static maxon::Result<NodeOutput> AddBackgroundObject(MaterialExporter& materials, NodeGraph& graph, const cinema::BaseObject* background, cinema::BaseMaterial* material)
+{
+	iferr_scope;
+
+	SceneWriter& writer = materials.GetWriter();
+	const DocumentColors& colors = materials.GetColors();
+	if (!material || material->GetType() != Mmaterial)
+	{
+		if (material)
+		{
+			writer.Warn(FormatString("Background \"@\": only classic materials are translated for the Background object; it shows the grey of an object without a material.",
+				background->GetName()));
+		}
+		return AddBackground(graph, cinema::Vector(colors.IsOcio() ? DEFAULT_GREY_OCIO : 0.604), 1.0);
+	}
+	struct Channel
+	{
+		maxon::Int32 use;
+		maxon::Int32 color;
+		maxon::Int32 brightness;
+		maxon::Int32 shader;
+		maxon::Bool on;              // the switch's default
+		const maxon::Char* name;
+	};
+	static const Channel CHANNELS[] = {
+		{ MATERIAL_USE_COLOR, MATERIAL_COLOR_COLOR, MATERIAL_COLOR_BRIGHTNESS, MATERIAL_COLOR_SHADER, true, "Color" },
+		{ MATERIAL_USE_LUMINANCE, MATERIAL_LUMINANCE_COLOR, MATERIAL_LUMINANCE_BRIGHTNESS, MATERIAL_LUMINANCE_SHADER, false, "Luminance" } };
+	cinema::Vector color(0.0);
+	for (const Channel& channel : CHANNELS)
+	{
+		if (!GetBoolParameter(material, channel.use, channel.on))
+			continue;
+		color += colors.Input(GetVectorParameter(material, channel.color, cinema::Vector(1.0)) * GetFloatParameter(material, channel.brightness, 1.0));
+		if (cinema::BaseShader* const shader = GetShaderParameter(material, channel.shader, materials.GetDocument()))
+		{
+			writer.Warn(FormatString("Background \"@\": the @ shader in the @ channel of its material is not translated; the channel's plain colour is shown.",
+				background->GetName(), shader->GetTypeName(), maxon::String(channel.name)));
+		}
+	}
+	return AddBackground(graph, color, 1.0);
 }
 
 // --- the Cycles Environment object -------------------------------------------------------------------
@@ -571,6 +626,7 @@ static maxon::Result<NodeOutput> AddPart(MaterialExporter& materials, NodeGraph&
 		case WORLDPART::SKY: return AddSkyObject(materials, graph, part.object, part.mg, part.material, images);
 		case WORLDPART::DOME: return AddDome(materials, graph, part.object, part.mg, images);
 		case WORLDPART::ENVIRONMENT: return AddEnvironment(materials, graph, part.object, part.mg, defaultColor, defaultStrength, images);
+		case WORLDPART::BACKGROUND: return AddBackgroundObject(materials, graph, part.object, part.material);
 		default: return AddBackground(graph, cinema::Vector(0.0), 0.0);
 	}
 }
@@ -594,6 +650,19 @@ static maxon::Result<NodeOutput> AddWorldFog(MaterialExporter& materials, NodeGr
 	return NodeOutput { shader, "Volume"_s };
 }
 
+// Whether a Redshift light switched on (its green check) is among @p op, the objects after it and below them.
+static maxon::Bool HasRedshiftLight(const cinema::BaseObject* op)
+{
+	for (; op; op = op->GetNext())
+	{
+		if (op->GetType() == Orslight && IsLightSwitchedOn(op))
+			return true;
+		if (HasRedshiftLight(op->GetDown()))
+			return true;
+	}
+	return false;
+}
+
 maxon::Result<void> ExportWorldItem(MaterialExporter& materials, const WorldPart& camera, const WorldPart& lighting, const WorldPart& fog,
 	const cinema::Vector& defaultColor, maxon::Float64 defaultStrength, maxon::String* images)
 {
@@ -606,8 +675,23 @@ maxon::Result<void> ExportWorldItem(MaterialExporter& materials, const WorldPart
 	NodeOutput surface;
 	if (camera.kind == WORLDPART::NONE && lighting.kind == WORLDPART::NONE)
 	{
-		// No environment for either role: the Render Settings' world (a colour parameter, read as any).
-		surface = AddBackground(graph, materials.GetColors().Input(defaultColor), defaultStrength) iferr_return;
+		// No environment for either role: the Render Settings' world (a colour parameter, read as any). A scene set up
+		// for Redshift is black there, as Redshift renders it (0.3.0, F13 W24, for the maintainer to confirm: measured on
+		// RS_Parity_PyroSmoke, Redshift's background 0 where the default world gave 0.0039 and lit the scene), while the
+		// Render Settings' world is untouched; one set there counts. Set up for Redshift: Redshift's renderer in the
+		// render data and a Redshift light switched on (the renderer alone does not tell: every new document of Cinema
+		// 4D 2027 holds it, measured).
+		const maxon::Bool untouched = defaultColor == RENDER_SETTINGS_WORLD_COLOR && defaultStrength == 1.0;
+		const cinema::BaseDocument* const doc = materials.GetDocument();
+		if (untouched && FindRedshiftRenderer(doc) && doc && HasRedshiftLight(doc->GetFirstObject()))
+		{
+			writer.Warn("The scene is set up for Redshift and has no environment: its world is black, as Redshift renders it (a world colour set in the Render Settings is used instead)."_s);
+			surface = AddBackground(graph, cinema::Vector(0.0), 0.0) iferr_return;
+		}
+		else
+		{
+			surface = AddBackground(graph, materials.GetColors().Input(defaultColor), defaultStrength) iferr_return;
+		}
 	}
 	else if (camera.object == lighting.object)
 	{

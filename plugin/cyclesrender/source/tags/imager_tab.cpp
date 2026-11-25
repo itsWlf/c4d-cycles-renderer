@@ -21,8 +21,6 @@ namespace cyclesrender
 
 // Blender's limits beyond this are none (tools/make_effects.py, NO_LIMIT).
 static const maxon::Float64 NO_LIMIT = 1.0e29;
-// The widest range a number is shown as a slider over (as tools/make_nodes.py's SLIDER_SPAN): wider ones keep a field.
-static const maxon::Float64 IMAGER_SLIDER_SPAN = 100.0;
 
 // The first Blender the table knows: an effect, setting or option that came later says so in its name.
 static maxon::Int32 OldestBlender()
@@ -284,7 +282,10 @@ static maxon::String LayerLine(const cinema::BaseContainer& data, maxon::Int32 l
 {
 	maxon::String line = data.GetString(ImagerLayerId(layer, IMAGERLAYER_NAME));
 	if (line.IsEmpty())
-		line = data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
+	{
+		const ImagerEffect* const effect = GetImagerLayerEffect(data, layer);
+		line = effect ? maxon::String(effect->label) : data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
+	}
 	if (!data.GetBool(ImagerLayerId(layer, IMAGERLAYER_ENABLED), true))
 		line += " (off)"_s;
 	return line;
@@ -308,6 +309,10 @@ static cinema::BaseContainer SettingDescription(const ImagerSetting& setting)
 	bc.SetString(cinema::DESC_SHORT_NAME, label);
 	bc.SetData(cinema::DESC_DEFAULT, GetImagerDefault(setting));
 	const maxon::Bool hasMinimum = setting.minimum > -NO_LIMIT, hasMaximum = setting.maximum < NO_LIMIT;
+	// The step and the slider are the table's (tools/make_effects.py, number_plan: the rule of F11 step 2, a slider
+	// between Blender's limits for a factor and for a number bounded within 100; the Exposure node's slider over
+	// Blender's -10 to 10 inside its limits of -32 to 32).
+	const maxon::Bool slider = setting.sliderMaximum > setting.sliderMinimum;
 	if (setting.kind == 'f' || setting.kind == 'v')
 	{
 		if (hasMinimum)
@@ -315,14 +320,12 @@ static cinema::BaseContainer SettingDescription(const ImagerSetting& setting)
 		if (hasMaximum)
 			bc.SetFloat(cinema::DESC_MAX, setting.maximum);
 		bc.SetInt32(cinema::DESC_UNIT, setting.subtype == 'A' ? cinema::DESC_UNIT_DEGREE : cinema::DESC_UNIT_FLOAT);
-		bc.SetFloat(cinema::DESC_STEP, setting.subtype == 'A' ? 0.017453292519943295 : (setting.subtype == 'F' ? 0.01 : 0.1));
-		// A slider between Blender's limits wherever they make a usable range: a factor, or any number bounded on
-		// both sides within IMAGER_SLIDER_SPAN (0.3.0, F11 step 2, the rule of tools/make_nodes.py, number_plan).
-		if (setting.kind == 'f' && hasMinimum && hasMaximum && (setting.subtype == 'F' || setting.maximum - setting.minimum <= IMAGER_SLIDER_SPAN))
+		bc.SetFloat(cinema::DESC_STEP, setting.step);
+		if (setting.kind == 'f' && slider)
 		{
 			bc.SetInt32(cinema::DESC_CUSTOMGUI, CUSTOMGUI_REALSLIDER);
-			bc.SetFloat(cinema::DESC_MINSLIDER, setting.minimum);
-			bc.SetFloat(cinema::DESC_MAXSLIDER, setting.maximum);
+			bc.SetFloat(cinema::DESC_MINSLIDER, setting.sliderMinimum);
+			bc.SetFloat(cinema::DESC_MAXSLIDER, setting.sliderMaximum);
 		}
 	}
 	else if (setting.kind == 'i')
@@ -331,12 +334,12 @@ static cinema::BaseContainer SettingDescription(const ImagerSetting& setting)
 			bc.SetInt32(cinema::DESC_MIN, maxon::Int32(setting.minimum));
 		if (hasMaximum)
 			bc.SetInt32(cinema::DESC_MAX, maxon::Int32(setting.maximum));
-		bc.SetInt32(cinema::DESC_STEP, 1);
-		if (hasMinimum && hasMaximum && setting.maximum - setting.minimum <= IMAGER_SLIDER_SPAN)
+		bc.SetInt32(cinema::DESC_STEP, maxon::Max(maxon::Int32(setting.step), maxon::Int32(1)));
+		if (slider)
 		{
 			bc.SetInt32(cinema::DESC_CUSTOMGUI, CUSTOMGUI_LONGSLIDER);
-			bc.SetInt32(cinema::DESC_MINSLIDER, maxon::Int32(setting.minimum));
-			bc.SetInt32(cinema::DESC_MAXSLIDER, maxon::Int32(setting.maximum));
+			bc.SetInt32(cinema::DESC_MINSLIDER, maxon::Int32(setting.sliderMinimum));
+			bc.SetInt32(cinema::DESC_MAXSLIDER, maxon::Int32(setting.sliderMaximum));
 		}
 	}
 	else if (setting.kind == 'm')
@@ -357,7 +360,7 @@ static maxon::Bool AddLayerDescription(const cinema::BaseContainer& data, cinema
 	const cinema::DescID tab = ParameterId(CYCLESCAMERA_GROUP_IMAGER, cinema::DTYPE_GROUP);
 	const cinema::DescID group = ParameterId(ImagerLayerId(layer, IMAGERLAYER_GROUP), cinema::DTYPE_GROUP);
 	const ImagerEffect* const effect = GetImagerLayerEffect(data, layer);
-	const maxon::String effectName = data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
+	const maxon::String effectName = effect ? maxon::String(effect->label) : data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
 
 	cinema::BaseContainer bc = cinema::GetCustomDataTypeDefault(cinema::DTYPE_GROUP);
 	// The group is named by the effect, as Blender's node is; the layer's own name is the field below.
@@ -447,7 +450,7 @@ maxon::Bool BuildImagerDescription(const cinema::BaseList2D* tag, cinema::Descri
 	const maxon::Int32 selected = GetSelectedImagerLayer(data);
 
 	const cinema::DescID tab = ParameterId(CYCLESCAMERA_GROUP_IMAGER, cinema::DTYPE_GROUP);
-	// "Add Effect": the effects of the table, by Blender's names.
+	// "Add Effect": the effects of the table, by Blender's names (a plain node's as Blender's Add menu has it).
 	{
 		cinema::BaseContainer menu = cinema::GetCustomDataTypeDefault(cinema::DTYPE_LONG);
 		menu.SetString(cinema::DESC_NAME, "Add Effect"_s);
@@ -457,7 +460,7 @@ maxon::Bool BuildImagerDescription(const cinema::BaseList2D* tag, cinema::Descri
 		cycle.SetString(0, "Choose an Effect..."_s);
 		maxon::Int32 choice = 1;
 		for (const ImagerEffect& effect : GetImagerEffects())
-			cycle.SetString(choice++, maxon::String(effect.name) + SinceNote(effect.since));
+			cycle.SetString(choice++, maxon::String(effect.label) + SinceNote(effect.since));
 		menu.SetContainer(cinema::DESC_CYCLE, cycle);
 		if (!description->SetParameter(ParameterId(CYCLESCAMERA_IMAGER_ADD, cinema::DTYPE_LONG), menu, tab))
 			return false;

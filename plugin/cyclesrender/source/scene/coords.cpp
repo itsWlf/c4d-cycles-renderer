@@ -29,6 +29,18 @@ static maxon::Float64 MetresPerUnit(cinema::DOCUMENT_UNIT unit)
 	}
 }
 
+maxon::Float64 Coords::UnitScaleMetres(const cinema::GeData& data, maxon::Float64 fallback)
+{
+	const cinema::UnitScaleData* const unitScale = data.GetCustomDataType<cinema::UnitScaleData>();
+	if (!unitScale)
+		return fallback;
+	cinema::Float scale = 1.0;
+	cinema::DOCUMENT_UNIT unit = cinema::DOCUMENT_UNIT::CM;
+	if (!unitScale->GetUnitScale(scale, unit) || scale <= 0.0)
+		return fallback;
+	return scale * MetresPerUnit(unit);
+}
+
 Coords Coords::FromDocument(const cinema::BaseDocument* doc)
 {
 	if (!doc)
@@ -37,15 +49,7 @@ Coords Coords::FromDocument(const cinema::BaseDocument* doc)
 	cinema::GeData data;
 	if (!doc->GetParameter(ConstDescIDLevel(cinema::DOCUMENT_DOCUNIT), data, cinema::DESCFLAGS_GET::NONE))
 		return Coords();
-	const cinema::UnitScaleData* const unitScale = data.GetCustomDataType<cinema::UnitScaleData>();
-	if (!unitScale)
-		return Coords();
-
-	cinema::Float scale = 1.0;
-	cinema::DOCUMENT_UNIT unit = cinema::DOCUMENT_UNIT::CM;
-	if (!unitScale->GetUnitScale(scale, unit) || scale <= 0.0)
-		return Coords();
-	return Coords(scale * MetresPerUnit(unit));
+	return Coords(UnitScaleMetres(data, 0.01));
 }
 
 // Writes the matrix with columns x, y, z and translation t in row-major order.

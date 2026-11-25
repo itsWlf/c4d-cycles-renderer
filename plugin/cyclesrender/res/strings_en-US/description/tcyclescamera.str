@@ -47,6 +47,9 @@ STRINGTABLE Tcyclescamera
 	CYCLESCAMERA_LENS_CYLINDER_U_MAX        "Longitude Max";
 	CYCLESCAMERA_LENS_CYLINDER_RADIUS       "Cylinder Radius";
 
+	CYCLESCAMERA_GROUP_COLOR                "Color";
+	CYCLESCAMERA_COLOR_EXPOSURE             "Exposure";
+
 	CYCLESCAMERA_GROUP_IMAGER               "Imager";
 	CYCLESCAMERA_IMAGER_ENABLE              "Imager";
 }

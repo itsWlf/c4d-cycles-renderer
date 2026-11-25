@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The Imager tab of a Cycles Camera tag as a `compositor` item (imager_export.h).
+// The camera's exposure and the Imager tab of a Cycles Camera tag as a `compositor` item (imager_export.h).
 
 #include "c4d.h"
 
@@ -8,6 +8,7 @@
 #include "../materials/node_graph.h"
 #include "../tags/camera_tag.h"
 #include "imager_export.h"
+#include "redshift_camera.h"
 
 namespace cyclesrender
 {
@@ -23,6 +24,8 @@ maxon::Result<void> ImagerChain::CopyFrom(const ImagerChain& other)
 	layers.CopyFrom(other.layers) iferr_return;
 	values.CopyFrom(other.values) iferr_return;
 	unknown.CopyFrom(other.unknown) iferr_return;
+	exposure = other.exposure;
+	notes.CopyFrom(other.notes) iferr_return;
 	return maxon::OK;
 }
 
@@ -30,10 +33,17 @@ maxon::Result<ImagerChain> ImagerChain::Read(const cinema::BaseObject* camera)
 {
 	iferr_scope;
 	ImagerChain chain;
+	if (!camera)
+		return chain;
+	// A Redshift camera's own exposure counts with a tag and without one; the Color tab's multiplies with it.
+	RedshiftExposure redshift = ReadRedshiftExposure(camera) iferr_return;
+	chain.exposure = redshift.stops;
+	chain.notes = std::move(redshift.notes);
 	const cinema::BaseTag* const tag = FindCameraTag(camera);
 	if (!tag)
 		return chain;
 	const cinema::BaseContainer& data = tag->GetDataInstanceRef();
+	chain.exposure += data.GetFloat(CYCLESCAMERA_COLOR_EXPOSURE, CAMERATAG_DEFAULT::EXPOSURE);
 	if (!data.GetBool(CYCLESCAMERA_IMAGER_ENABLE, true))
 		return chain;
 	maxon::BaseArray<maxon::Int32> order;
@@ -48,7 +58,8 @@ maxon::Result<ImagerChain> ImagerChain::Read(const cinema::BaseObject* camera)
 		maxon::String name = data.GetString(ImagerLayerId(layer, IMAGERLAYER_NAME));
 		if (name.IsEmpty())
 			name = data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
-		if (!effect || data.GetInt32(ImagerLayerId(layer, IMAGERLAYER_SOURCE), IMAGERLAYER_SOURCE_BLENDER) != IMAGERLAYER_SOURCE_BLENDER)
+		// An effect is found by its name and source: a bundled group or a plain node (a .blend file's group is reserved).
+		if (!effect)
 		{
 			chain.unknown.Append(name) iferr_return;
 			continue;
@@ -115,23 +126,33 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 	iferr_scope;
 	for (const maxon::String& name : chain.unknown)
 		writer.Warn(FormatString("Imager: the effect of the layer \"@\" is not known to this version of the plugin; it is left out.", name));
+	for (const maxon::String& note : chain.notes)
+		writer.Warn(note);
 
 	NodeGraph graph;
 	const maxon::Int render = graph.Add("CompositorNodeRLayers") iferr_return;
 	NodeOutput picture = { render, "Image"_s };
+	// The camera's exposure, on the scene-linear picture before every layer (Blender's Exposure node multiplies by
+	// 2^stops, in 5.0 to 5.3, beyond its declared -10 to 10 too: measured, docs/reference/blender.md, "The compositor").
+	const maxon::Int exposure = graph.Add("CompositorNodeExposure") iferr_return;
+	graph.SetInput(exposure, "Exposure", chain.exposure);
+	graph.Link(picture, exposure, "Image") iferr_return;
+	picture = { exposure, "Image"_s };
 	maxon::Int count = 0;
 	for (const ImagerChain::Layer& layer : chain.layers)
 	{
 		const ImagerEffect& effect = *layer.effect;
 		if (effect.since > blenderVersion)
 		{
-			writer.Warn(FormatString("Imager: the effect \"@\" (layer \"@\") needs Blender @ or newer; Blender @ renders without it.", maxon::String(effect.name),
+			writer.Warn(FormatString("Imager: the effect \"@\" (layer \"@\") needs Blender @ or newer; Blender @ renders without it.", maxon::String(effect.label),
 				layer.name, VersionText(effect.since), VersionText(blenderVersion)));
 			continue;
 		}
-		// Blender's node group of that name, from its own bundled assets.
-		const maxon::Int node = graph.Add("CompositorNodeGroup") iferr_return;
-		graph.SetGroup(node, maxon::String(effect.name));
+		// Blender's node group of that name, from its own bundled assets; or a plain node of that type.
+		const maxon::Bool plain = effect.source == IMAGERLAYER_SOURCE_NODE;
+		const maxon::Int node = graph.Add(plain ? effect.name : "CompositorNodeGroup") iferr_return;
+		if (!plain)
+			graph.SetGroup(node, maxon::String(effect.name));
 		for (maxon::Int32 s = 0; s < effect.settingCount; ++s)
 		{
 			const ImagerSetting& setting = effect.settings[s];
@@ -140,7 +161,7 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 			{
 				if (!IsDefault(setting, value))
 					writer.Warn(FormatString("Imager: \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ renders without it.", maxon::String(setting.label),
-						maxon::String(effect.name), VersionText(setting.since), VersionText(blenderVersion)));
+						maxon::String(effect.label), VersionText(setting.since), VersionText(blenderVersion)));
 				continue;
 			}
 			switch (setting.kind)
@@ -153,7 +174,7 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 					if (GetImagerOptionSince(setting, value.option) > blenderVersion)
 					{
 						writer.Warn(FormatString("Imager: \"@\" for \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ uses its own choice.",
-							GetImagerOption(setting, value.option), maxon::String(setting.label), maxon::String(effect.name),
+							GetImagerOption(setting, value.option), maxon::String(setting.label), maxon::String(effect.label),
 							VersionText(GetImagerOptionSince(setting, value.option)), VersionText(blenderVersion)));
 						break;
 					}
@@ -183,7 +204,7 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 		picture = { mix, "Result_Color"_s };
 		++count;
 	}
-	if (count == 0)
+	if (count == 0 && chain.exposure == 0.0)
 		return false;
 	// The tree's one output is the picture (the bridge gives the tree that socket).
 	const maxon::Int output = graph.Add("NodeGroupOutput") iferr_return;

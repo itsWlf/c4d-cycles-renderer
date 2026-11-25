@@ -22,7 +22,8 @@ enum class WORLDPART
 	NONE,                ///< nothing fills the role: black for the camera, no light, no fog
 	SKY,                 ///< a Sky object, with the material of its texture tags
 	DOME,                ///< a Redshift dome light
-	ENVIRONMENT          ///< a Cycles Environment object
+	ENVIRONMENT,         ///< a Cycles Environment object
+	BACKGROUND           ///< Cinema 4D's Background object: seen by the camera only, behind every other environment
 } MAXON_ENUM_LIST(WORLDPART);
 
 struct WorldPart
@@ -30,14 +31,21 @@ struct WorldPart
 	WORLDPART kind = WORLDPART::NONE;
 	const cinema::BaseObject* object = nullptr;
 	cinema::Matrix mg;                                 ///< its global matrix
-	cinema::BaseMaterial* material = nullptr;          ///< a Sky's material
+	cinema::BaseMaterial* material = nullptr;          ///< a Sky's or a Background's material
 };
+
+/// The world colour of new Render Settings (Blender's default world, at strength 1): the world of a scene without an
+/// environment, except in a scene set up for Redshift (ExportWorldItem).
+static const cinema::Vector RENDER_SETTINGS_WORLD_COLOR = cinema::Vector(0.05);
 
 //----------------------------------------------------------------------------------------
 /// Writes the `world` item from its parts (the scene walk chooses them, scene/scene_exporter.h):
 ///
 /// - With no part for the camera and none for the light, the plain @p defaultColor at
-///   @p defaultStrength of the Render Settings, for both.
+///   @p defaultStrength of the Render Settings, for both; in a scene set up for Redshift (Redshift's
+///   renderer in the render data, FindRedshiftRenderer, and a Redshift light switched on) black while those
+///   are the new settings' (RENDER_SETTINGS_WORLD_COLOR at strength 1), as Redshift renders a scene without
+///   an environment (since 0.3.0, named in the console).
 /// - With one environment for both, that environment.
 /// - With two, the two joined by a Light Path node: camera rays see @p camera, every other ray (diffuse,
 ///   glossy, transmission, also a reflection the camera sees) sees @p lighting. A role nothing fills is
@@ -46,16 +54,18 @@ struct WorldPart
 ///   Volume socket.
 ///
 /// A Sky object: its material's luminance channel (or colour channel, if luminance is off) becomes the
-/// world, a bitmap there a spherical panorama turned with the Sky. A Redshift dome light: its map as a
-/// spherical panorama turned with the light, times 2^exposure; without a map, its colour. A Cycles
+/// world, a bitmap there a spherical panorama turned with the Sky. A Background object (camera only): its
+/// material's colour and luminance channels added, unlit. A Redshift dome light: its map as a spherical
+/// panorama turned with the light, times its Intensity and 2^exposure; without a map, its colour times its
+/// Intensity. A Cycles
 /// Environment by its type: Color, a Background of the colour and strength; Sky Texture, Blender's Sky
 /// Texture with the object's settings (the sun: GetEnvironmentSunDirection; a setting the Blender in use
 /// lacks, by the node table's versions, is left out with a warning); HDRI, the file (found as a bitmap's:
 /// next to the document, its "tex" folder, the search paths) as an Environment Texture with the object's
 /// colour space, projection and interpolation, turned with the object as a Sky's panorama is, times the
 /// strength; Material, the world of the Cycles world material on the object's texture tag. Colours go
-/// through the document's colour settings (MaterialExporter::GetColors) like any other colour parameter;
-/// a Redshift dome's are sent as stored.
+/// through the document's colour settings (MaterialExporter::GetColors) like any other colour parameter,
+/// a Redshift dome's too (since 0.3.0: Redshift decodes it in a Basic document, measured).
 ///
 /// @param[out] images  If given: the ids of the `image` items the world reads, joined by ";".
 //----------------------------------------------------------------------------------------

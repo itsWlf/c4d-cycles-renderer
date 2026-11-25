@@ -114,9 +114,12 @@ private:
 		Term value;
 		Term number;
 		Term alpha;
+		Term has;                    ///< 1 where the shading point has the data, 0 where the node's default is to be used (PresenceAttribute)
 		maxon::Int size = 0;
 		maxon::Bool found = false;
 	};
+	/// @p read where @p has is 1, @p fallback where it is 0 (a number when @p scalar, else a colour or vector).
+	maxon::Result<Term> Present(const Term& has, const Term& read, const Term& fallback, maxon::Bool scalar);
 	maxon::Result<SceneValue> ReadUserData(const maxon::GraphNode& rsNode, const maxon::Char* what);
 	/// The output @p socket ("Color", "Vector", "Fac") of an Attribute node for the attribute @p name:
 	/// with @p both read from the geometry and from the instancer and added up (a missing attribute

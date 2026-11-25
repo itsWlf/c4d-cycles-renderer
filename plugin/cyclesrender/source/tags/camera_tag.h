@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// The "Cycles Camera" tag: Blender's depth of field and lens settings, on a camera.
+// The "Cycles Camera" tag: Blender's depth of field and lens settings, the camera's base colour
+// correction (its Color tab: exposure) and its Imager effects, on a camera.
 
 #ifndef CYCLESRENDER_CAMERA_TAG_H__
 #define CYCLESRENDER_CAMERA_TAG_H__
@@ -29,6 +30,7 @@ namespace CAMERATAG_DEFAULT
 	static const maxon::Float64 CYLINDER_U = 3.14159265358979323846;   ///< max; min is its negative
 	static const maxon::Float64 CYLINDER_V = 1.0;                      ///< max; min is its negative
 	static const maxon::Float64 CYLINDER_RADIUS = 1.0;
+	static const maxon::Float64 EXPOSURE = 0.0;                        ///< the Color tab, stops (Blender's view and Exposure node start at 0)
 }
 
 /// Registers the tag with Cinema 4D. Called once from PluginStart(). The exporter reads the

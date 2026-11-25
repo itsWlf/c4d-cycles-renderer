@@ -131,8 +131,6 @@ maxon::Block<const RenderPass> GetRenderPasses()
 	return maxon::Block<const RenderPass>(PASSES, SIZEOF(PASSES) / SIZEOF(PASSES[0]));
 }
 
-static const cinema::Vector DEFAULT_WORLD_COLOR = cinema::Vector(0.05);
-
 static const Setting* FindSetting(maxon::Int32 id)
 {
 	for (const Setting& setting : SETTINGS)
@@ -170,7 +168,7 @@ void InitRenderSettings(cinema::BaseContainer& data)
 	// CPU or GPU keeps that: the device was stored from the first version on.
 	data.SetInt32(CYCLES_DEVICE, CYCLES_DEVICE_AUTOMATIC);
 	data.SetInt32(CYCLES_LAYOUT, CYCLES_LAYOUT_SIMPLE);
-	data.SetVector(CYCLES_WORLD_COLOR, DEFAULT_WORLD_COLOR);
+	data.SetVector(CYCLES_WORLD_COLOR, RENDER_SETTINGS_WORLD_COLOR);
 	for (const Setting& setting : SETTINGS)
 	{
 		switch (setting.type)
@@ -441,7 +439,7 @@ ExportSettings GetExportSettings(const cinema::BaseContainer& data, maxon::Int32
 	settings.depthOfField = GetValue(data, CYCLES_DEPTH_OF_FIELD) != 0.0;
 	settings.eevee = data.GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES) == CYCLES_ENGINE_EEVEE;
 	settings.lightMultiplier = GetValue(data, CYCLES_LIGHT_MULTIPLIER);
-	settings.worldColor = data.FindIndex(CYCLES_WORLD_COLOR) == NOTOK ? DEFAULT_WORLD_COLOR : data.GetVector(CYCLES_WORLD_COLOR);
+	settings.worldColor = data.FindIndex(CYCLES_WORLD_COLOR) == NOTOK ? RENDER_SETTINGS_WORLD_COLOR : data.GetVector(CYCLES_WORLD_COLOR);
 	settings.worldStrength = GetValue(data, CYCLES_WORLD_STRENGTH);
 	settings.motionBlur = GetValue(data, CYCLES_MOTION_BLUR) != 0.0;
 	settings.shutter = maxon::ClampValue(GetValue(data, CYCLES_MOTION_SHUTTER), 0.0, 2.0);

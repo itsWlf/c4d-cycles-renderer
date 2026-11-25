@@ -233,11 +233,19 @@ $c4dTests = @(
      Covers = @("${P}scene/element_data.*", "${P}materials/redshift_scene_data.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_lookalikes.*",
                 "${P}materials/material_export.*", "${P}materials/cycles_node_material.*", "${P}scene/curves_export.*", "${P}scene/scene_exporter.*",
                 "${B}scene/pointclouds.py", "${B}scene/instancers.py", "${B}scene/objects.py", "${B}scene/common.py") },
-  @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${B}scene/world.py") },
+  @{ Name = "redshift_dome"; Covers = @("${P}scene/environment_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${B}scene/world.py",
+                                       "${P}scene/document_colors.*", "tests/c4d/lib/redshift_basic.py") },
   # Every Redshift light case against Redshift's own render (units, shapes, scale, spread,
   # decay, temperature in two render spaces), Eevee beside it, the IPR's light-only update, "Take Values".
   @{ Name = "redshift_lights"; Settings = @{ g_cyclesRenderIprTest = "true" }
-     Covers = @("${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${P}scene/document_colors.*", "${P}lights/light_tag.*", "${P}lights/light_settings.*", "${B}scene/lights.py") },
+     Covers = @("${P}scene/light_export.*", "${P}scene/redshift_ids.h", "${P}scene/document_colors.*", "${P}lights/light_tag.*", "${P}lights/light_settings.*", "${B}scene/lights.py",
+                "${P}scene/scene_exporter.*", "${P}scene/coords.*", "tests/c4d/lib/redshift_basic.py") },
+  # An object without a material in its display colour (0.3.0, F13 W26), against Redshift and the Standard renderer, OCIO and Basic.
+  @{ Name = "display_colour"; Covers = @("${P}scene/scene_exporter.*", "${P}materials/material_export.*", "${P}scene/document_colors.*", "tests/c4d/lib/redshift_basic.py") },
+  # Cinema 4D's Background object (0.3.0, F13 W31): what the camera sees, against the Standard renderer; it lights nothing.
+  @{ Name = "background_object"; Covers = @("${P}scene/environment_export.*", "${P}scene/scene_exporter.*", "${B}scene/world.py") },
+  # What renders in Redshift or the Standard renderer and is not translated is named in the console (0.3.0, F13 W0).
+  @{ Name = "untranslated_notes"; Covers = @("${P}scene/scene_exporter.*", "${P}materials/redshift_material.*", "${P}scene/redshift_ids.h") },
   # Objects as sources (0.3.0, F12): the Texture Coordinate node's link to an object of the scene, its axes in the picture
   # (a null, moved, turned, through its parent, a camera, a hidden cube, named twice, deleted, saved and loaded, Eevee),
   # nothing more sent without one, and the IPR sending the `empty` alone while the object moves, Cycles and Eevee.
@@ -260,6 +268,16 @@ $c4dTests = @(
                 "${R}strings_en-US/description/tcyclescamera.str", "${P}ipr/ipr_controller.*", "${P}scene/scene_exporter.*", "${P}scene/scene_writer.*", "${P}sdk_compat.h",
                 "${B}scene/compositor.py", "${B}final/__init__.py",
                 "${B}viewport/__init__.py", "${B}server.py", "tools/make_effects.py", "tools/dump_blender_effects.py") },
+  # The camera's exposure in its two places (0.3.0, F13 W6): the Imager layer "Exposure" and the Color tab, each
+  # doubling the picture per stop and agreeing with the other, Cycles and Eevee, final frames and the IPR.
+  @{ Name = "camera_exposure"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}tags/imager_*", "${P}tags/camera_tag.*", "${P}scene/imager_export.*", "${P}scene/redshift_camera.*", "${R}description/tcyclescamera.*",
+                "${R}strings_en-US/description/tcyclescamera.str", "${P}ipr/ipr_controller.*", "${B}scene/compositor.py", "${B}final/__init__.py",
+                "${B}viewport/__init__.py", "tools/make_effects.py", "tools/dump_blender_effects.py") },
+  # A Redshift camera's exposure ("EV Only", "Filmic", the shutter type "Movie", the Units Mode), against Redshift (0.3.0, F13 W6).
+  @{ Name = "redshift_camera"; Settings = @{ g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}scene/redshift_camera.*", "${P}scene/imager_export.*", "${P}scene/camera_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h",
+                "${B}scene/compositor.py") },
   @{ Name = "ipr"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}ipr/ipr_controller.*", "${P}ipr/ipr_worker.*", "${P}ipr/ipr_testhook.*", "${P}ipr/ipr_trace.*", "${P}platform/process_stats*", "${B}viewport/*") },
   @{ Name = "ipr_reuse"; Settings = @{ g_cyclesRenderIprTest = "true" }

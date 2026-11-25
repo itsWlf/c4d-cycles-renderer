@@ -118,6 +118,18 @@ private:
 static const maxon::Char* const OBJECT_COLOR_ATTRIBUTE = "object_color";
 
 //----------------------------------------------------------------------------------------
+/// The name of the attribute that says, with 1, that the attribute @p name is there (0.3.0, F13 W23): sent with
+/// what has @p name where a Redshift user data node reads it (MaterialExporter::IsAnnounced), as a number of the
+/// same kind of place (an object's or an instancer's `properties`, a point cloud's `attributes`). Where it reads
+/// 0 the node gives its own default, as Redshift does where the object has no such data (measured), and not the 0
+/// Blender's Attribute node reads for a missing attribute.
+//----------------------------------------------------------------------------------------
+inline maxon::String PresenceAttribute(const maxon::String& name)
+{
+	return "cr_has_"_s + name;
+}
+
+//----------------------------------------------------------------------------------------
 /// An object's own user data (Attribute Manager, "User Data") by its name, as numbers: a float, a
 /// whole number or a switch is one number, a vector or a colour three (as they are typed in: no
 /// colour conversion, measured against Redshift). The object counts first, then the objects above

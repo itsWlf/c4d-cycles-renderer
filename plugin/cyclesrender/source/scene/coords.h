@@ -31,6 +31,10 @@ public:
 	/// Reads the unit scale from the document's project settings.
 	static Coords FromDocument(const cinema::BaseDocument* doc);
 
+	/// The length a unit scale parameter (a UnitScaleData, as the document's or Redshift's "Export Units")
+	/// stands for, in metres; @p fallback when @p data holds none.
+	static maxon::Float64 UnitScaleMetres(const cinema::GeData& data, maxon::Float64 fallback);
+
 	/// Metres per document unit.
 	maxon::Float64 GetScale() const { return _scale; }
 

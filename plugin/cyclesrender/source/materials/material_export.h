@@ -132,6 +132,14 @@ public:
 	//----------------------------------------------------------------------------------------
 	maxon::Result<maxon::String> GetMaterialId(const maxon::BaseArray<MaterialLayer>& layers);
 
+	//----------------------------------------------------------------------------------------
+	/// The id of the material an object without one renders in when it shows its display colour (0.3.0, F13 W26):
+	/// the default material in @p color, a colour parameter as stored (converted here like any, DocumentColors::Input;
+	/// measured with the Standard renderer and Redshift 2027.0.0: decoded in a Basic document, as it is with OCIO).
+	/// One material per colour.
+	//----------------------------------------------------------------------------------------
+	maxon::Result<maxon::String> GetDisplayColorMaterialId(const cinema::Vector& color);
+
 	/// True when the file of a bitmap shader has an alpha channel. "Image Alpha" reads that
 	/// channel if there is one, and the picture's brightness if not.
 	maxon::Bool ImageHasAlpha(cinema::BaseShader* shader);

@@ -28,6 +28,9 @@ struct ImagerSetting
 	maxon::Int32 count;							///< numbers a vector or colour socket takes (2 for a place in the picture)
 	maxon::Float64 minimum;					///< Blender's limits; beyond +-1e29 there is none
 	maxon::Float64 maximum;
+	maxon::Float64 step;						///< how far an arrow of the field moves it (a number; 0 for others)
+	maxon::Float64 sliderMinimum;		///< the range of its slider; no slider when both are 0
+	maxon::Float64 sliderMaximum;
 	const maxon::Char* panel;				///< Blender's panel the setting is in; "" for none
 	const maxon::Char* options;			///< a menu's options, Blender's names, separated by line feeds
 	const maxon::Char* optionSince;	///< the first Blender that has each option, separated by commas
@@ -36,10 +39,13 @@ struct ImagerSetting
 	maxon::Int32 since;							///< the first Blender that has it, as a BlenderVersionCode() (503 for 5.3)
 };
 
-/// One effect: a compositor node group of Blender's bundled asset library that takes a picture and gives one.
+/// One effect: a compositor node group of Blender's bundled asset library, or a plain compositor node
+/// (the Exposure node), that takes a picture and gives one.
 struct ImagerEffect
 {
-	const maxon::Char* name;				///< Blender's name of the group: what a layer stores and the bridge is sent
+	const maxon::Char* name;				///< what a layer stores and the bridge is sent: Blender's name of the group, or the node's type
+	const maxon::Char* label;				///< what the tab shows: the group's name, or the node's name in Blender's Add menu
+	maxon::Int32 source;						///< IMAGERLAYER_SOURCE_BLENDER (a bundled group) or IMAGERLAYER_SOURCE_NODE (a plain node), as a layer stores it
 	const maxon::Char* help;				///< Blender's description of it
 	const maxon::Char* catalog;			///< Blender's asset catalog of it
 	const maxon::Char* imageIn;			///< identifier of the socket the picture goes in by
@@ -52,8 +58,8 @@ struct ImagerEffect
 /// Every effect of the table, by name.
 maxon::Block<const ImagerEffect> GetImagerEffects();
 
-/// The effect of Blender's name @p name, or nullptr.
-const ImagerEffect* FindImagerEffect(const maxon::String& name);
+/// The effect a layer of source @p source (IMAGERLAYER_SOURCE_...) names @p name, or nullptr.
+const ImagerEffect* FindImagerEffect(const maxon::String& name, maxon::Int32 source);
 
 /// A menu setting's options: their number, Blender's name of one and the first Blender that has it.
 maxon::Int32 GetImagerOptionCount(const ImagerSetting& setting);
@@ -83,7 +89,7 @@ maxon::Result<void> GetImagerLayers(const cinema::BaseContainer& data, maxon::Ba
 /// with their values).
 void SetImagerLayers(cinema::BaseContainer& data, const maxon::BaseArray<maxon::Int32>& layers);
 
-/// The effect of a layer, or nullptr when the table has none of its name (a scene of a newer plugin).
+/// The effect of a layer, or nullptr when the table has none of its name and source (a scene of a newer plugin).
 const ImagerEffect* GetImagerLayerEffect(const cinema::BaseContainer& data, maxon::Int32 layer);
 
 /// Adds a layer of @p effect on top of the list, with Blender's defaults, and selects it.

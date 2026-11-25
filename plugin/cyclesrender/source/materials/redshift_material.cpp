@@ -736,20 +736,20 @@ static maxon::Result<maxon::Bool> BuildStandardSurface(MaterialExporter& exporte
 	return true;
 }
 
-// The node wired into the Redshift Output's surface.
-static maxon::Result<maxon::GraphNode> OutputSurface(const maxon::nodes::NodesGraphModelRef& model)
+// The node wired into a port of the Redshift Output (its surface, its displacement).
+static maxon::Result<maxon::GraphNode> OutputSurface(const maxon::nodes::NodesGraphModelRef& model, const maxon::Id& portId = maxon::Id("com.redshift3d.redshift4c4d.node.output.surface"))
 {
 	iferr_scope;
 	maxon::GraphNode found;
 	const maxon::GraphNode root = model.GetViewRoot();
-	root.GetInnerNodes(maxon::NODE_KIND::NODE, false, [&found](const maxon::GraphNode& node) -> maxon::Result<maxon::Bool>
+	root.GetInnerNodes(maxon::NODE_KIND::NODE, false, [&found, &portId](const maxon::GraphNode& node) -> maxon::Result<maxon::Bool>
 		{
 			iferr_scope;
 			const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
 			if (asset.Get<0>() != maxon::Id("com.redshift3d.redshift4c4d.node.output"))
 				return true;
 			const maxon::GraphNode inputs = node.GetInputs() iferr_return;
-			const maxon::GraphNode port = inputs.FindChild(maxon::Id("com.redshift3d.redshift4c4d.node.output.surface")) iferr_return;
+			const maxon::GraphNode port = inputs.FindChild(portId) iferr_return;
 			if (!port.IsValid())
 				return true;
 			maxon::GraphNode output;
@@ -1006,6 +1006,13 @@ maxon::Result<maxon::Bool> BuildRedshiftSurface(MaterialExporter& exporter, Node
 	const maxon::nodes::NodesGraphModelRef model = nodeMaterial->GetGraph(space) iferr_return;
 	if (!model)
 		return false;
+	// A Displacement node into the Output: not translated (F13 W0; Redshift displaces with it only where a Redshift
+	// Object tag turns displacement on, which is named by the scene walk).
+	const maxon::GraphNode displaced = OutputSurface(model, maxon::Id("com.redshift3d.redshift4c4d.node.output.displacement")) iferr_return;
+	if (displaced.IsValid())
+	{
+		exporter.Warn(FormatString("Material \"@\": the displacement wired into its Output is not translated; the surface is not displaced.", material->GetName()));
+	}
 	const maxon::GraphNode node = OutputSurface(model) iferr_return;
 	if (!node.IsValid())
 		return false;

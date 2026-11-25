@@ -90,6 +90,14 @@ CONTAINER Tcyclescamera
 		}
 	}
 
+	// The Color tab: the camera's base colour correction, before the Imager's layers. Exposure in
+	// stops, with Blender's range for exposure: a slider from -10 to 10, a value typed up to 32
+	// either way is kept. Later corrections go below it.
+	GROUP CYCLESCAMERA_GROUP_COLOR
+	{
+		REAL CYCLESCAMERA_COLOR_EXPOSURE { MIN -32.0; MAX 32.0; STEP 0.01; CUSTOMGUI REALSLIDER; MINSLIDER -10.0; MAXSLIDER 10.0; }
+	}
+
 	// The Imager tab. Below its switch everything is made at run time (tags/imager_tab.cpp), in this
 	// order: the menu "Add Effect", the list of layers, the menu "Layer", the buttons, and the
 	// settings of every layer from the table of Blender's effects (tags/imager_effects.h), of which

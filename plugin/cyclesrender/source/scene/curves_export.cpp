@@ -318,9 +318,32 @@ maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& co
 		maxon::Int blob = NOTOK;
 	};
 	maxon::BaseArray<Sent> sent;
+	// That a particle has what the material reads (PresenceAttribute, for a Redshift user data node's default), one
+	// number per point: its colour when the group has colours, and each attribute sent.
+	struct Presence
+	{
+		maxon::String name;
+		maxon::Int blob = NOTOK;
+	};
+	maxon::BaseArray<Presence> presences;
+	const auto addPresence = [&writer, &presences, count](const maxon::String& name) -> maxon::Result<void>
+	{
+		iferr_scope;
+		Presence presence;
+		presence.name = PresenceAttribute(name);
+		maxon::Float32* const ones = writer.AllocFloats(count, presence.blob) iferr_return;
+		for (maxon::Int i = 0; i < count; ++i)
+			ones[i] = 1.0f;
+		presences.Append(std::move(presence)) iferr_return;
+		return maxon::OK;
+	};
 	for (maxon::Int n = 0; reads && n < reads->GetCount(); ++n)
 	{
 		const ELEMENT which = FindElementAttribute((*reads)[n]);
+		if (which == ELEMENT::PARTICLE_COLOR && hasColors)
+		{
+			addPresence((*reads)[n]) iferr_return;
+		}
 		if (which == ELEMENT::COUNT || which == ELEMENT::PARTICLE_COLOR)
 			continue;
 		const maxon::Int size = ELEMENT_ATTRIBUTES[maxon::Int(which)].size;
@@ -333,6 +356,7 @@ maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& co
 		for (maxon::Int i = 0; i < count; ++i)
 			elements.Read(ElementRef { op, maxon::Int32(i) }, which, values + i * size);
 		sent.Append(entry) iferr_return;
+		addPresence((*reads)[n]) iferr_return;
 	}
 
 	JsonWriter& json = writer.BeginItem("pointcloud", id);
@@ -341,7 +365,7 @@ maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& co
 	json.Int("radii", radiiBlob);
 	if (colorsBlob != NOTOK)
 		json.Int("colors", colorsBlob);
-	if (!sent.IsEmpty())
+	if (!sent.IsEmpty() || !presences.IsEmpty())
 	{
 		json.BeginArray("attributes");
 		for (const Sent& entry : sent)
@@ -351,6 +375,14 @@ maxon::Result<maxon::Bool> ExportParticles(SceneWriter& writer, const Coords& co
 			json.String("name", maxon::String(attribute.name));
 			json.String("type", maxon::String(attribute.type));
 			json.Int("data", entry.blob);
+			json.EndObject();
+		}
+		for (const Presence& presence : presences)
+		{
+			json.BeginObject();
+			json.String("name", presence.name);
+			json.String("type", "float"_s);
+			json.Int("data", presence.blob);
 			json.EndObject();
 		}
 		json.EndArray();

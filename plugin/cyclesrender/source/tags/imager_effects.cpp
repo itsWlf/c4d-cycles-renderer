@@ -17,11 +17,11 @@ maxon::Block<const ImagerEffect> GetImagerEffects()
 	return maxon::Block<const ImagerEffect>(IMAGER_EFFECTS, SIZEOF(IMAGER_EFFECTS) / SIZEOF(IMAGER_EFFECTS[0]));
 }
 
-const ImagerEffect* FindImagerEffect(const maxon::String& name)
+const ImagerEffect* FindImagerEffect(const maxon::String& name, maxon::Int32 source)
 {
 	for (const ImagerEffect& effect : GetImagerEffects())
 	{
-		if (name == maxon::String(effect.name))
+		if (effect.source == source && name == maxon::String(effect.name))
 			return &effect;
 	}
 	return nullptr;
@@ -188,7 +188,8 @@ void SetImagerLayers(cinema::BaseContainer& data, const maxon::BaseArray<maxon::
 
 const ImagerEffect* GetImagerLayerEffect(const cinema::BaseContainer& data, maxon::Int32 layer)
 {
-	return FindImagerEffect(data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT)));
+	return FindImagerEffect(data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT)),
+		data.GetInt32(ImagerLayerId(layer, IMAGERLAYER_SOURCE), IMAGERLAYER_SOURCE_BLENDER));
 }
 
 cinema::GeData GetImagerDefault(const ImagerSetting& setting)
@@ -218,8 +219,8 @@ maxon::Int32 AddImagerLayer(cinema::BaseContainer& data, const ImagerEffect& eff
 	data.SetInt32(CYCLESCAMERA_IMAGER_NEXT, layer + 1);
 
 	data.SetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT), maxon::String(effect.name));
-	data.SetInt32(ImagerLayerId(layer, IMAGERLAYER_SOURCE), IMAGERLAYER_SOURCE_BLENDER);
-	data.SetString(ImagerLayerId(layer, IMAGERLAYER_NAME), maxon::String(effect.name));
+	data.SetInt32(ImagerLayerId(layer, IMAGERLAYER_SOURCE), effect.source);
+	data.SetString(ImagerLayerId(layer, IMAGERLAYER_NAME), maxon::String(effect.label));
 	data.SetBool(ImagerLayerId(layer, IMAGERLAYER_ENABLED), true);
 	data.SetFloat(ImagerLayerId(layer, IMAGERLAYER_OPACITY), 1.0);
 	for (maxon::Int32 i = 0; i < effect.settingCount; ++i)

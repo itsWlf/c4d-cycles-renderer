@@ -309,23 +309,107 @@ static maxon::Bool RedshiftUnitsAsMeasured(const cinema::BaseObject* light)
 	return current;
 }
 
-// Redshift's render setting "Image Units Scale" (REDSHIFT_RENDERER_IMAGE_UNITS_SCALE, from
-// Redshift 2026 on; 100 by default), read from a Redshift video post of the document's active render
-// data (a scene set up for Redshift keeps it when Cycles Render is chosen), else its default. A point
-// or spot light in "Image" is (scale / 100)^2 times as strong (measured: 50 gives 0.25, 200 gives 4.0;
-// the other units, area and infinite lights do not change).
-static maxon::Float64 RedshiftImageUnitsScale(const cinema::BaseObject* light)
+const cinema::BaseVideoPost* FindRedshiftRenderer(const cinema::BaseDocument* doc)
 {
-	const cinema::BaseDocument* const doc = light->GetDocument();
 	const cinema::RenderData* const renderData = doc ? doc->GetActiveRenderData() : nullptr;
 	for (const cinema::BaseVideoPost* post = renderData ? FirstVideoPost(renderData) : nullptr; post; post = post->GetNext())
 	{
-		if (post->GetType() != REDSHIFT_RENDERER)
-			continue;
-		const maxon::Float64 scale = GetFloatParameter(post, REDSHIFT_RENDERER_IMAGE_UNITS_SCALE, 100.0);
-		return scale > 0.0 ? scale : 100.0;
+		if (post->GetType() == REDSHIFT_RENDERER)
+			return post;
 	}
-	return 100.0;
+	return nullptr;
+}
+
+//----------------------------------------------------------------------------------------
+// Redshift's render settings that change how it counts its lights' units, read from its video post
+// (FindRedshiftRenderer; without one, its defaults). Measured with Redshift 2027.0.0 (docs/reference/c4d-sdk.md,
+// "Redshift lights", "Units Mode"; internal/f13/probe_batch1.py and probe_batch1b.py): Redshift measures a light's
+// distances and surfaces in a unit of its own, and only some of its units depend on it.
+//
+//   "Project Settings" (the default): a point or spot light in "Image" and a normalized area light in "Image"
+//                count in units of a document unit times "Image Units Scale" (1803, 100 by default: 1 m in a
+//                document in centimetres, 100 m in one in metres); a point or spot light in candela in units of
+//                a document unit times 100; every other unit in metres.
+//   "Disabled", "Custom": every length in units of L, the document's unit ("Disabled") or the Export Units
+//                ("Custom"); "Image Units Scale" plays no part, and the photometric units count otherwise (the
+//                constants of Redshift 3.6.04's lights: RedshiftUnitsModeFactor).
+//----------------------------------------------------------------------------------------
+struct RedshiftUnits
+{
+	maxon::Int32 mode = REDSHIFT_RENDERER_UNIT_MODE_PROJECT;
+	maxon::Float64 imageMetres = 1.0;    ///< "Project Settings": metres per unit of "Image" (point, spot, normalized area)
+	maxon::Float64 candelaMetres = 1.0;  ///< "Project Settings": metres per unit of a point or spot light in candela
+	maxon::Float64 legacyMetres = 1.0;   ///< "Disabled", "Custom": L
+};
+
+static RedshiftUnits ReadRedshiftUnits(const cinema::BaseObject* light, const Coords& coords)
+{
+	RedshiftUnits units;
+	const cinema::BaseVideoPost* const post = FindRedshiftRenderer(light->GetDocument());
+	maxon::Float64 imageScale = post ? GetFloatParameter(post, REDSHIFT_RENDERER_IMAGE_UNITS_SCALE, 100.0) : 100.0;
+	if (imageScale <= 0.0)
+		imageScale = 100.0;
+	units.imageMetres = coords.GetScale() * imageScale;
+	units.candelaMetres = coords.GetScale() * 100.0;
+	units.legacyMetres = coords.GetScale();
+	if (post)
+	{
+		units.mode = GetIntParameter(post, REDSHIFT_RENDERER_UNIT_MODE, REDSHIFT_RENDERER_UNIT_MODE_PROJECT);
+		if (units.mode == REDSHIFT_RENDERER_UNIT_MODE_CUSTOM)
+			units.legacyMetres = Coords::UnitScaleMetres(GetParameterData(post, REDSHIFT_RENDERER_EXPORT_SCALE), 0.01);
+	}
+	return units;
+}
+
+// What the light gives under Redshift's Units Mode, as a factor on what RedshiftUnitFactor gives in metres (which is
+// "Project Settings" in a document in centimetres for every unit but "Image" and candela of point and spot lights).
+// Measured with Redshift 2027.0.0 on a floor 2 m below the light (each factor to 0.5 % where the light is bright enough
+// to read; L of 1 mm, 1 cm, 10 cm and 1 m, and a document in metres): with L in metres,
+//
+//                     point, spot                     area (A its surface in m2)        infinite
+//   Image             L^2                             normalized: L^2, else 1           1
+//   lm, W             683 Omega L^2 / pi (Phi L^2/pi) 683 L^2                           not measured (clipped)
+//   cd                683 L^2 / 10000                 683 A / 10000 (v / 10000)          -
+//   cd/m2, W/sr/m2    (black)                         683 / 10000                       683 / 10000
+//   lm/m2             (black)                         683 pi / 10000 (v / 10000)        683 4 pi / 10000 (v / 10000)
+//
+// (Omega: the solid angle RedshiftUnitFactor spreads lumens over; W/sr/m2 of an infinite light and cd of an area
+// light at other sizes than 2 x 2 m were not measured.) Under "Project Settings" only the first rows depend on the
+// unit: "Image" by imageMetres^2, candela by candelaMetres^2.
+static maxon::Float64 RedshiftUnitsModeFactor(const RedshiftUnits& units, maxon::Int32 unit, maxon::Int32 type, maxon::Bool normalized,
+	maxon::Float64 solidAngle, maxon::Float64 surface)
+{
+	const maxon::Bool sun = type == REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE || type == REDSHIFT_LIGHT_TYPE_PHYSICALSUN;
+	const maxon::Bool area = type == REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA;
+	if (units.mode != REDSHIFT_RENDERER_UNIT_MODE_DISABLED && units.mode != REDSHIFT_RENDERER_UNIT_MODE_CUSTOM)
+	{
+		if (unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE && ((!sun && !area) || (area && normalized)))
+			return units.imageMetres * units.imageMetres;
+		if (unit == REDSHIFT_UNITS_LUMINOUS_INTENSITY && !sun && !area)
+			return units.candelaMetres * units.candelaMetres;
+		return 1.0;
+	}
+	const maxon::Float64 l2 = units.legacyMetres * units.legacyMetres;
+	const maxon::Float64 legacyConstant = LUMENS_PER_WATT / 10000.0;
+	switch (unit)
+	{
+		case REDSHIFT_LIGHT_UNITSTYPE_IMAGE:
+			return sun || (area && !normalized) ? 1.0 : l2;
+		case REDSHIFT_LIGHT_UNITSTYPE_LUMINOUS_POWER_LM:
+		case REDSHIFT_LIGHT_UNITSTYPE_RADIANT_POWER_W:
+			if (sun)
+				return 1.0;
+			return area ? LUMENS_PER_WATT * l2 : LUMENS_PER_WATT * solidAngle * l2 / maxon::PI;
+		case REDSHIFT_UNITS_LUMINOUS_INTENSITY:
+			return area ? legacyConstant * surface : legacyConstant * l2;
+		case REDSHIFT_LIGHT_UNITSTYPE_LUMINANCE_CD_PER_MSQUARED:
+		case REDSHIFT_LIGHT_UNITSTYPE_RADIANCE_W_PER_SR_PER_MSQUARED:
+			return legacyConstant;
+		case REDSHIFT_UNITS_LUMINOUS_EXITANCE:
+			return legacyConstant * maxon::PI * (sun ? 4.0 : 1.0);
+		default:
+			return 1.0;
+	}
 }
 
 // Redshift's area light "Spread" s (1: a plain diffuse emitter) in Blender's terms. Measured with
@@ -374,8 +458,12 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 		return false;
 	}
 
-	// The colour: the light's colour, its temperature's, or both multiplied (measured).
-	const cinema::Vector color = GetVectorParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLOR, cinema::Vector(1.0));
+	// The colour: the light's colour, its temperature's, or both multiplied (measured). In a document with Basic
+	// colour management Redshift takes the colour as Cinema 4D takes its own lights' (DocumentColors::Input: 0.5
+	// lights as 0.214, the curve continued above 1), and computes the temperature in its own rendering space,
+	// ACEScg, where it is made the brightest part 1, without decoding it (3000 K is (1.279, 0.608, 0.195) in linear
+	// Rec.709); measured with Redshift 2027.0.0, docs/reference/c4d-sdk.md, "Redshift lights".
+	const cinema::Vector color = colors.Input(GetVectorParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLOR, cinema::Vector(1.0)));
 	const maxon::Int32 colorMode = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_COLORMODE, REDSHIFT_LIGHT_COLORMODE_COLOR);
 	if (colorMode == REDSHIFT_LIGHT_COLORMODE_COLOR)
 	{
@@ -383,7 +471,8 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 	}
 	else
 	{
-		const cinema::Vector warm = RedshiftTemperatureColor(GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_TEMPERATURE, 6500.0), colors);
+		const maxon::Float64 kelvin = GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_TEMPERATURE, 6500.0);
+		const cinema::Vector warm = colors.IsOcio() ? RedshiftTemperatureColor(kelvin, colors) : AcescgToRec709(RedshiftTemperatureColor(kelvin, DocumentColors()));
 		out.color = colorMode == REDSHIFT_LIGHT_COLORMODE_TEMPERATURE_AND_COLOR ? cinema::Vector(warm.x * color.x, warm.y * color.y, warm.z * color.z) : warm;
 	}
 	if (HasRedshiftTexture(light))
@@ -392,13 +481,15 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 
 	const maxon::Int32 unit = GetIntParameter(light, REDSHIFT_LIGHT_PHYSICAL_UNITSTYPE, REDSHIFT_LIGHT_UNITSTYPE_IMAGE);
 	const maxon::Float64 efficacy = maxon::Max(0.0, GetFloatParameter(light, REDSHIFT_LIGHT_PHYSICAL_LUMENSPERWATT, 17.0));
-	// A point or spot light in "Image" follows Redshift's render setting "Image Units Scale".
 	const maxon::Bool pointLike = type != REDSHIFT_LIGHT_TYPE_PHYSICAL_INFINITE && type != REDSHIFT_LIGHT_TYPE_PHYSICALSUN && type != REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA;
-	maxon::Float64 imageScale = 1.0;
-	if (pointLike && unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE)
+	// Redshift's Units Mode, "Image Units Scale" and Export Units (RedshiftUnitsModeFactor).
+	const RedshiftUnits units = ReadRedshiftUnits(light, coords);
+	const maxon::Bool legacyUnits = units.mode == REDSHIFT_RENDERER_UNIT_MODE_DISABLED || units.mode == REDSHIFT_RENDERER_UNIT_MODE_CUSTOM;
+	if (legacyUnits && !pointLike && type != REDSHIFT_LIGHT_TYPE_PHYSICAL_AREA &&
+		(unit == REDSHIFT_LIGHT_UNITSTYPE_LUMINOUS_POWER_LM || unit == REDSHIFT_LIGHT_UNITSTYPE_RADIANT_POWER_W))
 	{
-		const maxon::Float64 ratio = RedshiftImageUnitsScale(light) / 100.0;
-		imageScale = ratio * ratio;
+		Warn(writer, FormatString("Light \"@\": an infinite light in lumen or watt under Redshift's Units Mode \"Disabled\" or \"Custom\" is translated as under \"Project Settings\"; how Redshift counts it there was not measured.",
+			light->GetName()));
 	}
 	// An older Redshift counts these otherwise; named, translated as the measured versions render them.
 	// Measured alike in Redshift 3.6.04: area and infinite lights in "Image" with their shapes, scale and
@@ -421,7 +512,7 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 			if (type == REDSHIFT_LIGHT_TYPE_PHYSICALSUN)
 				Warn(writer, FormatString("Light \"@\": the Redshift sun is rendered as a plain infinite light.", light->GetName()));
 			out.type = BLENDERLIGHT::SUN;
-			out.energy = value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, true);
+			out.energy = value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, true) * RedshiftUnitsModeFactor(units, unit, type, false, 4.0 * maxon::PI, 0.0);
 			out.angle = 0.0;
 			break;
 		}
@@ -432,7 +523,8 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 			// Lumens and watts are spread over the cone, its falloff included (measured).
 			const maxon::Float64 coneSolidAngle = 2.0 * maxon::PI * (1.0 - maxon::Cos(cone * 0.5));
 			out.type = BLENDERLIGHT::SPOT;
-			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, coneSolidAngle, 0.0, false) * imageScale;
+			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, coneSolidAngle, 0.0, false) *
+				RedshiftUnitsModeFactor(units, unit, type, false, coneSolidAngle, 0.0);
 			out.radius = 0.0;
 			out.spotSize = cone;
 			out.spotBlend = SpotBlend(maxon::Max(0.0, cone - 2.0 * falloff), cone);
@@ -475,7 +567,7 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 				return false;
 			// Its radiance in Redshift's terms of "Image": "Normalize" counts in that unit only.
 			const maxon::Float64 radiance = value * RedshiftUnitFactor(unit, efficacy, 0.0, surface, false) /
-				((unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE && normalized) ? surface : 1.0);
+				((unit == REDSHIFT_LIGHT_UNITSTYPE_IMAGE && normalized) ? surface : 1.0) * RedshiftUnitsModeFactor(units, unit, type, normalized, 0.0, surface);
 			if (geometry == REDSHIFT_LIGHT_AREA_GEOMETRY_SPHERE)
 			{
 				// Blender's point light with a radius is that sphere: power pi * L * (pi d^2).
@@ -520,7 +612,8 @@ static maxon::Bool TranslateRedshiftLight(const cinema::BaseObject* light, const
 			if (type != REDSHIFT_LIGHT_TYPE_PHYSICAL_POINT)
 				Warn(writer, FormatString("Light \"@\": this Redshift light type is rendered as a point light.", light->GetName()));
 			out.type = BLENDERLIGHT::POINT;
-			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, false) * imageScale;
+			out.energy = 4.0 * maxon::PI * value * RedshiftUnitFactor(unit, efficacy, 4.0 * maxon::PI, 0.0, false) *
+				RedshiftUnitsModeFactor(units, unit, type, false, 4.0 * maxon::PI, 0.0);
 			out.radius = 0.0;
 			break;
 		}

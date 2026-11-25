@@ -66,9 +66,11 @@ static const RedshiftAttribute REDSHIFT_ATTRIBUTES[] =
 	{ "RSMGWeight", "mograph_weight", 1, false, true, CONVERT::NONE, nullptr, NOTOK },
 	{ "RSMGUVW", "mograph_uvw", 3, true, true, CONVERT::NONE, nullptr, NOTOK },
 	{ "RSMGTimeOffset", "mograph_time_offset", 1, false, true, CONVERT::NONE, nullptr, NOTOK },
-	// The object: the Object ID of its Redshift Object tag, and its display colour.
+	// The object: the Object ID of its Redshift Object tag, and its display colour (RSDisplayColor gives the same:
+	// measured on an object set to use its display colour always, 0.3.0).
 	{ "RSObjectID", OBJECT_ID_KEY, 1, false, false, CONVERT::NONE, nullptr, NOTOK },
 	{ "RSObjectColor", OBJECT_COLOR_ATTRIBUTE, 3, false, false, CONVERT::NONE, nullptr, NOTOK },
+	{ "RSDisplayColor", OBJECT_COLOR_ATTRIBUTE, 3, false, false, CONVERT::NONE, nullptr, NOTOK },
 };
 
 // The text a string port holds.
@@ -110,6 +112,18 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::AttributeTerm(const maxon::Str
 	return VMath("ADD", ofGeometry, ofInstancer);
 }
 
+maxon::Result<RedshiftNodes::Term> RedshiftNodes::Present(const Term& has, const Term& read, const Term& fallback, maxon::Bool scalar)
+{
+	iferr_scope;
+	if (scalar)
+	{
+		// fallback + has * (read - fallback)
+		const Term difference = Math("SUBTRACT", read, fallback) iferr_return;
+		return Math("MULTIPLY_ADD", has, difference, fallback);
+	}
+	return MixColor("MIX", has, fallback, read);
+}
+
 maxon::Result<RedshiftNodes::SceneValue> RedshiftNodes::ReadUserData(const maxon::GraphNode& rsNode, const maxon::Char* what)
 {
 	iferr_scope;
@@ -145,6 +159,7 @@ maxon::Result<RedshiftNodes::SceneValue> RedshiftNodes::ReadUserData(const maxon
 		result.value = AttributeTerm(name, "Color", false) iferr_return;
 		result.number = AttributeTerm(name, "Fac", false) iferr_return;
 		result.alpha = Term::Number(1.0);
+		result.has = AttributeTerm(PresenceAttribute(name), "Fac", false) iferr_return;
 		return result;
 	}
 
@@ -152,6 +167,12 @@ maxon::Result<RedshiftNodes::SceneValue> RedshiftNodes::ReadUserData(const maxon
 	_exporter.UseAttribute(ours, true);
 	result.found = true;
 	result.size = known->size == 1 ? 1 : 3;
+	result.has = AttributeTerm(PresenceAttribute(ours), "Fac", known->perElement) iferr_return;
+	if (known->perElement)
+	{
+		// (Read from the points and from the instancer and added up, as the value: 1 at most.)
+		result.has = Math("MINIMUM", result.has, Term::Number(1.0)) iferr_return;
+	}
 	const maxon::Float64 perMetre = 1.0 / Coords::FromDocument(_exporter.GetDocument()).GetScale();
 	if (known->size == 1)
 	{
@@ -208,23 +229,29 @@ maxon::Result<NodeOutput> RedshiftNodes::SceneDataNodes(const Source& source, co
 	if (color || scalar || integer || vector)
 	{
 		const SceneValue read = ReadUserData(rs, what) iferr_return;
+		// The node's own default (a colour's is rendered times its alpha by the Redshift of 2027, measured).
+		Term fallback = Input(rs, "default", false, what, 0) iferr_return;
+		if (color && REDSHIFT_STRAIGHT_COLORS && fallback.IsConstant())
+			fallback.value = fallback.value * fallback.alpha;
 		if (!read.found)
-		{
-			// The node's own default (a colour's is rendered times its alpha by the Redshift of 2027, measured).
-			Term fallback = Input(rs, "default", false, what, 0) iferr_return;
-			if (color && REDSHIFT_STRAIGHT_COLORS && fallback.IsConstant())
-				fallback.value = fallback.value * fallback.alpha;
 			return Output(fallback, scalar || integer);
-		}
+		// Where the object has no such data, Redshift gives the node's default too (measured, 0.3.0: user data, RSP and
+		// RSMG names on an object that has none); Blender's Attribute node would read 0 there (before 0.3.0 it did).
 		if (integer)
 		{
 			// (Measured: a whole-number node reading a number gives the nearest whole number.)
 			const Term rounded = Math("ROUND", read.number) iferr_return;
-			return Output(rounded, true);
+			const Term chosen = Present(read.has, rounded, fallback, true) iferr_return;
+			return Output(chosen, true);
 		}
 		if (scalar)
-			return Output(read.number, true);
-		return Output(read.value, read.size == 1);
+		{
+			const Term chosen = Present(read.has, read.number, fallback, true) iferr_return;
+			return Output(chosen, true);
+		}
+		// (A number read by a Color or Vector node is its grey: the mix takes it as one.)
+		const Term chosen = Present(read.has, read.value, fallback, false) iferr_return;
+		return Output(chosen, false);
 	}
 
 	// Vertex Attribute and Point Attribute: a vertex map or vertex colour tag of the object, by the tag's
@@ -258,9 +285,9 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::AlphaOf(const Source& source, 
 	if (name == "rsuserdatacolor"_s)
 	{
 		const SceneValue read = ReadUserData(source.node, what) iferr_return;
-		if (read.found)
-			return read.alpha;
 		const Term fallback = Input(source.node, "default", false, what, 0) iferr_return;
+		if (read.found)
+			return Present(read.has, read.alpha, Term::Number(fallback.alpha), true);
 		return Term::Number(fallback.alpha);
 	}
 	if (name == "vertexattributelookup"_s || name == "particleattributelookup"_s)

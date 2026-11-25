@@ -7,7 +7,8 @@
 //
 // The tag counts for the camera it sits on (not for cameras below it). Each tab starts with a
 // switch; the tab's other settings count only while it is on (Depth of Field checked, a lens
-// type other than "As the Camera's Projection"). Depth of field is the tag's alone: unchecked
+// type other than "As the Camera's Projection"; the Color tab has none: at its defaults it changes
+// nothing). Depth of field is the tag's alone: unchecked
 // means none, as on Blender's camera.
 // Values are Blender's own (scene/camera_export.cpp sends them as they are), defaults are
 // Blender's.
@@ -20,6 +21,7 @@ enum
 	CYCLESCAMERA_GROUP_PANORAMA = 2003,        // a group inside the Lens tab
 	CYCLESCAMERA_GROUP_IMAGER = 2004,
 	CYCLESCAMERA_GROUP_IMAGER_BUTTONS = 2005,  // the row of buttons below the list
+	CYCLESCAMERA_GROUP_COLOR = 2006,           // (0.3.0) between the Lens and the Imager tab
 
 	// Depth of field (Blender's camera, Depth of Field panel)
 	// Checked: on, with this tab's values, whatever the render settings say. Unchecked (the
@@ -67,6 +69,14 @@ enum
 	CYCLESCAMERA_LENS_CYLINDER_V_MAX = 1117,
 	CYCLESCAMERA_LENS_CYLINDER_RADIUS = 1118,
 
+	// The Color tab (0.3.0, F13 W6): the camera's base colour correction, applied to the scene-linear
+	// picture before the Imager's layers and before the view transform, whatever the Imager's switch
+	// says. 1300 to 1399 are kept for it; corrections that come later (white balance, tone mapping,
+	// saturation) go below exposure in the order they are applied, each as a group of its own.
+	// Blender's compositor applies it (scene/imager_export.cpp: the tree's first node); a Redshift
+	// camera's own exposure multiplies with it.
+	CYCLESCAMERA_COLOR_EXPOSURE = 1300,        // stops: 1 doubles the picture; 0 (the default) changes nothing
+
 	// The Imager tab: effects on the rendered picture, made by Blender's compositor, as a list of
 	// layers like Cinema 4D's field lists: each layer is one effect with a name, a switch and an
 	// opacity; the top layer is applied last; the selected layer's settings show below the list.
@@ -95,7 +105,7 @@ enum
 		IMAGERLAYER_SOURCE = 2,                  // where the effect comes from
 			IMAGERLAYER_SOURCE_BLENDER = 0,        // a compositor node group of Blender's bundled asset library
 			IMAGERLAYER_SOURCE_FILE = 1,           // reserved: a node group of a .blend file (custom presets), named by IMAGERLAYER_FILE
-			IMAGERLAYER_SOURCE_NODE = 2,           // reserved: a plain compositor node, IMAGERLAYER_EFFECT its Blender type
+			IMAGERLAYER_SOURCE_NODE = 2,           // a plain compositor node, IMAGERLAYER_EFFECT its Blender type (0.3.0: "CompositorNodeExposure")
 		IMAGERLAYER_NAME = 3,                    // text: the layer's name in the list
 		IMAGERLAYER_ENABLED = 4,                 // the layer's switch
 		IMAGERLAYER_OPACITY = 5,                 // 0 to 1: how much of the effect is mixed over what is below it

@@ -126,7 +126,8 @@ struct BlenderLight
 /// Redshift 2027.0.0, docs/reference/c4d-sdk.md, "Redshift lights"): infinite, point, spot and
 /// area lights (rectangle, disc or ellipse, sphere) in every intensity unit, with exposure,
 /// "Normalize Intensity", the object's scale on its size, its colour temperature as Redshift
-/// computes it in the render space, its camera visibility and "Bi-Directional" (twoSided).
+/// computes it in the render space, its camera visibility and "Bi-Directional" (twoSided), under
+/// each of Redshift's Units Modes with its "Image Units Scale" and Export Units (since 0.3.0).
 /// Approximated, each named in the console: "Spread" (Blender's profile fitted to Redshift's;
 /// Blender's edge is soft), the decays "None" and "Linear" (matched at one distance) and a
 /// cylinder (a sphere as bright from its side); not translated, named: a mesh shape, a texture,
@@ -141,8 +142,10 @@ struct BlenderLight
 /// A Redshift light follows its own "Shadow" switch.
 ///
 /// @param[in] colors      The document's colour settings: a standard light's colour is a colour
-///                        parameter (DocumentColors::Input). A Redshift light's is sent as stored;
-///                        its colour temperature is made a colour of the render space.
+///                        parameter (DocumentColors::Input), and so is a Redshift light's (since 0.3.0;
+///                        before, it was sent as stored); its colour temperature is made a colour of
+///                        the render space, in a document with Basic colour management Redshift's ACEScg
+///                        colour in linear Rec.709.
 /// @param[in] multiplier  The "Light Multiplier" render setting.
 /// @param[in] mg          The light's global matrix: a Redshift area light's size counts with its
 ///                        scale (measured), as the light's direction is sent without it.
@@ -163,6 +166,12 @@ maxon::String BackLightId(const maxon::String& id);
 /// for lights below it (docs/reference/c4d-sdk.md, "Lights switched off").
 //----------------------------------------------------------------------------------------
 maxon::Bool IsLightSwitchedOn(const cinema::BaseObject* light);
+
+/// Redshift's renderer in the document's active render data (its video post, REDSHIFT_RENDERER, which holds
+/// Redshift's own render settings and which a scene set up for Redshift keeps when Cycles Render is chosen),
+/// or nullptr. Every new document of Cinema 4D 2027 holds one (measured), so it alone does not make a scene
+/// one set up for Redshift (ExportWorldItem asks for a Redshift light as well).
+const cinema::BaseVideoPost* FindRedshiftRenderer(const cinema::BaseDocument* doc);
 
 //----------------------------------------------------------------------------------------
 /// Exports the light @p light, whose global matrix is @p mg, under the id @p id: a standard

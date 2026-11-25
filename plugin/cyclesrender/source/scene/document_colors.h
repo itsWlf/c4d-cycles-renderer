@@ -109,6 +109,9 @@ private:
 	maxon::Int32 _inputProfile = 0;   ///< DOCUMENT_COLORPROFILE_...
 };
 
+/// A colour of ACEScg in linear Rec.709: the inverse of the matrix DocumentColors::FromXyz takes ACEScg with.
+cinema::Vector AcescgToRec709(const cinema::Vector& acescg);
+
 /// The sRGB transfer curve (IEC 61966-2-1) and its inverse, for one channel.
 maxon::Float32 LinearToSrgb(maxon::Float32 value);
 maxon::Float64 SrgbToLinear(maxon::Float64 value);

@@ -1356,6 +1356,27 @@ maxon::Result<maxon::String> MaterialExporter::GetMaterialId(cinema::BaseMateria
 	return GetMaterialId(layers);
 }
 
+maxon::Result<maxon::String> MaterialExporter::GetDisplayColorMaterialId(const cinema::Vector& color)
+{
+	iferr_scope;
+	const maxon::String key = FormatString("display:@,@,@", maxon::String::FloatToString(color.x, -1, 9), maxon::String::FloatToString(color.y, -1, 9),
+		maxon::String::FloatToString(color.z, -1, 9));
+	if (_known)
+	{
+		// Only what an earlier export wrote (SetKnownIds).
+		const auto* const known = _known->ids.Find(key);
+		_unknown = _unknown || !known;
+		return known ? known->GetValue() : maxon::String();
+	}
+	if (const auto* const known = _materials.Find(key))
+		return known->GetValue();
+	const maxon::String id = FormatString("material_display_@", _materials.GetCount());
+	_materials.Insert(key, id) iferr_return;
+	// As the default material (GetMaterialId with no layers), in another colour.
+	WritePlainMaterial(id, _colors.Input(color), 0.5) iferr_return;
+	return id;
+}
+
 maxon::Result<maxon::String> MaterialExporter::GetMaterialId(const maxon::BaseArray<MaterialLayer>& layers)
 {
 	iferr_scope;

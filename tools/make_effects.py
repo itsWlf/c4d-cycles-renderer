@@ -5,8 +5,8 @@
 
 It starts every supported Blender (VERSIONS; by default from the installer's usual place, or the
 executables named) once to ask it for the compositor effects it ships (tools\\dump_blender_effects.py:
-the node groups of its bundled asset library that take a picture and give one), takes the union, and
-writes
+the node groups of its bundled asset library that take a picture and give one) and for the plain
+compositor nodes PLAIN_NODES names, takes the union, and writes
     plugin/cyclesrender/source/tags/imager_effects_table.h      the table
 Run it again for a new Blender version; do not edit the file by hand.
 
@@ -16,6 +16,17 @@ names it in the console. What an effect looks like (labels, defaults, ranges, pa
 newest version that has it; a default that differs between versions is printed. The tool fails when
 something a version had is gone from a later one (the table cannot say "until"), and when VERSIONS
 differs from the plugin's SUPPORTED_VERSIONS.
+
+Two sources. A bundled node group is stored in a layer by Blender's name of the group (the layer's source
+IMAGERLAYER_SOURCE_BLENDER); a plain compositor node by its node type (IMAGERLAYER_SOURCE_NODE, which
+res/description/tcyclescamera.h reserved for it). The menu shows each by its label (a group's name, a
+node's name in Blender's Add menu), in alphabetical order.
+
+Steps and sliders. The table says how the tab shows each number: its step and the range of its slider
+(none when both are 0). For Blender's own sockets the rule is the tab's since F11 step 2 (a factor and an
+angle step by 0.01 and by a degree, other numbers by 0.1; a slider between Blender's limits for a factor,
+and for a number bounded on both sides within SLIDER_SPAN); PLAIN_NODES may give a socket's range itself
+where the node's declared range is not readable from Python.
 
 Numbers stored in scene files. A layer of the Imager tab keeps a setting's value under the setting's
 number (res/description/tcyclescamera.h, "The Imager tab"), which is made from Blender's own
@@ -54,6 +65,21 @@ KINDS = {
 SUBTYPES = {"FACTOR": "F", "ANGLE": "A", "PERCENTAGE": "F"}
 # A limit beyond this is no limit (Blender's is the largest float).
 NO_LIMIT = 1.0e30
+# The widest range a number is shown as a slider over (as tools/make_nodes.py's SLIDER_SPAN): wider ones keep a field.
+SLIDER_SPAN = 100.0
+ONE_DEGREE = 0.017453292519943295
+
+# Plain compositor nodes offered as effects, by node type, with what the table cannot read from Blender.
+# The Exposure node (0.3.0, F13 W6): Blender declares its Exposure input from -10 to 10, but the socket's
+# property reports no limit and the node takes any value (measured on 5.0, 5.2 and 5.3: 12 stops give
+# 4096 times the picture, internal/f13/probe_exposure_blender.py). Blender's view has the same stops as
+# its Exposure (`ColorManagedViewSettings.exposure`: limits -32 to 32, a slider -10 to 10, steps of
+# 0.01): the layer takes those, so that a value typed beyond the slider's end is kept, as on the Cycles
+# Camera tag's Color tab.
+PLAIN_NODES = {
+    "CompositorNodeExposure": {"catalog": "Compositing-Color",
+                               "settings": {"Exposure": {"min": -32.0, "max": 32.0, "slider": (-10.0, 10.0), "step": 0.01}}},
+}
 
 
 def c_string(text):
@@ -79,9 +105,14 @@ def dump_all(executables):
         out = os.path.join(tempfile.gettempdir(), "cyclesrender_blender_effects_%d.json" % len(dumps))
         if os.path.exists(out):
             os.remove(out)
-        subprocess.run([blender, "-b", "--factory-startup", "--offline-mode", "--python", os.path.join(HERE, "dump_blender_effects.py"), "--", out],
-                       check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([blender, "-b", "--factory-startup", "--offline-mode", "--python", os.path.join(HERE, "dump_blender_effects.py"), "--", out]
+                       + list(PLAIN_NODES), check=True, stdout=subprocess.DEVNULL)
         data = json.load(open(out, encoding="utf-8"))
+        # Both sources as one list of effects; a plain node is marked by its source.
+        for node in data.get("nodes", []):
+            node["source"] = "node"
+            node["catalog"] = PLAIN_NODES[node["name"]]["catalog"]
+        data["effects"] = data["effects"] + data.get("nodes", [])
         version = ".".join(data["blender"].split(".")[:2])
         if version in dumps:
             sys.exit(f"Two of the executables are Blender {version}.")
@@ -117,6 +148,24 @@ def limit(value, fallback):
     if not isinstance(value, (int, float)) or abs(value) > NO_LIMIT:
         return fallback
     return float(value)
+
+
+def number_plan(kind, subtype, low, high, override):
+    """(step, slider low, slider high) of a setting; the slider (0, 0) when it has none."""
+    has_low, has_high = low > -NO_LIMIT, high < NO_LIMIT
+    if override and "step" in override:
+        slider = override.get("slider", (0.0, 0.0))
+        return float(override["step"]), float(slider[0]), float(slider[1])
+    if kind in ("f", "v"):
+        step = ONE_DEGREE if subtype == "A" else (0.01 if subtype == "F" else 0.1)
+        if kind == "f" and has_low and has_high and (subtype == "F" or high - low <= SLIDER_SPAN):
+            return step, low, high
+        return step, 0.0, 0.0
+    if kind == "i":
+        if has_low and has_high and high - low <= SLIDER_SPAN:
+            return 1.0, low, high
+        return 1.0, 0.0, 0.0
+    return 0.0, 0.0, 0.0
 
 
 def main():
@@ -175,8 +224,10 @@ def main():
              "// A setting's number is stored in scene files (tools/make_effects.py says how it is made).", "",
              "#ifndef IMAGER_EFFECTS_TABLE_H__", "#define IMAGER_EFFECTS_TABLE_H__", ""]
     entries = []
-    for name in sorted(newest):
+    for name in sorted(newest, key=lambda n: (newest[n][1].get("label") or n).lower()):
         version, effect = newest[name]
+        node = effect.get("source") == "node"
+        overrides = PLAIN_NODES.get(name, {}).get("settings", {})
         symbol = re.sub(r"[^A-Z0-9]+", "", name.upper())
         rows, seen = [], {}
         for socket in effect["inputs"]:
@@ -209,15 +260,22 @@ def main():
                 subtype = "F"
             if socket["kind"] == "NodeSocketFloatAngle":
                 subtype = "A"
+            override = overrides.get(socket["identifier"])
             low, high = limit(socket.get("min"), -NO_LIMIT), limit(socket.get("max"), NO_LIMIT)
+            if override:
+                low, high = float(override.get("min", low)), float(override.get("max", high))
+            step, slider_low, slider_high = number_plan(kind, subtype, low, high, override)
             rows.append("\t{ " + ", ".join([
                 c_string(socket["identifier"]), str(number), c_string(socket["name"]), f"'{kind}'", f"'{subtype}'", numbers(default), str(count),
-                repr(low), repr(high), c_string(socket["panel"]), c_string(options), c_string(option_since), str(chosen),
+                repr(low), repr(high), repr(step), repr(slider_low), repr(slider_high),
+                c_string(socket["panel"]), c_string(options), c_string(option_since), str(chosen),
                 c_string(socket.get("description", "")), str(version_code(since[("setting", name, socket["identifier"])]))]) + " },")
         if not rows:
             problems.append(f"{name}: an effect without a setting")
         lines += [f"static const ImagerSetting {symbol}_SETTINGS[] =", "{"] + rows + ["};", ""]
-        entries.append("\t{ " + ", ".join([c_string(name), c_string(effect.get("description", "")), c_string(effect.get("catalog", "")),
+        entries.append("\t{ " + ", ".join([c_string(name), c_string(effect.get("label") or name),
+                                           "IMAGERLAYER_SOURCE_NODE" if node else "IMAGERLAYER_SOURCE_BLENDER",
+                                           c_string(effect.get("description", "")), c_string(effect.get("catalog", "")),
                                            c_string(effect["image_in"]), c_string(effect["image_out"]),
                                            f"{symbol}_SETTINGS", f"maxon::Int32(SIZEOF({symbol}_SETTINGS) / SIZEOF({symbol}_SETTINGS[0]))", str(version_code(since[("effect", name)]))]) + " },")
     lines += ["static const ImagerEffect IMAGER_EFFECTS[] =", "{"] + entries + ["};", "", "#endif // IMAGER_EFFECTS_TABLE_H__", ""]

@@ -103,6 +103,15 @@ cinema::Vector DocumentColors::FromXyz(const cinema::Vector& xyz) const
 	return rec709;
 }
 
+cinema::Vector AcescgToRec709(const cinema::Vector& acescg)
+{
+	// The inverse of FromXyz's "Linear Rec.709 (sRGB)" to ACEScg matrix, to ten digits.
+	return cinema::Vector(
+		1.7050509927 * acescg.x - 0.6217921207 * acescg.y - 0.0832588720 * acescg.z,
+		-0.1302564176 * acescg.x + 1.1408047365 * acescg.y - 0.0105483191 * acescg.z,
+		-0.0240033568 * acescg.x - 0.1289689760 * acescg.y + 1.1529723328 * acescg.z);
+}
+
 cinema::Vector DocumentColors::Input(const cinema::Vector& color) const
 {
 	if (_ocio)

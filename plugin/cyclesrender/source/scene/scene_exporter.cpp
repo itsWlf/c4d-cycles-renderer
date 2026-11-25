@@ -17,6 +17,7 @@
 #include "lib_particlegroupobject.h"
 #include "maxon/hashmap.h"
 #include "oinstance.h"
+#include "oenvironment.h"
 #include "olight.h"
 #include "orslight.h"
 #include "customgui_inexclude.h"
@@ -353,6 +354,124 @@ cinema::BaseMaterial* SceneExporter::GetStackMaterial(maxon::Int stack) const
 			return entries[i].material;
 	}
 	return nullptr;
+}
+
+// Whether a volume object (which the walk renders) is among @p op, the objects after it and below them. (Redshift's
+// Volume object has a cache, measured in 2027 without a file; what it holds with one was not looked at.)
+static maxon::Bool HoldsVolume(const cinema::BaseObject* op)
+{
+	for (; op; op = op->GetNext())
+	{
+		if (op->GetType() == Ovolume || HoldsVolume(op->GetDown()))
+			return true;
+	}
+	return false;
+}
+
+maxon::Result<void> SceneExporter::AddWorldSource(WORLDPART kind, cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited)
+{
+	iferr_scope;
+	WorldSource source;
+	source.kind = kind;
+	source.roles.camera = true;
+	source.roles.lighting = kind == WORLDPART::SKY;
+	source.object = op;
+	source.mg = mg;
+	source.material = GetStackMaterial(inherited.stack);
+	source.owner = inherited.ownerObject;
+	_worlds.Append(std::move(source)) iferr_return;
+	NoteFixed(inherited.ownerObject) iferr_return;
+	return maxon::OK;
+}
+
+maxon::Result<void> SceneExporter::NoteUntranslated(const cinema::BaseObject* op, const Inherited& inherited, maxon::Bool renders)
+{
+	iferr_scope;
+	const maxon::Int32 type = op->GetType();
+	// A material on a volume or on what makes it (a Pyro Output) is not read (W25 would translate it).
+	if (type == Ovolume && renders)
+	{
+		if (const cinema::BaseMaterial* const material = GetStackMaterial(inherited.stack))
+		{
+			_notes.Append(FormatString("Volume \"@\": its material \"@\" is not translated; the volume is shaded with the values of a Cycles Object tag's Volume tab, or with the defaults.",
+				inherited.ownerObject ? inherited.ownerObject->GetName() : op->GetName(), material->GetName())) iferr_return;
+		}
+	}
+	if (type == Orslight && IsLightSwitchedOn(op))
+	{
+		// A material on a Redshift light is its light graph (a Light node that sets its intensity and colour).
+		for (const cinema::BaseTag* tag = op->GetFirstTag(); tag; tag = tag->GetNext())
+		{
+			const cinema::BaseMaterial* const material = tag->IsInstanceOf(Ttexture) ? static_cast<const cinema::TextureTag*>(tag)->GetMaterial() : nullptr;
+			if (material)
+			{
+				_notes.Append(FormatString("Light \"@\": its material \"@\" (a Redshift light graph) is not translated; the light renders with its own settings.",
+					op->GetName(), material->GetName())) iferr_return;
+				break;
+			}
+		}
+		// A dome light's own list is Redshift's too (measured: it keeps the dome's light off an object, or onto
+		// the objects it includes); Blender's world has no light linking.
+		if (GetIntParameter(op, REDSHIFT_LIGHT_TYPE, 0) == REDSHIFT_LIGHT_TYPE_DOME)
+		{
+			const cinema::GeData data = GetParameterData(op, REDSHIFT_LIGHT_EXCLUSION_LIST);
+			const cinema::InExcludeData* const list = data.GetCustomDataType<cinema::InExcludeData>();
+			const maxon::Bool includes = GetIntParameter(op, REDSHIFT_LIGHT_EXCLUSION_MODE, REDSHIFT_LIGHT_EXCLUSION_MODE_EXCLUDE) == REDSHIFT_LIGHT_EXCLUSION_MODE_INCLUDE;
+			if (includes || (list && list->GetObjectCount() > 0))
+			{
+				_notes.Append(FormatString("Light \"@\": the include or exclude list of a Redshift dome light is not translated; the dome lights every object.", op->GetName())) iferr_return;
+			}
+		}
+	}
+	else if (type == Orssky)
+	{
+		_notes.Append(FormatString("Sun & Sky \"@\": Redshift's Sun & Sky is not translated; its sky neither lights the scene nor is seen (a Redshift sun light is translated as a plain infinite light).",
+			op->GetName())) iferr_return;
+	}
+	else if (type == Orsvolume && !HoldsVolume(op->GetCache()))
+	{
+		_notes.Append(FormatString("Volume \"@\": Redshift's Volume object is not translated; it renders nothing.", op->GetName())) iferr_return;
+	}
+	else if (type == Oenvironment && GetBoolParameter(op, ENVIRONMENT_FOGENABLE, false))
+	{
+		_notes.Append(FormatString("Environment \"@\": its fog is not translated (in Cycles a Cycles Environment's World Fog or a Cycles Fog object gives fog).",
+			op->GetName())) iferr_return;
+	}
+	// Redshift displaces an object whose Redshift Object tag says so (the Displacement node of its material is named by
+	// the material's translation).
+	if (const cinema::BaseTag* const rsObject = op->GetTag(REDSHIFT_OBJECT_TAG))
+	{
+		if (GetIntParameter(rsObject, REDSHIFT_OBJECT_DISPLACEMENT_MODE, 0) == REDSHIFT_OBJECT_DISPLACEMENT_MODE_ON)
+		{
+			_notes.Append(FormatString("Object \"@\": the displacement of its Redshift Object tag is not translated; the object is not displaced.", op->GetName())) iferr_return;
+		}
+	}
+	return maxon::OK;
+}
+
+maxon::Bool SceneExporter::GetDisplayColor(const cinema::BaseObject* op, const cinema::BaseObject* owner, cinema::Vector& color) const
+{
+	// Measured with the Standard renderer and Redshift 2027.0.0 alike (internal/f13/probe_batch1.py and probe_batch1b.py,
+	// "display"): an object without a material renders in its display colour in the modes Automatic and Always, in its
+	// layer's colour in the mode Layer (its own colour without a layer), and in the grey of the default material with the
+	// display colour off; a generator's colour colours what it makes. The mesh first, then up through its cache and the
+	// generator that made it, to the object of the document.
+	maxon::Int guard = 0;
+	for (const cinema::BaseObject* at = op; at && guard++ < 4096; )
+	{
+		const maxon::Int32 mode = GetIntParameter(at, ID_BASEOBJECT_USECOLOR, ID_BASEOBJECT_USECOLOR_OFF);
+		if (mode == ID_BASEOBJECT_USECOLOR_AUTOMATIC || mode == ID_BASEOBJECT_USECOLOR_ALWAYS || mode == ID_BASEOBJECT_USECOLOR_LAYER)
+		{
+			const cinema::LayerData* const layer = mode == ID_BASEOBJECT_USECOLOR_LAYER ? at->GetLayerData(_doc) : nullptr;
+			color = layer ? layer->color : GetVectorParameter(at, ID_BASEOBJECT_COLOR, cinema::Vector(1.0));
+			return true;
+		}
+		if (at == owner)
+			break;
+		const cinema::BaseObject* const up = at->GetUp();
+		at = up ? up : at->GetCacheParent();
+	}
+	return false;
 }
 
 maxon::Result<void> SceneExporter::AddMeshLeaf(cinema::BaseObject* object, const cinema::Matrix& mg, const Inherited& inherited, const maxon::String& path,
@@ -795,6 +914,10 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 	const maxon::Bool consumed = !instanceRoot && !inherited.sphereCache && op->GetBit(BIT_CONTROLOBJECT);
 	const maxon::Bool renders = inherited.visible && layerVisible && !consumed;
 	const maxon::Int32 type = op->GetType();
+	if (inherited.visible && layerVisible && !passing)
+	{
+		NoteUntranslated(op, inherited, renders) iferr_return;
+	}
 	// What an Instance object shows, in any of its modes, also follows the objects below the one it
 	// refers to (GetReferenceRoots).
 	if (_settings.noteFollowed && type == Oinstance && !passing)
@@ -999,22 +1122,12 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			_leaves.Append(std::move(leaf)) iferr_return;
 		}
 	}
-	else if (type == Osky)
+	else if (type == Osky || type == Obackground)
 	{
+		// (Cinema 4D's Background object since 0.3.0, F13 W31: what the camera sees, behind every other environment.)
 		if (renders)
 		{
-			WorldSource source;
-			source.kind = WORLDPART::SKY;
-			source.roles.camera = source.roles.lighting = true;
-			source.object = op;
-			source.mg = mg;
-			source.material = GetStackMaterial(inherited.stack);
-			source.owner = inherited.ownerObject;
-			_worlds.Append(std::move(source)) iferr_return;
-		}
-		if (renders)
-		{
-			NoteFixed(inherited.ownerObject) iferr_return;
+			AddWorldSource(type == Osky ? WORLDPART::SKY : WORLDPART::BACKGROUND, op, mg, inherited) iferr_return;
 		}
 	}
 	else if (type == Oinstance && GetIntParameter(op, INSTANCEOBJECT_RENDERINSTANCE_MODE, INSTANCEOBJECT_RENDERINSTANCE_MODE_NONE) != INSTANCEOBJECT_RENDERINSTANCE_MODE_NONE)
@@ -1398,7 +1511,18 @@ maxon::Result<void> SceneExporter::Resolve(const Leaf& leaf, WriteState& state, 
 			layer.mapping = TextureMapping::Read(entry.tag);
 			layers.Append(layer) iferr_return;
 		}
-		const maxon::String materialId = state.materials.GetMaterialId(layers) iferr_return;
+		// Polygons without a material show the object's display colour where it has one (0.3.0, F13 W26).
+		cinema::Vector displayColor;
+		const maxon::Bool displayed = layers.IsEmpty() && GetDisplayColor(leaf.object, leaf.ownerObject, displayColor);
+		maxon::String materialId;
+		if (displayed)
+		{
+			materialId = state.materials.GetDisplayColorMaterialId(displayColor) iferr_return;
+		}
+		else
+		{
+			materialId = state.materials.GetMaterialId(layers) iferr_return;
+		}
 		resolved.materialIds.Append(materialId) iferr_return;
 		if (const maxon::BaseArray<maxon::String>* const reads = state.materials.GetReads(materialId))
 		{
@@ -1441,7 +1565,7 @@ maxon::Result<void> SceneExporter::NoteUnserved(SceneWriter& writer, const maxon
 		return maxon::OK;
 	_unserved.Append(name) iferr_return;
 	writer.Warn(FormatString("Object \"@\": its material reads the attribute \"@\", which the object does not have (no particle or clone data, "
-		"user data, vertex map or vertex colour of that name); it reads as 0 there, where Redshift uses the node's default. "
+		"user data, vertex map or vertex colour of that name); the node's default is used there, as in Redshift. "
 		"Other objects without it are not named.", object ? object->GetName() : maxon::String(), name));
 	return maxon::OK;
 }
@@ -1495,11 +1619,12 @@ maxon::Result<void> SceneExporter::JoinReads(SceneWriter& writer, const maxon::B
 	copies.announce = &joined.announce;
 	copies.elements = &elements;
 	copies.object = first.object;
-	copies.properties = LeafProperties(writer, first, joined, true) iferr_return;
+	copies.properties = LeafProperties(writer, first, joined, true, &elements) iferr_return;
 	return maxon::OK;
 }
 
-maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy)
+maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy,
+	const maxon::BaseArray<ElementRef>* copyElements)
 {
 	iferr_scope;
 	maxon::String text;
@@ -1507,28 +1632,47 @@ maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, 
 	{
 		text += (text.IsEmpty() ? "{"_s : ","_s) + JsonQuoted(name) + ":"_s + value;
 	};
+	// Where a Redshift user data node reads the name, that it is there (PresenceAttribute): the node's default where not.
+	const auto present = [&add, &resolved](const maxon::String& name)
+	{
+		if (resolved.announce.Contains(name))
+			add(PresenceAttribute(name), "1"_s);
+	};
 	for (const maxon::String& name : resolved.reads)
 	{
-		// The keys of Redshift's random nodes (per copy in an instancer: its `floats`).
+		// The keys of Redshift's random nodes (per copy in an instancer: its `floats`); every object and copy has them.
 		if (name == maxon::String(OBJECT_NAME_KEY))
 		{
 			if (!perCopy)
 				add(name, NumberText(leaf.nameKey));
+			present(name);
 			continue;
 		}
 		if (name == maxon::String(OBJECT_ID_KEY))
 		{
 			if (!perCopy)
 				add(name, FormatString("@", leaf.objectId));
+			present(name);
 			continue;
 		}
 		// What is known per particle and per clone (per copy in an instancer: its `attributes`).
 		const ELEMENT which = FindElementAttribute(name);
 		if (which != ELEMENT::COUNT)
 		{
-			if (perCopy)
-				continue;
 			maxon::Float32 numbers[4];
+			if (perCopy)
+			{
+				// (The copies of one instancer are of one kind: they all have it or none, WriteInstancer.)
+				for (maxon::Int i = 0; copyElements && i < copyElements->GetCount(); ++i)
+				{
+					if (_elements.Read((*copyElements)[i], which, numbers))
+					{
+						present(name);
+						break;
+					}
+				}
+				continue;
+			}
 			if (_elements.Read(leaf.element, which, numbers))
 			{
 				const maxon::Int size = ELEMENT_ATTRIBUTES[maxon::Int(which)].size;
@@ -1536,6 +1680,7 @@ maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, 
 				for (maxon::Int i = 0; i < size; ++i)
 					value += (i ? ","_s : maxon::String()) + NumberText(maxon::Float64(numbers[i]));
 				add(name, size > 1 ? value + "]"_s : value);
+				present(name);
 			}
 			else if (resolved.announce.Contains(name))
 			{
@@ -1557,6 +1702,7 @@ maxon::Result<maxon::String> SceneExporter::LeafProperties(SceneWriter& writer, 
 				add(name, whole ? FormatString("@", maxon::Int64(values[0])) : NumberText(values[0]));
 			else
 				add(name, "["_s + NumberText(values[0]) + ","_s + NumberText(values[1]) + ","_s + NumberText(values[2]) + "]"_s);
+			present(name);
 		}
 		else if (resolved.announce.Contains(name) && !HasVertexData(leaf.object, name))
 		{
@@ -1703,38 +1849,73 @@ maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, con
 {
 	iferr_scope;
 
-	// The light's own list (the Cycles Light keeps it under ids of its own, with the modes the
-	// other way round). It counts for the light and its shadows alike, as Cinema 4D's own lists do.
-	const maxon::Bool own = light.object->GetType() == ID_LIGHT_OBJECT;
-	const cinema::GeData data = GetParameterData(light.object, own ? CYCLESLIGHT_LINKING_LIST : LIGHT_EXCLUSION_LIST);
+	// The light's own list (the Cycles Light keeps it under ids of its own, with the modes the other way round). Of
+	// Cinema 4D's lights and the Cycles Light a listed object counts for the light and its shadows alike, as Cinema
+	// 4D's own lists do, and for everything below it; an include list without an object lights everything. A Redshift
+	// light's list (0.3.0, F13 W5) has three switches per object, measured with Redshift 2027.0.0
+	// (docs/reference/c4d-sdk.md, "Light linking and shadow linking"): whether the light lights it, whether it casts
+	// the light's shadow, and whether the objects below it count too; an include list lights, and lets cast shadows,
+	// only what it names with those switches, nothing when it names nothing.
+	const maxon::Int32 lightType = light.object->GetType();
+	const maxon::Bool own = lightType == ID_LIGHT_OBJECT;
+	const maxon::Bool redshift = lightType == Orslight;
+	const cinema::GeData data = GetParameterData(light.object, own ? CYCLESLIGHT_LINKING_LIST : redshift ? maxon::Int32(REDSHIFT_LIGHT_EXCLUSION_LIST) : maxon::Int32(LIGHT_EXCLUSION_LIST));
 	const cinema::InExcludeData* const list = data.GetCustomDataType<cinema::InExcludeData>();
 	const maxon::Int32 count = list ? list->GetObjectCount() : 0;
-	maxon::BaseArray<const cinema::BaseList2D*> listed;
+	struct Listed
+	{
+		const cinema::BaseList2D* object;
+		maxon::Int32 flags;
+	};
+	static const maxon::Int32 ALL_FLAGS = REDSHIFT_LIST_ILLUMINATION | REDSHIFT_LIST_SHADOWS | REDSHIFT_LIST_HIERARCHY;
+	maxon::BaseArray<Listed> listed;
 	for (maxon::Int32 i = 0; i < count; ++i)
 	{
 		if (const cinema::BaseList2D* const entry = list->ObjectFromIndex(_doc, i))
 		{
-			listed.Append(entry) iferr_return;
+			listed.Append(Listed { entry, redshift ? list->GetFlags(i) : ALL_FLAGS }) iferr_return;
 		}
 	}
-	const maxon::Bool includes = own ? GetIntParameter(light.object, CYCLESLIGHT_LINKING_MODE, CYCLESLIGHT_LINKING_MODE_EXCLUDE) == CYCLESLIGHT_LINKING_MODE_INCLUDE
-		: GetIntParameter(light.object, LIGHT_EXCLUSION_MODE, LIGHT_EXCLUSION_MODE_EXCLUDE) == LIGHT_EXCLUSION_MODE_INCLUDE;
-	const maxon::Bool include = !listed.IsEmpty() && includes;
-	// A listed object stands for itself and everything below it.
+	maxon::Bool includes = false;
+	if (own)
+		includes = GetIntParameter(light.object, CYCLESLIGHT_LINKING_MODE, CYCLESLIGHT_LINKING_MODE_EXCLUDE) == CYCLESLIGHT_LINKING_MODE_INCLUDE;
+	else if (redshift)
+		includes = GetIntParameter(light.object, REDSHIFT_LIGHT_EXCLUSION_MODE, REDSHIFT_LIGHT_EXCLUSION_MODE_EXCLUDE) == REDSHIFT_LIGHT_EXCLUSION_MODE_INCLUDE;
+	else
+		includes = GetIntParameter(light.object, LIGHT_EXCLUSION_MODE, LIGHT_EXCLUSION_MODE_EXCLUDE) == LIGHT_EXCLUSION_MODE_INCLUDE;
+	const maxon::Bool include = includes && (redshift || !listed.IsEmpty());
+	// A listed object stands for itself, and with the switch for the objects below it (always outside Redshift) for those.
 	maxon::BaseArray<maxon::String> listedItems;
+	maxon::BaseArray<maxon::String> listedShadowItems;
 	for (maxon::Int index = 0; index < _leaves.GetCount() && !listed.IsEmpty(); ++index)
 	{
-		if (index >= itemIds.GetCount() || itemIds[index].IsEmpty() || listedItems.Contains(itemIds[index]))
+		if (index >= itemIds.GetCount() || itemIds[index].IsEmpty())
 			continue;
-		for (const cinema::BaseObject* op = _leaves[index].ownerObject; op; op = op->GetUp())
+		const cinema::BaseObject* const first = _leaves[index].ownerObject;
+		maxon::Bool lit = false;
+		maxon::Bool shadowing = false;
+		for (const cinema::BaseObject* op = first; op; op = op->GetUp())
 		{
-			if (listed.Contains(op))
+			for (const Listed& entry : listed)
 			{
-				listedItems.Append(itemIds[index]) iferr_return;
-				break;
+				if (entry.object != op || (op != first && !(entry.flags & REDSHIFT_LIST_HIERARCHY)))
+					continue;
+				lit = lit || (entry.flags & REDSHIFT_LIST_ILLUMINATION) != 0;
+				shadowing = shadowing || (entry.flags & REDSHIFT_LIST_SHADOWS) != 0;
 			}
 		}
+		if (lit && !listedItems.Contains(itemIds[index]))
+		{
+			listedItems.Append(itemIds[index]) iferr_return;
+		}
+		if (shadowing && !listedShadowItems.Contains(itemIds[index]))
+		{
+			listedShadowItems.Append(itemIds[index]) iferr_return;
+		}
 	}
+	// Blender lights everything with an include list that holds nothing (its depsgraph_light_linking.cc: no included
+	// set means all of them); a list holding the light itself, which shades nothing, lights nothing.
+	const maxon::String self = KeyId("light_", light.key);
 
 	// The objects whose Cycles Object tag keeps this light away, and those whose tag keeps its
 	// shadow away: the shadow list where a tag has one switched on ("Override Shadow Linking"), else
@@ -1762,15 +1943,25 @@ maxon::Result<maxon::Bool> SceneExporter::GetLightLinking(const Leaf& light, con
 			keptShadows.Append(itemId) iferr_return;
 		}
 	}
-	linking.lightLinked = !listed.IsEmpty() || !kept.IsEmpty();
+	linking.lightLinked = !listed.IsEmpty() || !kept.IsEmpty() || include;
 	CombineLinking(include, listedItems, kept, linking.include, linking.itemIds) iferr_return;
-	if (shadowTags)
+	if (linking.include && linking.itemIds.IsEmpty())
 	{
-		CombineLinking(include, listedItems, keptShadows, linking.shadowInclude, linking.shadowItemIds) iferr_return;
+		linking.itemIds.Append(self) iferr_return;
+	}
+	// A Redshift list whose shadow switches differ from its lighting ones has shadow lists of its own.
+	const maxon::Bool shadowListApart = redshift && !SameItems(listedItems, listedShadowItems);
+	if (shadowTags || shadowListApart)
+	{
+		CombineLinking(include, listedShadowItems, shadowTags ? keptShadows : kept, linking.shadowInclude, linking.shadowItemIds) iferr_return;
+		if (linking.shadowInclude && linking.shadowItemIds.IsEmpty())
+		{
+			linking.shadowItemIds.Append(self) iferr_return;
+		}
 		// Sent only when the shadows go another way than the light: a scene whose shadow lists change
 		// nothing sends what it sent before they existed. Without a list of lighting the light lights
 		// everything; its shadows then need a list of their own only when something is kept from them.
-		const maxon::Bool shadowsLinked = !listed.IsEmpty() || !keptShadows.IsEmpty();
+		const maxon::Bool shadowsLinked = !listed.IsEmpty() || !keptShadows.IsEmpty() || include;
 		const maxon::Bool same = linking.lightLinked ? (linking.shadowInclude == linking.include && SameItems(linking.shadowItemIds, linking.itemIds))
 			: !shadowsLinked;
 		linking.shadowsApart = !same;
@@ -2545,7 +2736,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			copies.elements = &elements;
 			copies.object = _leaves[group.leaves[0]].object;
 			// (User data is read from the first copy's object and what is above it: one value for the instancer.)
-			copies.properties = LeafProperties(writer, _leaves[group.leaves[0]], group.resolved, true) iferr_return;
+			copies.properties = LeafProperties(writer, _leaves[group.leaves[0]], group.resolved, true, &elements) iferr_return;
 		}
 		if (_settings.itemNames && _leaves[group.leaves[0]].object)
 			copies.name = _leaves[group.leaves[0]].object->GetName();
@@ -2614,6 +2805,14 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		const ImagerChain imager = ImagerChain::Read(_camera) iferr_return;
 		ExportImager(writer, imager, _colors, _settings.blenderVersion) iferr_return;
 	}
+	WriteWorld(writer, state) iferr_return;
+	return FinishWrite(writer, state);
+}
+
+// The `world` item, and what the IPR needs to know of it (_writtenWorld).
+maxon::Result<void> SceneExporter::WriteWorld(SceneWriter& writer, WriteState& state)
+{
+	iferr_scope;
 	// The world, per role (the maintainer's rules of 2026-11-23 and 24: "The top environment wins", per role):
 	// what the camera sees, what lights the scene and the world's fog each come from the highest Sky object,
 	// Redshift dome light or Cycles Environment in the Object Manager that renders and asks for that role.
@@ -2622,6 +2821,8 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	const WorldSource* used[3] = { nullptr, nullptr, nullptr };
 	for (const WorldSource& source : _worlds)
 	{
+		if (source.kind == WORLDPART::BACKGROUND)
+			continue;
 		const maxon::Bool wants[3] = { source.roles.camera, source.roles.lighting, source.roles.fog };
 		for (maxon::Int role = 0; role < 3; ++role)
 		{
@@ -2629,13 +2830,31 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 				used[role] = &source;
 		}
 	}
-	static const maxon::Char* const KIND_NAMES[] = { "", "Sky object", "Redshift dome light", "Cycles Environment" };
+	// A Background object is seen where no other environment is seen by the camera, wherever it is in the Object
+	// Manager (measured with the Standard renderer: a Sky above or below it covers it); of several, the highest.
+	const WorldSource* firstBackground = nullptr;
+	for (const WorldSource& source : _worlds)
+	{
+		if (source.kind == WORLDPART::BACKGROUND && !firstBackground)
+			firstBackground = &source;
+	}
+	if (!used[0])
+		used[0] = firstBackground;
+	static const maxon::Char* const KIND_NAMES[] = { "", "Sky object", "Redshift dome light", "Cycles Environment", "Background object" };
 	maxon::Bool alone = used[0] || used[1];
 	for (const WorldSource& source : _worlds)
 	{
 		const maxon::Bool isUsed = &source == used[0] || &source == used[1] || &source == used[2];
 		// One that asks for a role and fills none is named; one that asks for none is passed over silently.
-		if (!isUsed && (source.roles.camera || source.roles.lighting || source.roles.fog))
+		if (!isUsed && source.kind == WORLDPART::BACKGROUND)
+		{
+			writer.Warn(&source != firstBackground
+				? FormatString("Environment: the Background object \"@\" is not used: the Background object \"@\" above it in the Object Manager is.",
+					source.object->GetName(), firstBackground->object->GetName())
+				: FormatString("Environment: the Background object \"@\" is not seen: the @ \"@\" is what the camera sees, and covers it as a Sky object does in Cinema 4D.",
+					source.object->GetName(), maxon::String(KIND_NAMES[maxon::Int(used[0]->kind)]), used[0]->object->GetName()));
+		}
+		else if (!isUsed && (source.roles.camera || source.roles.lighting || source.roles.fog))
 		{
 			writer.Warn(FormatString("Environment: the @ \"@\" is not used: environments above it in the Object Manager fill each of its roles.",
 				maxon::String(KIND_NAMES[maxon::Int(source.kind)]), source.object->GetName()));
@@ -2668,7 +2887,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 	}
 	ExportWorldItem(state.materials, parts[0], parts[1], parts[2], _settings.worldColor, _settings.worldStrength, &_writtenWorld.images) iferr_return;
 	_writtenWorld.alone = alone;
-	return FinishWrite(writer, state);
+	return maxon::OK;
 }
 
 maxon::Result<void> SceneExporter::FinishWrite(SceneWriter& writer, WriteState& state)
@@ -2745,6 +2964,8 @@ maxon::Result<maxon::String> SceneExporter::GetListing() const
 			text += FormatString("sky \"@\" material=\"@\"\n", source.object->GetName(), source.material ? source.material->GetName() : maxon::String());
 		else if (source.kind == WORLDPART::DOME)
 			text += FormatString("dome \"@\"\n", source.object->GetName());
+		else if (source.kind == WORLDPART::BACKGROUND)
+			text += FormatString("background \"@\" material=\"@\"\n", source.object->GetName(), source.material ? source.material->GetName() : maxon::String());
 		else
 			text += FormatString("environment \"@\" type=@\n", source.object->GetName(), GetIntParameter(source.object, CYCLESENV_TYPE, 0));
 	}

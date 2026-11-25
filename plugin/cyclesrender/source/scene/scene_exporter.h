@@ -34,7 +34,7 @@ struct ExportSettings
 	maxon::Int32 blenderVersion = 0;
 	maxon::String blenderVersionText;
 	maxon::Float64 lightMultiplier = 1.0;              ///< applied to every light
-	cinema::Vector worldColor = cinema::Vector(0.05);  ///< environment when the scene has no Sky object
+	cinema::Vector worldColor = RENDER_SETTINGS_WORLD_COLOR;  ///< environment when the scene has no Sky object
 	maxon::Float64 worldStrength = 1.0;
 	maxon::Int32 bakeResolution = 1024;                ///< side of the texture a shader is baked into
 	maxon::Bool motionBlur = false;                    ///< final frames only; the caller samples the shutter (MotionSample)
@@ -541,11 +541,25 @@ private:
 	maxon::Result<maxon::Int> ExtendStack(maxon::Int parent, cinema::BaseObject* op);
 	/// The material that covers a whole object with this stack, or nullptr.
 	cinema::BaseMaterial* GetStackMaterial(maxon::Int stack) const;
+	/// Notes (as warnings) what @p op, an object that is seen (its render dot and layer; a generator carries the "used by
+	/// a generator" mark itself, so what it makes is what @p renders), holds that Cinema 4D's or Redshift's renderers would
+	/// render and the export does not translate (0.3.0, F13 W0): a Redshift light's material (a light graph) and a dome
+	/// light's list, the displacement of a Redshift Object tag, Redshift's Sun & Sky and Volume objects, the fog of
+	/// Cinema 4D's Environment object, a material on a volume that renders (@p inherited: its texture tags).
+	maxon::Result<void> NoteUntranslated(const cinema::BaseObject* op, const Inherited& inherited, maxon::Bool renders);
+	/// A Sky object (camera and light) or a Background object (camera only) as a candidate for the world (Write()), noted fixed.
+	maxon::Result<void> AddWorldSource(WORLDPART kind, cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited);
+	/// The display colour an object without a material renders in, for the mesh @p op of a leaf whose object in the
+	/// document is @p owner; false when it renders in the default grey (MaterialExporter::GetDisplayColorMaterialId).
+	maxon::Bool GetDisplayColor(const cinema::BaseObject* op, const cinema::BaseObject* owner, cinema::Vector& color) const;
 
 	class WriteState;
 	/// What a whole Write() does last, once every material and the world are written: the `empty` items of the
 	/// objects their nodes name (GetNamedObjects), and with ExportSettings::noteFollowed the material ids.
 	maxon::Result<void> FinishWrite(SceneWriter& writer, WriteState& state);
+	/// What a whole Write() writes after the lights, volumes and camera: the `world` item from the environments the walk
+	/// found, by roles (_worlds; the highest per role, a Background object behind the rest), naming the ones not used.
+	maxon::Result<void> WriteWorld(SceneWriter& writer, WriteState& state);
 	maxon::Result<void> Resolve(const Leaf& leaf, WriteState& state, Resolved& resolved);
 	/// Everything the mesh items of @p leaf are made from (ExportSettings::reuse), as one hash.
 	/// @param[in] count  Count the leaf in the statistics (false for the second reading after its export).
@@ -586,8 +600,11 @@ private:
 	/// (@p reads) those that are one value for the whole object. With @p perCopy false (an `object`) these
 	/// are the object keys, the numbers of the clone it is, and user data of that name on the object or
 	/// above it; with true (an `instancer`, whose keys and clone numbers go per copy) the user data alone.
+	/// For each of them a Redshift user data node reads, the presence flag (PresenceAttribute), also for what an
+	/// instancer sends per copy where its copies (@p copyElements, the particle or clone of each) have it.
 	/// Empty when there are none. A name nothing serves is noted once (NoteUnserved).
-	maxon::Result<maxon::String> LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy);
+	maxon::Result<maxon::String> LeafProperties(SceneWriter& writer, const Leaf& leaf, const Resolved& resolved, maxon::Bool perCopy,
+		const maxon::BaseArray<ElementRef>* copyElements = nullptr);
 	/// Says in the console which of the attributes a particle group's material reads (@p reads, or nullptr) particles do
 	/// not have: a clone's, or the user's own (a point cloud carries no object properties).
 	maxon::Result<void> NoteParticleReads(SceneWriter& writer, const maxon::BaseArray<maxon::String>* reads, const MaterialExporter& materials,
