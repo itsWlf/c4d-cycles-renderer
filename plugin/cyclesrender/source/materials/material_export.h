@@ -54,6 +54,28 @@ struct TextureMapping
 	maxon::String GetKey() const;
 };
 
+//----------------------------------------------------------------------------------------
+/// The coordinates a texture tag's projection gives (ProjectTextureTag), before its offset and length.
+//----------------------------------------------------------------------------------------
+struct ProjectedUv
+{
+	NodeOutput uv;                ///< Blender's UV convention (V up); invalid for UVW: the mesh's UV map
+	maxon::Bool box = false;      ///< cubic: @p uv is a point for Blender's box projection of images (Image Texture "BOX")
+	maxon::Bool clip = false;     ///< "Tile" off: nothing outside the one copy (Image Texture extension "CLIP")
+	maxon::String untranslated;   ///< what of the tag is not translated, in words for the console, or empty
+};
+
+/// The nodes for @p mapping's projection in @p graph: flat, cylindrical, spherical, cubic (measured against the
+/// Standard renderer, docs/reference/c4d-sdk.md, "Texture tags"); the other projections fall back to the UV map
+/// and say so in ProjectedUv::untranslated. Used by classic materials and by Redshift's (redshift_nodes.cpp). @p redshift:
+/// Redshift's spherical and cylindrical U, which runs the other way round (measured, 0.3.0 F13 W18: 0 at the tag's +X,
+/// growing towards +Z, where Cinema 4D's is 0.5 at +X and grows towards -Z).
+maxon::Result<ProjectedUv> ProjectTextureTag(NodeGraph& graph, const TextureMapping& mapping, cinema::BaseDocument* doc, maxon::Bool redshift = false);
+
+/// @p uv (Blender's convention; invalid: the mesh's UV map) moved by @p mapping's offset and length (tiles), as
+/// Cinema 4D's u' = (u - offset) / length with V running down. Returns @p uv itself when there is neither.
+maxon::Result<NodeOutput> TileTextureTag(NodeGraph& graph, const NodeOutput& uv, const TextureMapping& mapping);
+
 /// The Blender object properties (protocol: `properties` of an `object`, `floats` of an
 /// `instancer`) that hold the keys Redshift's random nodes vary by: a number in 0..1 from the
 /// object's path of names, and its Redshift Object ID (SceneExporter::Leaf::nameKey). A material
@@ -86,6 +108,17 @@ struct MaterialLayer
 /// (MaterialExporter::SetKnownIds; the IPR's update of single objects). The ids count up in
 /// the order materials are first asked for, so only the export that made them can name them.
 //----------------------------------------------------------------------------------------
+/// One of the document's lights as a shader that reads the lighting itself sees it (the Cel and Lumas shaders,
+/// shader_lighting.cpp): Cinema 4D's standard lights that are switched on, in Blender's axes and metres.
+struct ShadingLight
+{
+	maxon::Bool infinite = true;
+	cinema::Vector direction;                    ///< towards the light (an infinite light's)
+	cinema::Vector position;                     ///< the light's place (the others')
+	maxon::Float64 brightness = 1.0;             ///< with its photometric intensity
+	cinema::Vector color = cinema::Vector(1.0);  ///< in the render space
+};
+
 struct MaterialIdTable
 {
 	maxon::HashMap<maxon::String, maxon::String> ids;      ///< what a material item was made from -> its id
@@ -263,8 +296,19 @@ public:
 	void SetEevee(maxon::Bool eevee) { _eevee = eevee; }
 	maxon::Bool IsEevee() const { return _eevee; }
 	cinema::BaseDocument* GetDocument() const { return _doc; }
+	/// The document's lights as a shader that reads the lighting sees them (ShadingLight), read once per export.
+	maxon::Result<const maxon::BaseArray<ShadingLight>*> GetShadingLights();
 	/// The document's colour settings: every colour parameter goes through Input() on its way out.
 	const DocumentColors& GetColors() const { return _colors; }
+
+	//----------------------------------------------------------------------------------------
+	/// While a Redshift material is written (WriteLayers): the mapping of the texture tag it sits on, which its Texture
+	/// nodes and the nodes that read UV coordinates follow (0.3.0, F13 W18); the plain UVW mapping at any other time.
+	//----------------------------------------------------------------------------------------
+	const TextureMapping& GetCurrentMapping() const { return _currentMapping; }
+	/// That mapping's projection in @p graph (ProjectTextureTag), made on the first call while the material is written and
+	/// handed out again after; what of it is not translated is named once, for @p materialName.
+	maxon::Result<ProjectedUv> GetCurrentProjection(NodeGraph& graph, const maxon::String& materialName);
 
 private:
 	maxon::Result<void> WriteLayers(const maxon::BaseArray<MaterialLayer>& layers, const maxon::String& id);
@@ -288,6 +332,11 @@ private:
 	const MaterialIdTable* _known = nullptr;   ///< SetKnownIds()
 	maxon::Bool _unknown = false;
 	maxon::BaseArray<NamedObject> _namedObjects;               ///< UseObject()
+	maxon::BaseArray<ShadingLight> _shadingLights;             ///< GetShadingLights()
+	maxon::Bool _shadingLightsRead = false;
+	TextureMapping _currentMapping;                            ///< GetCurrentMapping()
+	ProjectedUv _currentProjection;                            ///< GetCurrentProjection(), once _projected
+	maxon::Bool _projected = false;
 };
 
 } // namespace cyclesrender

@@ -18,6 +18,7 @@
 #include "../lights/light_settings.h"
 #include "../lights/light_tag.h"
 #include "light_export.h"
+#include "light_falloff.h"
 #include "parameters.h"
 #include "redshift_ids.h"
 
@@ -663,7 +664,10 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 		return false;
 	}
 
-	const maxon::Float64 brightness = GetFloatParameter(light, LIGHT_BRIGHTNESS, 1.0) * multiplier;
+	// Photometric intensity multiplies the brightness (light_falloff.h); the Light Multiplier is the plugin's.
+	maxon::Bool photometric = false;
+	const maxon::Float64 lit = GetFloatParameter(light, LIGHT_BRIGHTNESS, 1.0) * PhotometricFactor(light, photometric, writer);
+	const maxon::Float64 brightness = lit * multiplier;
 	if (brightness <= 0.0)
 		return false;
 	out.color = colors.Input(GetVectorParameter(light, LIGHT_COLOR, cinema::Vector(1.0)));
@@ -674,8 +678,8 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 	// light's size; an area light keeps its own size whatever the type.
 	out.useShadow = true;
 
-	// The distance, in metres, at which the Blender light is as bright as the Cinema 4D light.
-	const maxon::Float64 reference = maxon::Max(coords.Length(GetFloatParameter(light, LIGHT_DETAILS_OUTERDISTANCE, 500.0)), 1e-4);
+	// The light's Radius/Decay in metres: where a soft shadow map's softness is matched.
+	const maxon::Float64 radius = maxon::Max(coords.Length(GetFloatParameter(light, LIGHT_DETAILS_OUTERDISTANCE, 500.0)), 1e-4);
 
 	const maxon::Int32 type = GetIntParameter(light, LIGHT_TYPE, LIGHT_TYPE_OMNI);
 	BLENDERLIGHT kind = BLENDERLIGHT::POINT;
@@ -715,20 +719,24 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 	if (sphere)
 		kind = BLENDERLIGHT::POINT;
 
+	// The distance, in metres, at which the Blender light is as bright as the Cinema 4D light, and the
+	// falloff that makes it so elsewhere (light_falloff.h).
+	const maxon::Float64 reference = ReadStandardFalloff(light, coords, kind == BLENDERLIGHT::SUN, photometric, lit, out.color, out, writer);
+
 	out.type = kind;
 	switch (kind)
 	{
 		case BLENDERLIGHT::SUN:
 			out.energy = brightness * SUN_STRENGTH;
 			out.angle = 0.0;
-			ApplyShadowSoftness(light, coords, reference, out, writer);
+			ApplyShadowSoftness(light, coords, radius, out, writer);
 			break;
 		case BLENDERLIGHT::POINT:
 			out.energy = brightness * POINT_POWER * reference * reference;
 			out.radius = sphere ? sizeX * 0.5 : 0.0;
 			// A sphere-shaped area light has a size of its own, which wins over the shadow type.
 			if (!sphere)
-				ApplyShadowSoftness(light, coords, reference, out, writer);
+				ApplyShadowSoftness(light, coords, radius, out, writer);
 			break;
 		case BLENDERLIGHT::SPOT:
 		{
@@ -738,7 +746,7 @@ static maxon::Bool TranslateStandardLight(const cinema::BaseObject* light, const
 			out.radius = 0.0;
 			out.spotSize = outer;
 			out.spotBlend = SpotBlend(inner, outer);
-			ApplyShadowSoftness(light, coords, reference, out, writer);
+			ApplyShadowSoftness(light, coords, radius, out, writer);
 			break;
 		}
 		case BLENDERLIGHT::AREA:
@@ -853,6 +861,13 @@ static void WriteLight(SceneWriter& writer, const Coords& coords, const cinema::
 			break;
 		}
 	}
+	// A translated falloff: its light node tree for Cycles, or Eevee's custom distance (light_falloff.h).
+	WriteFalloffTree(json, light);
+	if (!light.eeveeSettings && light.eeveeCutoff > 0.0 && light.type != BLENDERLIGHT::SUN)
+	{
+		json.Bool("use_custom_distance", true);
+		json.Float("cutoff_distance", light.eeveeCutoff);
+	}
 	if (light.blenderSettings)
 	{
 		json.Float("exposure", light.exposure);
@@ -917,7 +932,7 @@ static void NoteCameraVisibility(SceneWriter& writer, const cinema::BaseObject* 
 // its other side (BackLightId).
 static maxon::Bool WriteTranslatedLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights,
-	maxon::Bool& written)
+	maxon::Bool eevee, maxon::Bool& written)
 {
 	// The green check in the Object Manager. The walk leaves such a light out already; this keeps a
 	// light written alone (the IPR during a drag, SceneExporter::WriteLightAlone) in step with it.
@@ -973,6 +988,9 @@ static maxon::Bool WriteTranslatedLight(SceneWriter& writer, const Coords& coord
 		if (GetBoolParameter(tag, CYCLESLIGHTTAG_EEVEE_ENABLE, false))
 			ReadEeveeSettings(tag, coords, values);
 	}
+	// Eevee has no light node trees: a standard light's falloff becomes its power and a custom distance.
+	if (eevee)
+		FalloffForEevee(light, values, writer);
 	NoteCameraVisibility(writer, light, values, eeveeHidesLights);
 	WriteLight(writer, coords, mg, id, values, linking);
 	if (values.twoSided && values.type == BLENDERLIGHT::AREA)
@@ -988,10 +1006,11 @@ static maxon::Bool WriteTranslatedLight(SceneWriter& writer, const Coords& coord
 }
 
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
-	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights)
+	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking, maxon::Bool eeveeHidesLights,
+	maxon::Bool eevee)
 {
 	maxon::Bool back = false;
-	const maxon::Bool written = WriteTranslatedLight(writer, coords, colors, light, mg, id, multiplier, linking, eeveeHidesLights, back);
+	const maxon::Bool written = WriteTranslatedLight(writer, coords, colors, light, mg, id, multiplier, linking, eeveeHidesLights, eevee, back);
 	// A light written alone (the IPR during a drag) that no longer shines to both sides, or not at
 	// all, takes its other side out of Blender's scene; a whole export leaves it out by itself.
 	if (!back)

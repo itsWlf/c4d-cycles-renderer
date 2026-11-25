@@ -249,6 +249,8 @@ class Bridge:
             # Blender converts the colours of linked files when it links them, not when the space changes.
             from .scene import proxies
             proxies.relink_all(self.scene)
+        # The passes the compositor's tree reads stay on whatever the settings say (scene/compositor.py).
+        compositor.after_settings(self.scene)
         # A property set from Python notifies nobody; the tag makes a live viewport pick it up.
         bpy.context.scene.update_tag()
         self._scene_changed()

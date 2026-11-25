@@ -286,6 +286,11 @@ static maxon::String LayerLine(const cinema::BaseContainer& data, maxon::Int32 l
 		const ImagerEffect* const effect = GetImagerLayerEffect(data, layer);
 		line = effect ? maxon::String(effect->label) : data.GetString(ImagerLayerId(layer, IMAGERLAYER_EFFECT));
 	}
+	const maxon::Int32 engine = data.GetInt32(ImagerLayerId(layer, IMAGERLAYER_ENGINE), IMAGERLAYER_ENGINE_BOTH);
+	if (engine == IMAGERLAYER_ENGINE_CYCLES)
+		line += " (Cycles)"_s;
+	else if (engine == IMAGERLAYER_ENGINE_EEVEE)
+		line += " (Eevee)"_s;
 	if (!data.GetBool(ImagerLayerId(layer, IMAGERLAYER_ENABLED), true))
 		line += " (off)"_s;
 	return line;
@@ -397,6 +402,23 @@ static maxon::Bool AddLayerDescription(const cinema::BaseContainer& data, cinema
 	bc.SetFloat(cinema::DESC_DEFAULT, 1.0);
 	bc.SetInt32(cinema::DESC_CUSTOMGUI, CUSTOMGUI_REALSLIDER);
 	if (!description->SetParameter(ParameterId(ImagerLayerId(layer, IMAGERLAYER_OPACITY), cinema::DTYPE_REAL), bc, group))
+		return false;
+
+	// Which of Blender's engines the layer applies in (the maintainer, 2026-11-25: "an option per filter to have
+	// it only apply in Cycles or Eevee"); a layer for the other engine is left out of the tree.
+	bc = cinema::GetCustomDataTypeDefault(cinema::DTYPE_LONG);
+	bc.SetString(cinema::DESC_NAME, "Engine"_s);
+	bc.SetString(cinema::DESC_SHORT_NAME, "Engine"_s);
+	bc.SetInt32(cinema::DESC_DEFAULT, IMAGERLAYER_ENGINE_BOTH);
+	bc.SetInt32(cinema::DESC_ANIMATE, cinema::DESC_ANIMATE_OFF);
+	{
+		cinema::BaseContainer cycle;
+		cycle.SetString(IMAGERLAYER_ENGINE_BOTH, "Both"_s);
+		cycle.SetString(IMAGERLAYER_ENGINE_CYCLES, "Cycles"_s);
+		cycle.SetString(IMAGERLAYER_ENGINE_EEVEE, "Eevee"_s);
+		bc.SetContainer(cinema::DESC_CYCLE, cycle);
+	}
+	if (!description->SetParameter(ParameterId(ImagerLayerId(layer, IMAGERLAYER_ENGINE), cinema::DTYPE_LONG), bc, group))
 		return false;
 	if (!effect)
 		return true;
@@ -719,7 +741,7 @@ void ImagerParameterWasSet(cinema::BaseList2D* tag, maxon::Int32 id)
 {
 	maxon::Int32 layer = 0, field = 0;
 	if (id == CYCLESCAMERA_IMAGER_SELECTED || id == CYCLESCAMERA_IMAGER_LAYERS ||
-		(ImagerLayerOfId(id, layer, field) && (field == IMAGERLAYER_NAME || field == IMAGERLAYER_ENABLED)))
+		(ImagerLayerOfId(id, layer, field) && (field == IMAGERLAYER_NAME || field == IMAGERLAYER_ENABLED || field == IMAGERLAYER_ENGINE)))
 		tag->SetDirty(cinema::DIRTYFLAGS::DESCRIPTION);
 #if CYCLESRENDER_ITEM_TREE
 	// The list shows a layer's name, switch and opacity, and the selected layer: it follows the value at once.

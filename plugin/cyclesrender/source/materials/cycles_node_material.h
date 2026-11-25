@@ -14,6 +14,16 @@ namespace cyclesrender
 
 class MaterialExporter;
 
+//----------------------------------------------------------------------------------------
+/// The output a wire really comes from, in any node graph of Cinema 4D's (the Cycles and the Redshift node spaces).
+/// @p port is the output port wired into an input: a node's output, or a Wire Rerouter's output (then what is wired into
+/// the rerouter counts), or a group's own input port (for a node inside the group: then what is wired into that port from
+/// outside), or a group's own output port (for a node outside: then what is wired into it from inside), through any number
+/// of them. Invalid when the chain ends at a port nothing is wired into (a group's input that holds a value: the effective
+/// value of the input the wire ends in is then that value, measured in 0.3.0, F12).
+//----------------------------------------------------------------------------------------
+maxon::Result<maxon::GraphNode> ThroughBorders(maxon::GraphNode port);
+
 /// Blender's settings of the material itself (render method, displacement method, ...), read
 /// from the Material Output node: the name of each Blender property and its value as JSON text.
 struct CyclesMaterialSettings

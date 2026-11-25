@@ -294,6 +294,8 @@ maxon::Result<NodeOutput> RedshiftNodes::LookAlikes(const Source& source, const 
 		return Brick(source, colorData, what, depth);
 	if (name == "flakes"_s)
 		return Flakes(source, what);
+	if (name == "maxonnoise"_s)
+		return MaxonNoise(source, what, depth);
 
 	handled = false;
 	return NodeOutput();
@@ -388,8 +390,7 @@ maxon::Result<NodeOutput> RedshiftNodes::Brick(const Source& source, maxon::Bool
 	// The UV coordinates as Cinema 4D's: Redshift counts the rows from Cinema 4D's v = 0, which is
 	// Blender's v = 1 (the plugin sends v upside down, protocol `uvs`; measured: the first alternative
 	// row lies where Cinema 4D's v is 0).
-	const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-	const Term blenderUv = Term::Of(NodeOutput { coordinates, "UV"_s });
+	const Term blenderUv = MaterialUv() iferr_return;
 	const Term u = Component(blenderUv, 0) iferr_return;
 	const Term blenderV = Component(blenderUv, 1) iferr_return;
 	const Term v = Math("SUBTRACT", Term::Number(1.0), blenderV) iferr_return;
@@ -629,8 +630,8 @@ maxon::Result<RedshiftNodes::FlakeCells> RedshiftNodes::FlakeCellsOf(const maxon
 	Term at;
 	if (space == 2)
 	{
-		const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-		at = VMath("SCALE", Term::Of(NodeOutput { coordinates, "UV"_s }), Term::Number(100.0)) iferr_return;
+		const Term uv = MaterialUv() iferr_return;
+		at = VMath("SCALE", uv, Term::Number(100.0)) iferr_return;
 	}
 	else
 	{

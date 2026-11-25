@@ -4,6 +4,7 @@
 import bpy
 
 from .common import matrix_from
+from .materials import build_nodes
 
 # Optional fields that map one to one onto properties of the light datablock. Which ones a light
 # has depends on its type (spot_size only on a spot, spread only on an area, ...).
@@ -33,7 +34,8 @@ def _set(scene, owner, name, value, what):
 
 
 def build_light(scene, item, blobs):
-    """A `light` item: a new light datablock and its object; the light linking follows in apply_links()."""
+    """A `light` item: a new light datablock and its object, with the node tree the item describes (its
+    `nodes` and `links`, as a material's); the light linking follows in apply_links()."""
     light = bpy.data.lights.new(item["id"], item.get("type", "POINT"))
     light.energy = item.get("energy", 1000.0)
     light.color = item.get("color", (1.0, 1.0, 1.0))
@@ -43,6 +45,11 @@ def build_light(scene, item, blobs):
     for name, value in item.get("cycles", {}).items():
         if name in _CYCLES:
             _set(scene, light.cycles, name, value, item["id"])
+    if "nodes" in item:
+        # The light's node tree (Cycles evaluates it, Eevee does not): a new light has one already.
+        if light.node_tree is None:
+            light.use_nodes = True
+        build_nodes(scene, light.node_tree, item["nodes"], item.get("links", ()), item["id"])
     obj = scene.link(item["id"], light)
     obj.matrix_world = matrix_from(item)
     for name, value in item.get("visibility", {}).items():

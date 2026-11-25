@@ -120,11 +120,16 @@ static maxon::Result<maxon::Bool> IsReroute(const maxon::GraphNode& node)
 // keep their ids, and GetInnerNodes of the graph's root yields them too, with paths like "group/node";
 // docs/reference/c4d-sdk.md, "Node space"). Nothing of Blender's graph stands for it: its inner nodes are
 // written as if they stood in the graph, and the wires across its border are followed (ThroughBorders).
+// A group may hold no node at all and only pass its inputs to its outputs (measured in RS_Parity_Room, 0.3.0
+// F13 W19: five of seven groups there): a node without an asset id counts as a group too.
 static maxon::Result<maxon::Bool> IsGroup(const maxon::GraphNode& node)
 {
 	iferr_scope;
 	if (!node.IsValid())
 		return false;
+	const maxon::IdAndVersion asset = OptOrDefault(node.GetValue<decltype(maxon::nodes::AssetId)>()) iferr_return;
+	if (asset.Get<0>().IsEmpty() && node.GetKind() == maxon::NODE_KIND::NODE)
+		return true;
 	maxon::Bool holds = false;
 	node.GetChildren([&holds](const maxon::GraphNode&) -> maxon::Result<maxon::Bool>
 		{
@@ -140,7 +145,7 @@ static maxon::Result<maxon::Bool> IsGroup(const maxon::GraphNode& node)
 // - a group's own output port (for a node outside): then what is wired into that port from inside;
 // through any number of them. Invalid when the chain ends at a port nothing is wired into (a group's input
 // that holds a value: the inner input's effective value is then that value, measured).
-static maxon::Result<maxon::GraphNode> ThroughBorders(maxon::GraphNode port)
+maxon::Result<maxon::GraphNode> ThroughBorders(maxon::GraphNode port)
 {
 	iferr_scope;
 	for (maxon::Int guard = 0; port.IsValid() && guard < 1024; ++guard)

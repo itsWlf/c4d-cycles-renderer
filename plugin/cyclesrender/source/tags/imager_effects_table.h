@@ -39,6 +39,16 @@ static const ImagerSetting CHROMATICABERRATION_SETTINGS[] =
 	{ "Socket_7", 1007, "Fit", 'b', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "Scale the image such that it fits entirely in the frame, leaving no empty spaces at the corners", 500 },
 };
 
+static const ImagerSetting EDGES_SETTINGS[] =
+{
+	{ "Source", 53064, "Source", 'm', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "Depth and Normal\nDepth\nNormal\nPicture", "500,500,500,500", 0, "What the lines follow: a change of distance (outlines), of the surface's direction (creases), both, or of the picture's brightness. The IPR with Cycles always follows the picture", 500 },
+	{ "Filter", 25591, "Filter", 'm', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "Sobel\nPrewitt\nKirsch\nLaplace", "500,500,500,500", 0, "Blender's edge filter that finds the changes", 500 },
+	{ "Threshold", 44504, "Threshold", 'f', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 100.0, 0.01, 0.0, 4.0, "", "", "", 0, "How large a change makes a line: 1 is a step of 10 % in distance, a crease of 30 degrees or a step of 25 % in brightness", 500 },
+	{ "Width", 48399, "Width", 'i', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, 0.0, 50.0, 1.0, 0.0, 10.0, "", "", "", 0, "Pixels the lines are widened by", 500 },
+	{ "Color", 54552, "Color", 'c', 'N', { 0.0, 0.0, 0.0, 1.0 }, 4, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "The lines' colour", 500 },
+	{ "Strength", 40336, "Strength", 'f', 'F', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "How much of the lines' colour covers the picture", 500 },
+};
+
 static const ImagerSetting COMPOSITORNODEEXPOSURE_SETTINGS[] =
 {
 	{ "Exposure", 11040, "Exposure", 'f', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -32.0, 32.0, 0.01, -10.0, 10.0, "", "", "", 0, "", 500 },
@@ -59,6 +69,49 @@ static const ImagerSetting FILMGRAIN_SETTINGS[] =
 	{ "Socket_55", 1055, "Saturation", 'f', 'F', { 0.5, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "Custom Controls", "", "", 0, "Noise colorfulness", 502 },
 	{ "Socket_65", 1065, "Luma bias", 'f', 'F', { 0.5, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "Custom Controls", "", "", 0, "", 502 },
 	{ "Socket_73", 1073, "Texture Scale", 'f', 'F', { 0.5, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "Custom Controls", "", "", 0, "", 502 },
+};
+
+static const ImagerSetting COMPOSITORNODEGLARE_SETTINGS[] =
+{
+	{ "Type", 22061, "Type", 'm', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "Bloom\nGhosts\nStreaks\nFog Glow\nSimple Star\nSun Beams\nKernel", "500,500,500,500,500,500,500", 2, "", 500 },
+	{ "Quality", 56758, "Quality", 'm', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "High\nMedium\nLow", "500,500,500", 1, "", 500 },
+	{ "Highlights Threshold", 25175, "Threshold", 'f', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.1, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Highlights Smoothness", 46825, "Smoothness", 'f', 'F', { 0.10000000149011612, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Clamp Highlights", 48893, "Clamp", 'b', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Maximum Highlights", 33902, "Maximum", 'f', 'N', { 10.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.1, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Strength", 40336, "Strength", 'f', 'F', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Saturation", 48841, "Saturation", 'f', 'F', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Tint", 57676, "Tint", 'c', 'N', { 1.0, 1.0, 1.0, 1.0 }, 4, 0.0, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Size", 17388, "Size", 'f', 'F', { 0.5, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Streaks", 24096, "Streaks", 'i', 'N', { 4.0, 0.0, 0.0, 0.0 }, 0, -2147483648.0, 2147483647.0, 1.0, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Streaks Angle", 21315, "Streaks Angle", 'f', 'A', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.017453292519943295, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Iterations", 45789, "Iterations", 'i', 'N', { 3.0, 0.0, 0.0, 0.0 }, 0, -2147483648.0, 2147483647.0, 1.0, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Fade", 45587, "Fade", 'f', 'F', { 0.8999999761581421, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Color Modulation", 29950, "Color Modulation", 'f', 'F', { 0.25, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+	{ "Diagonal Star", 53854, "Diagonal", 'b', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Sun Position", 42688, "Sun Position", 'v', 'F', { 0.5, 0.5, 0.0, 0.0 }, 2, 0.0, 1.0, 0.01, 0.0, 0.0, "", "", "", 0, "", 500 },
+	{ "Jitter", 58515, "Jitter", 'f', 'F', { 0.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
+};
+
+static const ImagerSetting LENSGLARE_SETTINGS[] =
+{
+	{ "Type", 22061, "Type", 'm', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "Bloom\nGhosts\nStreaks\nFog Glow\nSimple Star", "500,500,500,500,500", 0, "The kind of glare, Blender's Glare node's", 500 },
+	{ "Threshold", 44504, "Threshold", 'f', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1000.0, 0.1, 0.0, 10.0, "", "", "", 0, "The brightness from which a pixel glares", 500 },
+	{ "Smoothness", 57600, "Smoothness", 'f', 'F', { 0.1, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "How softly pixels near the threshold glare", 500 },
+	{ "Size", 17388, "Size", 'f', 'F', { 0.5, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "The size of a bloom or fog glow relative to the picture: 1 covers it all", 500 },
+	{ "Intensity", 29322, "Intensity", 'f', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 20.0, 0.01, 0.0, 4.0, "", "", "", 0, "How much of the glare is added: 1 is the Glare node's own at full strength", 500 },
+	{ "Streaks", 24096, "Streaks", 'i', 'N', { 4.0, 0.0, 0.0, 0.0 }, 0, 1.0, 16.0, 1.0, 1.0, 16.0, "", "", "", 0, "The number of streaks", 500 },
+	{ "Streaks Angle", 21315, "Streaks Angle", 'f', 'A', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.017453292519943295, 0.0, 0.0, "", "", "", 0, "The angle of the first streak to the horizontal", 500 },
+	{ "Iterations", 45789, "Iterations", 'i', 'N', { 3.0, 0.0, 0.0, 0.0 }, 0, 2.0, 5.0, 1.0, 2.0, 5.0, "", "", "", 0, "The number of ghosts, or the reach of streaks", 500 },
+	{ "Fade", 45587, "Fade", 'f', 'F', { 0.9, 0.0, 0.0, 0.0 }, 0, 0.75, 1.0, 0.01, 0.75, 1.0, "", "", "", 0, "How slowly streaks fade out", 500 },
+	{ "Saturation", 48841, "Saturation", 'f', 'F', { 1.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "The saturation of the glare", 500 },
+	{ "Tint", 57676, "Tint", 'c', 'N', { 1.0, 1.0, 1.0, 1.0 }, 4, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "The glare's colour", 500 },
+};
+
+static const ImagerSetting LENSVIGNETTING_SETTINGS[] =
+{
+	{ "Strength", 40336, "Strength", 'f', 'N', { 4.0, 0.0, 0.0, 0.0 }, 0, 0.0, 1000.0, 0.1, 0.0, 20.0, "", "", "", 0, "The power of the cosine: 4 is a lens's natural darkening, 0 none", 500 },
+	{ "Field of View", 46953, "Field of View", 'f', 'A', { 0.9272952180016122, 0.0, 0.0, 0.0 }, 0, 0.017453292519943295, 3.12413936106985, 0.017453292519943295, 0.017453292519943295, 3.12413936106985, "", "", "", 0, "The camera's angle of view across the picture's longer side", 500 },
 };
 
 static const ImagerSetting SENSORNOISE_SETTINGS[] =
@@ -83,6 +136,13 @@ static const ImagerSetting SPLITTONING_SETTINGS[] =
 	{ "Socket_7", 1007, "Factor Shadows", 'f', 'F', { 0.20000000298023224, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "", 500 },
 	{ "Socket_2", 1002, "Balance", 'f', 'N', { 0.20000000298023224, 0.0, 0.0, 0.0 }, 0, 0.0, 10.0, 0.1, 0.0, 10.0, "Transition", "", "", 0, "How dominant highlights are compared to shadows", 500 },
 	{ "Socket_3", 1003, "Smoothness", 'f', 'F', { 0.4000000059604645, 0.0, 0.0, 0.0 }, 0, 0.0, 0.5, 0.01, 0.0, 0.5, "Transition", "", "", 0, "Controls transition between highlights and shadows", 500 },
+};
+
+static const ImagerSetting TONEMAPPING_SETTINGS[] =
+{
+	{ "Highlights", 23900, "Highlights", 'f', 'F', { 0.2, 0.0, 0.0, 0.0 }, 0, 0.0, 1.0, 0.01, 0.0, 1.0, "", "", "", 0, "How much of the highlights is kept: 0 compresses them fully (x / (1 + x)), 1 not at all", 500 },
+	{ "Desaturate Highlights", 51752, "Desaturate Highlights", 'b', 'N', { 1.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "Each channel compressed on its own (bright colours turn white); off, the colour's brightness is compressed and its hue kept", 500 },
+	{ "Saturation", 48841, "Saturation", 'f', 'N', { 0.0, 0.0, 0.0, 0.0 }, 0, -1.0, 1.0, 0.01, -1.0, 1.0, "", "", "", 0, "Moves every colour away from (or towards) its grey of the same brightness", 500 },
 };
 
 static const ImagerSetting TUNEIMAGE_SETTINGS[] =
@@ -112,18 +172,29 @@ static const ImagerSetting VIGNETTE_SETTINGS[] =
 	{ "Socket_7", 1007, "Angle", 'f', 'A', { 0.0, 0.0, 0.0, 0.0 }, 0, -1e+30, 1e+30, 0.017453292519943295, 0.0, 0.0, "Transform", "", "", 0, "Rotation of the area to be darkened", 500 },
 };
 
+static const ImagerSetting WHITEBALANCE_SETTINGS[] =
+{
+	{ "White Point", 40100, "White Point", 'c', 'N', { 1.0, 1.0, 1.0, 1.0 }, 4, -1e+30, 1e+30, 0.0, 0.0, 0.0, "", "", "", 0, "The colour that becomes white", 500 },
+};
+
 static const ImagerEffect IMAGER_EFFECTS[] =
 {
 	{ "Bloom", "Bloom", IMAGERLAYER_SOURCE_BLENDER, "", "Compositing-Camera & Lens Effects", "Socket_0", "Socket_1", BLOOM_SETTINGS, maxon::Int32(SIZEOF(BLOOM_SETTINGS) / SIZEOF(BLOOM_SETTINGS[0])), 503 },
 	{ "Chromatic Aberration", "Chromatic Aberration", IMAGERLAYER_SOURCE_BLENDER, "Simulates color fringing caused by lens chromatic aberration", "Compositing-Camera & Lens Effects", "Socket_1", "Socket_0", CHROMATICABERRATION_SETTINGS, maxon::Int32(SIZEOF(CHROMATICABERRATION_SETTINGS) / SIZEOF(CHROMATICABERRATION_SETTINGS[0])), 500 },
+	{ "Edges", "Edges", IMAGERLAYER_SOURCE_BUILT, "Lines where the depth, the normals or the picture change, in a colour over the picture", "Compositing-Filter", "Image", "Image", EDGES_SETTINGS, maxon::Int32(SIZEOF(EDGES_SETTINGS) / SIZEOF(EDGES_SETTINGS[0])), 500 },
 	{ "CompositorNodeExposure", "Exposure", IMAGERLAYER_SOURCE_NODE, "Adjust brightness using a camera exposure parameter", "Compositing-Color", "Image", "Image", COMPOSITORNODEEXPOSURE_SETTINGS, maxon::Int32(SIZEOF(COMPOSITORNODEEXPOSURE_SETTINGS) / SIZEOF(COMPOSITORNODEEXPOSURE_SETTINGS[0])), 500 },
 	{ "Film Grain", "Film Grain", IMAGERLAYER_SOURCE_BLENDER, "Simulates the noise and behavior of analog film", "Compositing-Camera & Lens Effects", "Socket_1", "Socket_0", FILMGRAIN_SETTINGS, maxon::Int32(SIZEOF(FILMGRAIN_SETTINGS) / SIZEOF(FILMGRAIN_SETTINGS[0])), 502 },
+	{ "CompositorNodeGlare", "Glare", IMAGERLAYER_SOURCE_NODE, "Add lens flares, fog and glows around bright parts of the image", "Compositing-Filter", "Image", "Image", COMPOSITORNODEGLARE_SETTINGS, maxon::Int32(SIZEOF(COMPOSITORNODEGLARE_SETTINGS) / SIZEOF(COMPOSITORNODEGLARE_SETTINGS[0])), 500 },
+	{ "Lens Glare", "Lens Glare", IMAGERLAYER_SOURCE_BUILT, "Blender's Glare node (bloom, ghosts, streaks and the rest) with an intensity that may exceed 1", "Compositing-Filter", "Image", "Image", LENSGLARE_SETTINGS, maxon::Int32(SIZEOF(LENSGLARE_SETTINGS) / SIZEOF(LENSGLARE_SETTINGS[0])), 500 },
+	{ "Lens Vignetting", "Lens Vignetting", IMAGERLAYER_SOURCE_BUILT, "Darkens the picture as a lens does, by the cosine of each pixel's angle to the camera's axis to a power, as Redshift's camera Vignetting", "Compositing-Camera & Lens Effects", "Image", "Image", LENSVIGNETTING_SETTINGS, maxon::Int32(SIZEOF(LENSVIGNETTING_SETTINGS) / SIZEOF(LENSVIGNETTING_SETTINGS[0])), 500 },
 	{ "Sensor Noise", "Sensor Noise", IMAGERLAYER_SOURCE_BLENDER, "Simulates the random pixel noise produced by a camera sensor.", "Compositing-Camera & Lens Effects", "Socket_1", "Socket_0", SENSORNOISE_SETTINGS, maxon::Int32(SIZEOF(SENSORNOISE_SETTINGS) / SIZEOF(SENSORNOISE_SETTINGS[0])), 500 },
 	{ "Sepia", "Sepia", IMAGERLAYER_SOURCE_BLENDER, "Applies a brown tint to mimic vintage photo tones.", "Compositing-Creative", "Socket_1", "Socket_3", SEPIA_SETTINGS, maxon::Int32(SIZEOF(SEPIA_SETTINGS) / SIZEOF(SEPIA_SETTINGS[0])), 500 },
 	{ "Split Toning", "Split Toning", IMAGERLAYER_SOURCE_BLENDER, "Tints highlights and shadows with separate colors.", "Compositing-Creative", "Socket_1", "Socket_0", SPLITTONING_SETTINGS, maxon::Int32(SIZEOF(SPLITTONING_SETTINGS) / SIZEOF(SPLITTONING_SETTINGS[0])), 500 },
+	{ "Tone Mapping", "Tone Mapping", IMAGERLAYER_SOURCE_BUILT, "Compresses the highlights as Redshift's camera does, then changes the saturation", "Compositing-Color", "Image", "Image", TONEMAPPING_SETTINGS, maxon::Int32(SIZEOF(TONEMAPPING_SETTINGS) / SIZEOF(TONEMAPPING_SETTINGS[0])), 500 },
 	{ "Tune Image", "Tune Image", IMAGERLAYER_SOURCE_BLENDER, "Enhances contrast, color, clarity, and sharpness.", "Compositing-Creative", "Socket_0", "Socket_11", TUNEIMAGE_SETTINGS, maxon::Int32(SIZEOF(TUNEIMAGE_SETTINGS) / SIZEOF(TUNEIMAGE_SETTINGS[0])), 500 },
 	{ "Unsharp Mask", "Unsharp Mask", IMAGERLAYER_SOURCE_BLENDER, "Sharpen an image by increasing contrast along edges.", "Compositing-Creative", "Socket_1", "Socket_0", UNSHARPMASK_SETTINGS, maxon::Int32(SIZEOF(UNSHARPMASK_SETTINGS) / SIZEOF(UNSHARPMASK_SETTINGS[0])), 500 },
 	{ "Vignette", "Vignette", IMAGERLAYER_SOURCE_BLENDER, "Darkens edges.", "Compositing-Camera & Lens Effects", "Socket_1", "Socket_0", VIGNETTE_SETTINGS, maxon::Int32(SIZEOF(VIGNETTE_SETTINGS) / SIZEOF(VIGNETTE_SETTINGS[0])), 500 },
+	{ "White Balance", "White Balance", IMAGERLAYER_SOURCE_BUILT, "Makes the colour given here white, keeping the brightness of grey, as Redshift's camera white point", "Compositing-Color", "Image", "Image", WHITEBALANCE_SETTINGS, maxon::Int32(SIZEOF(WHITEBALANCE_SETTINGS) / SIZEOF(WHITEBALANCE_SETTINGS[0])), 500 },
 };
 
 #endif // IMAGER_EFFECTS_TABLE_H__

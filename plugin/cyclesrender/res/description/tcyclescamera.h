@@ -106,11 +106,16 @@ enum
 			IMAGERLAYER_SOURCE_BLENDER = 0,        // a compositor node group of Blender's bundled asset library
 			IMAGERLAYER_SOURCE_FILE = 1,           // reserved: a node group of a .blend file (custom presets), named by IMAGERLAYER_FILE
 			IMAGERLAYER_SOURCE_NODE = 2,           // a plain compositor node, IMAGERLAYER_EFFECT its Blender type (0.3.0: "CompositorNodeExposure")
+			IMAGERLAYER_SOURCE_BUILT = 3,          // (0.3.0, F13) an effect the plugin builds of several of Blender's nodes, IMAGERLAYER_EFFECT its name in the table ("Edges")
 		IMAGERLAYER_NAME = 3,                    // text: the layer's name in the list
 		IMAGERLAYER_ENABLED = 4,                 // the layer's switch
 		IMAGERLAYER_OPACITY = 5,                 // 0 to 1: how much of the effect is mixed over what is below it
 		IMAGERLAYER_FILE = 6,                    // reserved: the .blend file of IMAGERLAYER_SOURCE_FILE
 		IMAGERLAYER_INFO = 7,                    // reserved: what a Blender said the group of a file takes (as the Cycles Proxy keeps its file's content)
+		IMAGERLAYER_ENGINE = 8,                  // (0.3.0, F13) which of Blender's engines the layer applies in; a layer without it (saved before) applies in both
+			IMAGERLAYER_ENGINE_BOTH = 0,
+			IMAGERLAYER_ENGINE_CYCLES = 1,
+			IMAGERLAYER_ENGINE_EEVEE = 2,
 		IMAGERLAYER_PANELS = 100,                // nothing stored: 100 to 199 are the groups of an effect's panels in the Attribute Manager
 		// From here on the effect's settings, each under the number the table gives it
 		// (tags/imager_effects_table.h, generated: 1000 + n for Blender's socket "Socket_<n>", 10000 and

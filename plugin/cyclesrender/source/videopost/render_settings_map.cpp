@@ -438,6 +438,24 @@ ExportSettings GetExportSettings(const cinema::BaseContainer& data, maxon::Int32
 	settings.height = height;
 	settings.depthOfField = GetValue(data, CYCLES_DEPTH_OF_FIELD) != 0.0;
 	settings.eevee = data.GetInt32(CYCLES_ENGINE, CYCLES_ENGINE_CYCLES) == CYCLES_ENGINE_EEVEE;
+	// Redshift's effects: the single switch, and below it one per effect (a scene saved with the single switch only
+	// reads each effect's default, on).
+	if (GetValue(data, CYCLES_REDSHIFT_EFFECTS) == 0.0)
+	{
+		settings.redshiftEffects = RedshiftTranslation::None();
+	}
+	else
+	{
+		RedshiftTranslation& which = settings.redshiftEffects;
+		which.exposure = GetValue(data, CYCLES_REDSHIFT_EXPOSURE) != 0.0;
+		which.whitePoint = GetValue(data, CYCLES_REDSHIFT_WHITE_POINT) != 0.0;
+		which.vignetting = GetValue(data, CYCLES_REDSHIFT_VIGNETTING) != 0.0;
+		which.toneMapping = GetValue(data, CYCLES_REDSHIFT_TONE_MAPPING) != 0.0;
+		which.bloom = GetValue(data, CYCLES_REDSHIFT_BLOOM) != 0.0;
+		which.streak = GetValue(data, CYCLES_REDSHIFT_STREAK) != 0.0;
+		which.flare = GetValue(data, CYCLES_REDSHIFT_FLARE) != 0.0;
+		which.colorControls = GetValue(data, CYCLES_REDSHIFT_COLOR_CONTROLS) != 0.0;
+	}
 	settings.lightMultiplier = GetValue(data, CYCLES_LIGHT_MULTIPLIER);
 	settings.worldColor = data.FindIndex(CYCLES_WORLD_COLOR) == NOTOK ? RENDER_SETTINGS_WORLD_COLOR : data.GetVector(CYCLES_WORLD_COLOR);
 	settings.worldStrength = GetValue(data, CYCLES_WORLD_STRENGTH);

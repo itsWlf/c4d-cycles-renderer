@@ -36,6 +36,21 @@ enum class BLENDERLIGHT
 	AREA
 } MAXON_ENUM_LIST(BLENDERLIGHT);
 
+/// How a translated standard light of Cinema 4D falls off with the distance d from it (its Details tab's
+/// "Falloff", 0.3.0, F13 W29; scene/light_falloff.h). PHYSICAL is Blender's own inverse square, with
+/// nothing added: every light that is not one of Cinema 4D's.
+enum class LIGHTFALLOFF
+{
+	PHYSICAL,
+	NONE,                    ///< B at every distance
+	STEP,                    ///< B up to the radius r, nothing beyond
+	LINEAR,                  ///< B up to the inner distance, then a straight ramp to nothing at r
+	INVERSE_SQUARE,          ///< B (r/d)^2 less 0.01 for the brightest channel, not below 0 ("Inverse Square (Physically Accurate)")
+	INVERSE_SQUARE_CLAMPED,  ///< B min(1, (r/d)^2) less the same, not below 0
+	INVERSE,                 ///< B r/d (by its name only: Cinema 4D 2027 offers it no more)
+	INVERSE_CLAMPED          ///< B min(1, r/d) (the same)
+} MAXON_ENUM_LIST(LIGHTFALLOFF);
+
 /// Blender's area shapes (`Light.shape`), in the order of the Cycles Light's dropdown.
 enum class BLENDERAREA
 {
@@ -71,6 +86,20 @@ struct BlenderLight
 	/// Area: the light shines to both sides (a Redshift area light's "Bi-Directional"). Blender's area
 	/// light shines to one, so a second item, BackLightId(), shines the other way.
 	maxon::Bool twoSided = false;
+
+	/// Cinema 4D's falloff of a translated standard light (scene/light_falloff.h). The energy makes the
+	/// light Cinema 4D's inverse square B (r/d)^2 matched at falloffRadius; Cycles gets a light node
+	/// tree that turns that into the falloff (the item's `nodes`), Eevee a power and a custom distance
+	/// that approximate it (FalloffForEevee).
+	LIGHTFALLOFF falloff = LIGHTFALLOFF::PHYSICAL;
+	maxon::Float64 falloffRadius = 1.0;          ///< metres: r, the distance the energy is matched at
+	maxon::Float64 falloffInner = 0.0;           ///< metres: where a linear ramp begins
+	/// 1/m^2: the inverse square's 0.01 as 0.01 / (B c r^2), with the light's brightness B (without the
+	/// Light Multiplier) and its colour's brightest channel c; zero for the other falloffs.
+	maxon::Float64 falloffCutoff = 0.0;
+	/// Metres, for Eevee only: Blender's custom distance (`use_custom_distance`, `cutoff_distance`)
+	/// that ends a translated falloff; 0 for none. Not sent when the Eevee settings are (eeveeSettings).
+	maxon::Float64 eeveeCutoff = 0.0;
 
 	/// Blender's Light panel beyond what a translated light has: exposure, normalize,
 	/// temperature and soft falloff (point, spot).
@@ -119,9 +148,11 @@ struct BlenderLight
 /// surface facing the light renders as 1.0, at any distance unless a falloff is set. Blender
 /// lights always fall off with the square of the distance, so a light is given the power
 /// that reproduces Cinema 4D's brightness at one reference distance: the light's
-/// "Radius/Decay" value (500 cm by default), whether its falloff is switched on or not.
-/// With "Inverse Square" falloff the two then agree at every distance. The constants are
-/// derived in docs/reference/c4d-sdk.md, section "Light conversion". A Redshift light
+/// "Radius/Decay" value (500 cm by default), or 1 m for an inverse square with photometric
+/// intensity. Its falloff (since 0.3.0, F13 W29) is BlenderLight::falloff, which the item
+/// turns into a light node tree for Cycles and an approximation for Eevee (scene/light_falloff.h);
+/// photometric intensity (candela, or lumen over the light's cone) multiplies the brightness.
+/// The constants are derived in docs/reference/c4d-sdk.md, section "Light conversion". A Redshift light
 /// (Orslight) is physical and converts exactly where Blender has the same light (measured with
 /// Redshift 2027.0.0, docs/reference/c4d-sdk.md, "Redshift lights"): infinite, point, spot and
 /// area lights (rectangle, disc or ellipse, sphere) in every intensity unit, with exposure,
@@ -185,11 +216,14 @@ const cinema::BaseVideoPost* FindRedshiftRenderer(const cinema::BaseDocument* do
 /// @param[in] eeveeHidesLights  The frame is rendered by an Eevee that shows no light to the camera
 ///                        (Blender 5.0 and 5.1, measured): a light whose Camera visibility is on
 ///                        is named in a warning.
+/// @param[in] eevee       The frame is rendered by Eevee, which has no light node trees: a standard
+///                        light's falloff is approximated by its power and a custom distance instead
+///                        (scene/light_falloff.h), and the console says so.
 /// @return  False when the light emits nothing or is switched off, and was skipped.
 //----------------------------------------------------------------------------------------
 maxon::Result<maxon::Bool> ExportLight(SceneWriter& writer, const Coords& coords, const DocumentColors& colors, const cinema::BaseObject* light,
 	const cinema::Matrix& mg, const maxon::String& id, maxon::Float64 multiplier, const LightLinking* linking = nullptr,
-	maxon::Bool eeveeHidesLights = false);
+	maxon::Bool eeveeHidesLights = false, maxon::Bool eevee = false);
 
 /// The first Blender whose Eevee shows a light to the camera when the light's Camera visibility is
 /// on, as BlenderVersionCode() (measured: 5.0.0 and 5.1.2 never, 5.2.3 and 5.3.0 as Cycles does).

@@ -17,6 +17,7 @@
 
 #include "../sdk_compat.h"
 #include "../scene/coords.h"
+#include "cycles_node_material.h"
 #include "material_export.h"
 #include "redshift_nodes.h"
 
@@ -225,6 +226,11 @@ maxon::Result<RedshiftNodes::Source> RedshiftNodes::Find(const maxon::GraphNode&
 			output = connection.first;
 			return false;
 		}) iferr_return;
+	if (!output.IsValid())
+		return source;
+	// Through Wire Rerouters and across the borders of groups (0.3.0, F13 W19; F12's mechanism for Cycles graphs). A wire
+	// that ends at a group's input holding a value brings nothing: the input it leads to has that value as its own.
+	output = ThroughBorders(output) iferr_return;
 	if (!output.IsValid())
 		return source;
 	source.node = output.GetAncestor(maxon::NODE_KIND::NODE) iferr_return;
@@ -721,62 +727,192 @@ maxon::Result<maxon::String> RedshiftNodes::FileImage(const maxon::GraphNode& no
 	return _exporter.GetFileImageId(path, colorData);
 }
 
+// A pair of numbers on a port of the Texture node (its scale and offset).
+static maxon::Vector2d PairValue(const maxon::GraphNode& port, const maxon::Vector2d& fallback)
+{
+	if (!port.IsValid())
+		return fallback;
+	ifnoerr (const maxon::Opt<const maxon::Vector2d&> value = port.GetEffectivePortValue<maxon::Vector2d>())
+	{
+		if (value)
+			return *value;
+	}
+	return fallback;
+}
+
+maxon::Result<RedshiftNodes::Term> RedshiftNodes::MaterialUv()
+{
+	iferr_scope;
+	const TextureMapping& mapping = _exporter.GetCurrentMapping();
+	NodeOutput uv;
+	if (!mapping.IsPlain())
+	{
+		const ProjectedUv projected = _exporter.GetCurrentProjection(_graph, _material->GetName()) iferr_return;
+		// A cubic projection gives a point for Blender's box projection of images, no UV pair: the UV map stands in.
+		if (!projected.box)
+		{
+			uv = TileTextureTag(_graph, projected.uv, mapping) iferr_return;
+			// Repeated: a Ramp shows as many copies as the tag has tiles (measured).
+			if (uv.IsValid() && mapping.tile)
+			{
+				const Term repeated = VMath("FRACTION", Term::Of(uv)) iferr_return;
+				uv = repeated.out;
+			}
+		}
+	}
+	if (!uv.IsValid())
+	{
+		const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
+		uv = NodeOutput { coordinates, "UV"_s };
+	}
+	return Term::Of(uv);
+}
+
 maxon::Result<NodeOutput> RedshiftNodes::TextureSampler(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, const Term* vector)
 {
 	iferr_scope;
-	const maxon::String image = FileImage(node, "texturesampler"_s, colorData, what, "Texture") iferr_return;
+	const maxon::GraphNode inputs = node.GetInputs() iferr_return;
+
+	// The file's colour space is the node's own, whatever input the node is plugged into (measured, 0.3.0, F13 W18:
+	// a grey of 128 renders 0.502 with "RAW" and 0.216 with "sRGB" or no space set, also into a Color Maker's numbers).
+	maxon::String space;
+	const maxon::GraphNode bundle = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.tex0")) iferr_return;
+	if (bundle.IsValid())
+	{
+		const maxon::GraphNode spacePort = bundle.FindChild(maxon::Id("colorspace")) iferr_return;
+		if (spacePort.IsValid())
+		{
+			ifnoerr (const maxon::Opt<const maxon::String&> text = spacePort.GetEffectivePortValue<maxon::String>())
+			{
+				if (text)
+					space = *text;
+			}
+		}
+	}
+	maxon::Bool asColor = colorData;
+	if (space == "RS_INPUT_COLORSPACE_RAW"_s)
+		asColor = false;
+	else if (space.IsEmpty() || space == "RS_INPUT_COLORSPACE_SRGB"_s)
+		asColor = true;
+	else
+		Warn(FormatString("the colour space \"@\" of a Texture node plugged into @ is not translated; the file is read as @.", space, maxon::String(what),
+			colorData ? "colours"_s : "data"_s));
+	const maxon::String image = FileImage(node, "texturesampler"_s, asColor, what, "Texture") iferr_return;
 	if (image.IsEmpty())
 		return NodeOutput();
-	const maxon::GraphNode inputs = node.GetInputs() iferr_return;
 	const maxon::Int texture = _graph.Add("ShaderNodeTexImage") iferr_return;
 	_graph.SetProperty(texture, "image", image);
 
-	// The texture's own tiling and offset, on its UV map or on the coordinates a projection gives.
+	// Where it is looked up (measured, F13 W18): the UV map, or the coordinates a projection node gives, or the texture tag's
+	// projection; then the node's own rotation about the middle (degrees, counter-clockwise with V up), offset (V up) and
+	// scale; then the texture tag's offset and length, as Cinema 4D's u' = (u - offset) / length.
 	const maxon::GraphNode scalePort = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.scale")) iferr_return;
 	const maxon::GraphNode offsetPort = inputs.FindChild(maxon::Id(RS_NODE "texturesampler.offset")) iferr_return;
-	maxon::Vector2d scale(1.0);
-	maxon::Vector2d offset(0.0);
-	if (scalePort.IsValid())
+	const maxon::Vector2d scale = PairValue(scalePort, maxon::Vector2d(1.0));
+	const maxon::Vector2d offset = PairValue(offsetPort, maxon::Vector2d(0.0));
+	const maxon::Float64 rotate = Setting(node, "rotate", 0.0, what, " Texture") iferr_return;
+	const TextureMapping& mapping = vector ? TextureMapping() : _exporter.GetCurrentMapping();
+	ProjectedUv projected;
+	if (!mapping.IsPlain())
 	{
-		ifnoerr (const maxon::Opt<const maxon::Vector2d&> value = scalePort.GetEffectivePortValue<maxon::Vector2d>())
-		{
-			if (value)
-				scale = *value;
-		}
+		projected = _exporter.GetCurrentProjection(_graph, _material->GetName()) iferr_return;
 	}
-	if (offsetPort.IsValid())
-	{
-		ifnoerr (const maxon::Opt<const maxon::Vector2d&> moved = offsetPort.GetEffectivePortValue<maxon::Vector2d>())
-		{
-			if (moved)
-				offset = *moved;
-		}
-	}
-	const maxon::Bool tiled = scale != maxon::Vector2d(1.0) || offset != maxon::Vector2d(0.0);
-	if (!tiled && !vector)
-		return NodeOutput { texture, "Color"_s };
 	Term coordinates;
+	maxon::Bool placed = false;
 	if (vector)
 	{
 		coordinates = *vector;
+		placed = true;
 	}
-	else
+	else if (projected.uv.IsValid())
 	{
-		const maxon::Int uv = _graph.Add("ShaderNodeTexCoord") iferr_return;
-		coordinates = Term::Of(NodeOutput { uv, "UV"_s });
+		coordinates = Term::Of(projected.uv);
+		placed = true;
 	}
-	if (tiled)
+	const maxon::Bool own = scale != maxon::Vector2d(1.0) || offset != maxon::Vector2d(0.0) || rotate != 0.0;
+	if (own && projected.box)
 	{
-		const maxon::Int mapping = _graph.Add("ShaderNodeMapping") iferr_return;
-		_graph.SetInput(mapping, "Scale", cinema::Vector(scale.x, scale.y, 1.0));
-		_graph.SetInput(mapping, "Location", cinema::Vector(offset.x, offset.y, 0.0));
-		Set(mapping, "Vector", coordinates, false) iferr_return;
-		coordinates = Term::Of(NodeOutput { mapping, "Vector"_s });
+		Warn(FormatString("the Texture node plugged into @ has a scale, offset or rotation of its own, which is not translated on a cubic projection.",
+			maxon::String(what)));
 	}
-	Set(texture, "Vector", coordinates, false) iferr_return;
-	return NodeOutput { texture, "Color"_s };
-}
+	else if (own)
+	{
+		if (!placed)
+		{
+			const maxon::Int uv = _graph.Add("ShaderNodeTexCoord") iferr_return;
+			coordinates = Term::Of(NodeOutput { uv, "UV"_s });
+			placed = true;
+		}
+		if (rotate != 0.0 || offset != maxon::Vector2d(0.0))
+		{
+			// Blender's Mapping node: R v + L, with L = c - R c + offset turning about the middle c of the UV square.
+			const maxon::Float64 angle = rotate * maxon::PI / 180.0;
+			const maxon::Float64 c = maxon::Cos(angle);
+			const maxon::Float64 s = maxon::Sin(angle);
+			const maxon::Int turn = _graph.Add("ShaderNodeMapping") iferr_return;
+			_graph.SetInput(turn, "Rotation", cinema::Vector(0.0, 0.0, angle));
+			_graph.SetInput(turn, "Location", cinema::Vector(0.5 - (0.5 * c - 0.5 * s) + offset.x, 0.5 - (0.5 * s + 0.5 * c) + offset.y, 0.0));
+			Set(turn, "Vector", coordinates, false) iferr_return;
+			coordinates = Term::Of(NodeOutput { turn, "Vector"_s });
+		}
+		if (scale != maxon::Vector2d(1.0))
+		{
+			coordinates = VMath("MULTIPLY", coordinates, Term::Of(cinema::Vector(scale.x, scale.y, 1.0))) iferr_return;
+		}
+	}
+	if (!vector && !projected.box && !mapping.IsPlain())
+	{
+		const NodeOutput at = placed ? coordinates.out : NodeOutput();
+		const NodeOutput tiled = TileTextureTag(_graph, at, mapping) iferr_return;
+		if (tiled.IsValid())
+		{
+			coordinates = Term::Of(tiled);
+			placed = true;
+		}
+	}
+	if (placed)
+	{
+		Set(texture, "Vector", coordinates, false) iferr_return;
+	}
+	if (projected.box)
+		_graph.SetProperty(texture, "projection", "BOX"_s);
+	if (projected.clip)
+		_graph.SetProperty(texture, "extension", "CLIP"_s);
+	const maxon::Float64 wrapU = Value(node, "wrapu", 1.0) iferr_return;
+	const maxon::Float64 wrapV = Value(node, "wrapv", 1.0) iferr_return;
+	const maxon::Float64 mirrorU = Value(node, "mirroru", 0.0) iferr_return;
+	const maxon::Float64 mirrorV = Value(node, "mirrorv", 0.0) iferr_return;
+	if (wrapU == 0.0 || wrapV == 0.0 || mirrorU != 0.0 || mirrorV != 0.0)
+		Warn(FormatString("the wrap and mirror settings of a Texture node plugged into @ are not translated; the texture repeats.", maxon::String(what)));
 
+	// Its colour adjustments (measured, F13 W18): colour × multiplier + offset; the custom gamma as a power of the colour
+	// (Redshift raises the file's decoded value before turning it into the render space: exact in a Basic document and for
+	// greys, approximate for colours in an OCIO document).
+	Term color = Term::Of(NodeOutput { texture, "Color"_s });
+	const maxon::Float64 gamma = Setting(node, "tex0_gamma", 1.0, what, " Texture") iferr_return;
+	if (gamma != 1.0 && gamma > 0.0)
+	{
+		const maxon::Int power = _graph.Add("ShaderNodeGamma") iferr_return;
+		_graph.SetInput(power, "Gamma", gamma);
+		Set(power, "Color", color, false) iferr_return;
+		color = Term::Of(NodeOutput { power, "Color"_s });
+	}
+	const cinema::Vector multiplier = VectorValue(node, "color_multiplier", cinema::Vector(1.0)) iferr_return;
+	const cinema::Vector added = VectorValue(node, "color_offset", cinema::Vector(0.0)) iferr_return;
+	const maxon::GraphNode multiplierPort = Port(node, "color_multiplier") iferr_return;
+	const maxon::GraphNode addedPort = Port(node, "color_offset") iferr_return;
+	const maxon::Bool multiplierWired = IsWired(multiplierPort) iferr_return;
+	const maxon::Bool addedWired = IsWired(addedPort) iferr_return;
+	if (multiplierWired || addedWired)
+		Warn(FormatString("the colour multiplier and offset of a Texture node plugged into @ are wired; only their values are translated.", maxon::String(what)));
+	if (multiplier != cinema::Vector(1.0) || added != cinema::Vector(0.0))
+	{
+		color = VMath("MULTIPLY_ADD", color, Term::Of(multiplier), Term::Of(added)) iferr_return;
+	}
+	if (color.IsConstant())
+		return Output(color, false);
+	return color.out;
+}
 
 //----------------------------------------------------------------------------------------
 // Terms: expressions of Blender nodes. A term is a constant or a node's output; operations on
@@ -1951,8 +2087,8 @@ maxon::Result<RedshiftNodes::Term> RedshiftNodes::RampPosition(const maxon::Grap
 	}
 	else
 	{
-		const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-		const Term uv = Term::Of(NodeOutput { coordinates, "UV"_s });
+		// The UV coordinates as the texture tag places them (measured, F13 W18: a Ramp repeats with the tag's tiles).
+		const Term uv = MaterialUv() iferr_return;
 		const Term u = Component(uv, 0) iferr_return;
 		const Term v = Component(uv, 1) iferr_return;
 		const maxon::Float64 mapping = Value(rs, "inputmapping", 0.0) iferr_return;

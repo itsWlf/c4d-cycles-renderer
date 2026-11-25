@@ -79,7 +79,149 @@ ONE_DEGREE = 0.017453292519943295
 PLAIN_NODES = {
     "CompositorNodeExposure": {"catalog": "Compositing-Color",
                                "settings": {"Exposure": {"min": -32.0, "max": 32.0, "slider": (-10.0, 10.0), "step": 0.01}}},
+    # The Glare node (0.3.0, F13): Bloom, Ghosts, Streaks and the rest, in every supported version with the same
+    # sockets (measured on 5.0 and 5.3). Its kernel inputs take a picture wired in, which a layer cannot give.
+    "CompositorNodeGlare": {"catalog": "Compositing-Filter", "exclude": ["Kernel Data Type", "Float Kernel", "Color Kernel"]},
 }
+
+# Nodes the table reads something of without offering them: the options of a menu a built effect takes over.
+HELPER_NODES = ["CompositorNodeFilter"]
+
+# Effects the plugin builds of several of Blender's nodes (scene/imager_built.cpp; the layer's source
+# IMAGERLAYER_SOURCE_BUILT). Their settings are the plugin's own and are written here: identifier, label, kind
+# (Blender's socket type, as the dump names them), default, limits, the slider and step where wanted, and for a
+# menu its options, or ("options_from": node type, socket identifier, the options taken) a menu of a node
+# above, so that an option a Blender lacks says so. Every node the builder uses must exist in every version
+# ("nodes", checked). The identifiers are stored in scene files (as numbers made from them): never rename one.
+BUILT_EFFECTS = {
+    "Edges": {
+        "label": "Edges", "catalog": "Compositing-Filter",
+        "description": "Lines where the depth, the normals or the picture change, in a colour over the picture",
+        "nodes": ["CompositorNodeFilter", "ShaderNodeMath", "ShaderNodeVectorMath", "ShaderNodeMapRange", "CompositorNodeDilateErode",
+                  "CompositorNodeRGBToBW", "ShaderNodeMix"],
+        "settings": [
+            {"identifier": "Source", "name": "Source", "kind": "NodeSocketMenu", "default": "Depth and Normal",
+             "options": ["Depth and Normal", "Depth", "Normal", "Picture"],
+             "description": "What the lines follow: a change of distance (outlines), of the surface's direction (creases), both, or of the "
+                            "picture's brightness. The IPR with Cycles always follows the picture"},
+            {"identifier": "Filter", "name": "Filter", "kind": "NodeSocketMenu", "default": "Sobel",
+             "options_from": ["CompositorNodeFilter", "Type", ["Sobel", "Prewitt", "Kirsch", "Laplace"]],
+             "description": "Blender's edge filter that finds the changes"},
+            {"identifier": "Threshold", "name": "Threshold", "kind": "NodeSocketFloat", "default": 1.0, "min": 0.0, "max": 100.0,
+             "slider": (0.0, 4.0), "step": 0.01,
+             "description": "How large a change makes a line: 1 is a step of 10 % in distance, a crease of 30 degrees or a step of 25 % in brightness"},
+            {"identifier": "Width", "name": "Width", "kind": "NodeSocketInt", "default": 0, "min": 0, "max": 50, "slider": (0, 10), "step": 1,
+             "description": "Pixels the lines are widened by"},
+            {"identifier": "Color", "name": "Color", "kind": "NodeSocketColor", "default": [0.0, 0.0, 0.0, 1.0],
+             "description": "The lines' colour"},
+            {"identifier": "Strength", "name": "Strength", "kind": "NodeSocketFloatFactor", "default": 1.0, "min": 0.0, "max": 1.0,
+             "description": "How much of the lines' colour covers the picture"},
+        ],
+    },
+    # Redshift's camera tone mapping, measured exact (docs/reference/c4d-sdk.md, "The Redshift camera's effects"):
+    # per channel H x + (1 - H) x / (1 + x) with Desaturate Highlights, else on the luminance; then the saturation.
+    "Tone Mapping": {
+        "label": "Tone Mapping", "catalog": "Compositing-Color",
+        "description": "Compresses the highlights as Redshift's camera does, then changes the saturation",
+        "nodes": ["ShaderNodeMix", "ShaderNodeMath", "CompositorNodeSeparateColor", "CompositorNodeCombineColor"],
+        "settings": [
+            {"identifier": "Highlights", "name": "Highlights", "kind": "NodeSocketFloatFactor", "default": 0.2, "min": 0.0, "max": 1.0,
+             "description": "How much of the highlights is kept: 0 compresses them fully (x / (1 + x)), 1 not at all"},
+            {"identifier": "Desaturate Highlights", "name": "Desaturate Highlights", "kind": "NodeSocketBool", "default": True,
+             "description": "Each channel compressed on its own (bright colours turn white); off, the colour's brightness is compressed and its hue kept"},
+            {"identifier": "Saturation", "name": "Saturation", "kind": "NodeSocketFloat", "default": 0.0, "min": -1.0, "max": 1.0,
+             "slider": (-1.0, 1.0), "step": 0.01, "description": "Moves every colour away from (or towards) its grey of the same brightness"},
+        ],
+    },
+    # Redshift's camera vignetting, measured exact: every pixel times cos(angle of its ray to the camera's axis)^Strength.
+    "Lens Vignetting": {
+        "label": "Lens Vignetting", "catalog": "Compositing-Camera & Lens Effects",
+        "description": "Darkens the picture as a lens does, by the cosine of each pixel's angle to the camera's axis to a power, as Redshift's camera Vignetting",
+        "nodes": ["CompositorNodeImageCoordinates", "ShaderNodeVectorMath", "ShaderNodeMath", "ShaderNodeMix"],
+        "settings": [
+            {"identifier": "Strength", "name": "Strength", "kind": "NodeSocketFloat", "default": 4.0, "min": 0.0, "max": 1000.0,
+             "slider": (0.0, 20.0), "step": 0.1, "description": "The power of the cosine: 4 is a lens's natural darkening, 0 none"},
+            {"identifier": "Field of View", "name": "Field of View", "kind": "NodeSocketFloatAngle", "default": 0.9272952180016122,
+             "min": 0.017453292519943295, "max": 3.12413936106985,
+             "description": "The camera's angle of view across the picture's longer side"},
+        ],
+    },
+    # Redshift's camera white point, measured exact: divides by the white point, keeping the brightness of grey.
+    "White Balance": {
+        "label": "White Balance", "catalog": "Compositing-Color",
+        "description": "Makes the colour given here white, keeping the brightness of grey, as Redshift's camera white point",
+        "nodes": ["ShaderNodeMix"],
+        "settings": [
+            {"identifier": "White Point", "name": "White Point", "kind": "NodeSocketColor", "default": [1.0, 1.0, 1.0, 1.0],
+             "description": "The colour that becomes white"},
+        ],
+    },
+    # Blender's Glare node with an intensity beyond its Strength of 1: the picture plus Intensity times what the glare
+    # adds. Redshift's bloom, streak and flare are translated into it (look-alikes, measured in docs/reference/blender.md).
+    "Lens Glare": {
+        "label": "Lens Glare", "catalog": "Compositing-Filter",
+        "description": "Blender's Glare node (bloom, ghosts, streaks and the rest) with an intensity that may exceed 1",
+        "nodes": ["CompositorNodeGlare", "ShaderNodeMix"],
+        "settings": [
+            {"identifier": "Type", "name": "Type", "kind": "NodeSocketMenu", "default": "Bloom",
+             "options_from": ["CompositorNodeGlare", "Type", ["Bloom", "Ghosts", "Streaks", "Fog Glow", "Simple Star"]],
+             "description": "The kind of glare, Blender's Glare node's"},
+            {"identifier": "Threshold", "name": "Threshold", "kind": "NodeSocketFloat", "default": 1.0, "min": 0.0, "max": 1000.0,
+             "slider": (0.0, 10.0), "step": 0.1, "description": "The brightness from which a pixel glares"},
+            {"identifier": "Smoothness", "name": "Smoothness", "kind": "NodeSocketFloatFactor", "default": 0.1, "min": 0.0, "max": 1.0,
+             "description": "How softly pixels near the threshold glare"},
+            {"identifier": "Size", "name": "Size", "kind": "NodeSocketFloatFactor", "default": 0.5, "min": 0.0, "max": 1.0,
+             "description": "The size of a bloom or fog glow relative to the picture: 1 covers it all"},
+            {"identifier": "Intensity", "name": "Intensity", "kind": "NodeSocketFloat", "default": 1.0, "min": 0.0, "max": 20.0,
+             "slider": (0.0, 4.0), "step": 0.01, "description": "How much of the glare is added: 1 is the Glare node's own at full strength"},
+            {"identifier": "Streaks", "name": "Streaks", "kind": "NodeSocketInt", "default": 4, "min": 1, "max": 16, "slider": (1, 16), "step": 1,
+             "description": "The number of streaks"},
+            {"identifier": "Streaks Angle", "name": "Streaks Angle", "kind": "NodeSocketFloatAngle", "default": 0.0,
+             "description": "The angle of the first streak to the horizontal"},
+            {"identifier": "Iterations", "name": "Iterations", "kind": "NodeSocketInt", "default": 3, "min": 2, "max": 5, "slider": (2, 5), "step": 1,
+             "description": "The number of ghosts, or the reach of streaks"},
+            {"identifier": "Fade", "name": "Fade", "kind": "NodeSocketFloatFactor", "default": 0.9, "min": 0.75, "max": 1.0,
+             "description": "How slowly streaks fade out"},
+            {"identifier": "Saturation", "name": "Saturation", "kind": "NodeSocketFloatFactor", "default": 1.0, "min": 0.0, "max": 1.0,
+             "description": "The saturation of the glare"},
+            {"identifier": "Tint", "name": "Tint", "kind": "NodeSocketColor", "default": [1.0, 1.0, 1.0, 1.0],
+             "description": "The glare's colour"},
+        ],
+    },
+}
+
+
+def built_effects(nodes):
+    """The built effects as the dump describes effects, for one Blender whose helper and plain nodes are `nodes`
+    ({type: description}); None for one whose nodes this Blender lacks."""
+    effects = []
+    for name, spec in BUILT_EFFECTS.items():
+        missing = [kind for kind in spec["nodes"] if kind not in nodes]
+        if missing:
+            sys.exit(f"{name}: Blender lacks {', '.join(missing)} (the table has no 'since' for a built effect's nodes)")
+        inputs = []
+        for setting in spec["settings"]:
+            record = {"identifier": setting["identifier"], "name": setting["name"], "kind": setting["kind"], "panel": "",
+                      "default": setting["default"], "hide_value": False, "description": setting.get("description", ""),
+                      "min": setting.get("min"), "max": setting.get("max"), "subtype": "NONE"}
+            if "options_from" in setting:
+                kind, identifier, taken = setting["options_from"]
+                offered = next(s for s in nodes[kind]["inputs"] if s["identifier"] == identifier).get("options", [])
+                record["options"] = [option for option in taken if option in offered]
+            elif "options" in setting:
+                record["options"] = list(setting["options"])
+            inputs.append(record)
+        effects.append({"name": name, "label": spec["label"], "description": spec["description"], "catalog": spec["catalog"],
+                        "image_in": "Image", "image_out": "Image", "outputs": [], "inputs": inputs, "source": "built"})
+    return effects
+
+
+def built_overrides(name):
+    """A built effect's steps and sliders, as PLAIN_NODES gives a plain node's."""
+    spec = BUILT_EFFECTS.get(name)
+    if not spec:
+        return {}
+    return {s["identifier"]: {key: s[key] for key in ("min", "max", "slider", "step") if key in s} for s in spec["settings"] if "step" in s}
 
 
 def c_string(text):
@@ -106,13 +248,21 @@ def dump_all(executables):
         if os.path.exists(out):
             os.remove(out)
         subprocess.run([blender, "-b", "--factory-startup", "--offline-mode", "--python", os.path.join(HERE, "dump_blender_effects.py"), "--", out]
-                       + list(PLAIN_NODES), check=True, stdout=subprocess.DEVNULL)
+                       + sorted(set(PLAIN_NODES) | set(HELPER_NODES) | {k for spec in BUILT_EFFECTS.values() for k in spec["nodes"]}),
+                       check=True, stdout=subprocess.DEVNULL)
         data = json.load(open(out, encoding="utf-8"))
-        # Both sources as one list of effects; a plain node is marked by its source.
+        described = {node["name"]: node for node in data.get("nodes", [])}
+        # The three sources as one list of effects; a plain node and a built effect are marked by their source.
+        plain = []
         for node in data.get("nodes", []):
+            if node["name"] not in PLAIN_NODES:
+                continue
             node["source"] = "node"
             node["catalog"] = PLAIN_NODES[node["name"]]["catalog"]
-        data["effects"] = data["effects"] + data.get("nodes", [])
+            excluded = PLAIN_NODES[node["name"]].get("exclude", [])
+            node["inputs"] = [socket for socket in node["inputs"] if socket["identifier"] not in excluded]
+            plain.append(node)
+        data["effects"] = data["effects"] + plain + built_effects(described)
         version = ".".join(data["blender"].split(".")[:2])
         if version in dumps:
             sys.exit(f"Two of the executables are Blender {version}.")
@@ -227,7 +377,8 @@ def main():
     for name in sorted(newest, key=lambda n: (newest[n][1].get("label") or n).lower()):
         version, effect = newest[name]
         node = effect.get("source") == "node"
-        overrides = PLAIN_NODES.get(name, {}).get("settings", {})
+        built = effect.get("source") == "built"
+        overrides = PLAIN_NODES.get(name, {}).get("settings", {}) or built_overrides(name)
         symbol = re.sub(r"[^A-Z0-9]+", "", name.upper())
         rows, seen = [], {}
         for socket in effect["inputs"]:
@@ -274,7 +425,7 @@ def main():
             problems.append(f"{name}: an effect without a setting")
         lines += [f"static const ImagerSetting {symbol}_SETTINGS[] =", "{"] + rows + ["};", ""]
         entries.append("\t{ " + ", ".join([c_string(name), c_string(effect.get("label") or name),
-                                           "IMAGERLAYER_SOURCE_NODE" if node else "IMAGERLAYER_SOURCE_BLENDER",
+                                           "IMAGERLAYER_SOURCE_NODE" if node else ("IMAGERLAYER_SOURCE_BUILT" if built else "IMAGERLAYER_SOURCE_BLENDER"),
                                            c_string(effect.get("description", "")), c_string(effect.get("catalog", "")),
                                            c_string(effect["image_in"]), c_string(effect["image_out"]),
                                            f"{symbol}_SETTINGS", f"maxon::Int32(SIZEOF({symbol}_SETTINGS) / SIZEOF({symbol}_SETTINGS[0]))", str(version_code(since[("effect", name)]))]) + " },")

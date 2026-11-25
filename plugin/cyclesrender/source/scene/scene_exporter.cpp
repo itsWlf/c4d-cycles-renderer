@@ -180,7 +180,8 @@ maxon::Result<maxon::Bool> SceneExporter::WriteLightAlone(SceneWriter& writer, c
 
 	// Its place as the walk forms it, so that the numbers agree to the last bit.
 	const DocumentColors colors(doc);
-	return ExportLight(writer, Coords::FromDocument(doc), colors, light, WalkMatrix(light), id, settings.lightMultiplier, linking, EeveeHidesLights(settings));
+	return ExportLight(writer, Coords::FromDocument(doc), colors, light, WalkMatrix(light), id, settings.lightMultiplier, linking, EeveeHidesLights(settings),
+		settings.eevee);
 }
 
 maxon::Result<maxon::Bool> SceneExporter::WriteWorldAlone(SceneWriter& writer, cinema::BaseDocument* doc, const ExportSettings& settings,
@@ -373,8 +374,10 @@ maxon::Result<void> SceneExporter::AddWorldSource(WORLDPART kind, cinema::BaseOb
 	iferr_scope;
 	WorldSource source;
 	source.kind = kind;
-	source.roles.camera = true;
+	// Cinema 4D's Environment object gives the world's fog only (0.3.0, F13 W28), as a Cycles Environment's World Fog.
+	source.roles.camera = kind != WORLDPART::FOG;
 	source.roles.lighting = kind == WORLDPART::SKY;
+	source.roles.fog = kind == WORLDPART::FOG;
 	source.object = op;
 	source.mg = mg;
 	source.material = GetStackMaterial(inherited.stack);
@@ -432,10 +435,10 @@ maxon::Result<void> SceneExporter::NoteUntranslated(const cinema::BaseObject* op
 	{
 		_notes.Append(FormatString("Volume \"@\": Redshift's Volume object is not translated; it renders nothing.", op->GetName())) iferr_return;
 	}
-	else if (type == Oenvironment && GetBoolParameter(op, ENVIRONMENT_FOGENABLE, false))
+	else if (type == Oenvironment && GetBoolParameter(op, ENVIRONMENT_FOGENABLE, false) && _settings.eevee)
 	{
-		_notes.Append(FormatString("Environment \"@\": its fog is not translated (in Cycles a Cycles Environment's World Fog or a Cycles Fog object gives fog).",
-			op->GetName())) iferr_return;
+		_notes.Append(FormatString("Environment \"@\": its fog is not translated in Eevee, whose world volume does not follow a surface's distance "
+			"(Cycles renders it).", op->GetName())) iferr_return;
 	}
 	// Redshift displaces an object whose Redshift Object tag says so (the Displacement node of its material is named by
 	// the material's translation).
@@ -996,6 +999,10 @@ maxon::Result<void> SceneExporter::Walk(cinema::BaseObject* op, const cinema::Ma
 			source.own = !inCache && !instanceRoot && key == ObjectKey(op) && inherited.followable;
 			_worlds.Append(std::move(source)) iferr_return;
 		}
+	}
+	else if (type == Oenvironment && renders && GetBoolParameter(op, ENVIRONMENT_FOGENABLE, false))
+	{
+		AddWorldSource(WORLDPART::FOG, op, mg, inherited) iferr_return;
 	}
 	else if (type == ID_FOG_OBJECT)
 	{
@@ -2763,7 +2770,7 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 		_lightLinking = _lightLinking || linked;
 		const maxon::String id = KeyId("light_", leaf.key);
 		ExportLight(writer, _coords, _colors, leaf.object, leaf.mg, id, _settings.lightMultiplier, linked ? &linking : nullptr,
-			EeveeHidesLights(_settings)) iferr_return;
+			EeveeHidesLights(_settings), _settings.eevee) iferr_return;
 		// An object of the document is walked under its own GUID (Collect, Walk), with its matrix
 		// formed from the local ones of its parents: such a light can be written again by itself.
 		if (leaf.key == ObjectKey(leaf.object))
@@ -2802,8 +2809,11 @@ maxon::Result<void> SceneExporter::Write(SceneWriter& writer)
 			moves ? cameraMotion : nullptr) iferr_return;
 		// The camera's effects (the Imager tab of its Cycles Camera tag). Without any there is no item,
 		// and Blender's compositor stays off.
-		const ImagerChain imager = ImagerChain::Read(_camera) iferr_return;
-		ExportImager(writer, imager, _colors, _settings.blenderVersion) iferr_return;
+		const ImagerChain imager = ImagerChain::Read(_camera, _settings.redshiftEffects) iferr_return;
+		ImagerTarget target;
+		target.blenderVersion = _settings.blenderVersion;
+		target.eevee = _settings.eevee;
+		ExportImager(writer, imager, _colors, target) iferr_return;
 	}
 	WriteWorld(writer, state) iferr_return;
 	return FinishWrite(writer, state);
@@ -2840,7 +2850,7 @@ maxon::Result<void> SceneExporter::WriteWorld(SceneWriter& writer, WriteState& s
 	}
 	if (!used[0])
 		used[0] = firstBackground;
-	static const maxon::Char* const KIND_NAMES[] = { "", "Sky object", "Redshift dome light", "Cycles Environment", "Background object" };
+	static const maxon::Char* const KIND_NAMES[] = { "", "Sky object", "Redshift dome light", "Cycles Environment", "Background object", "Environment object" };
 	maxon::Bool alone = used[0] || used[1];
 	for (const WorldSource& source : _worlds)
 	{

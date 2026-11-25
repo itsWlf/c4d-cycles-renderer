@@ -447,6 +447,7 @@ struct SurfacePorts
 	const maxon::Char* emissionWeight; const maxon::Char* emissionColor;
 	const maxon::Char* opacity; const maxon::Char* overall; const maxon::Char* overallOnEmission;
 	const maxon::Char* bump; const maxon::Char* coatBump;
+	const maxon::Char* fresnelMode;   ///< the old Material's Fresnel type (0.3.0, F13 W17); nullptr for the others
 };
 
 #define SM RS_NODE "standardmaterial."
@@ -464,7 +465,8 @@ static const SurfacePorts STANDARD_PORTS =
 	SM "coat_weight", SM "coat_color", SM "coat_roughness", SM "coat_ior",
 	SM "emission_weight", SM "emission_color",
 	SM "opacity_color", SM "overall_color", SM "overallaffectsemission",
-	SM "bump_input", SM "coat_bump_input"
+	SM "bump_input", SM "coat_bump_input",
+	nullptr
 };
 #undef SM
 
@@ -486,9 +488,32 @@ static const SurfacePorts OPENPBR_PORTS =
 	OP "coat_weight", OP "coat_color", OP "coat_roughness", OP "coat_ior",
 	OP "emission_luminance", OP "emission_color",
 	OP "geometry_opacity", nullptr, nullptr,
-	OP "geometry_normal", OP "geometry_coat_normal"
+	OP "geometry_normal", OP "geometry_coat_normal",
+	nullptr
 };
 #undef OP
+
+// The old Material (0.3.0, F13 W17): diffuse, one reflection, refraction, multi-SSS, sheen, coat, emission under its own names,
+// read as the Standard Material's lobes (its first SSS layer as the subsurface). Its Fresnel type decides what Metalness means.
+#define OM RS_NODE "material."
+static const SurfacePorts OLD_MATERIAL_PORTS =
+{
+	RS_NODE "material",
+	OM "diffuse_color", OM "diffuse_weight", OM "diffuse_roughness", OM "refl_metalness",
+	OM "refl_weight", OM "refl_color", OM "refl_roughness", OM "refl_isglossiness",
+	OM "refl_ior", OM "refl_aniso", OM "refl_aniso_rotation",
+	OM "refr_weight", OM "refr_color", OM "refr_roughness", nullptr,
+	OM "refr_abbe", OM "refr_thin_walled",
+	OM "ms_amount", OM "ms_color0", OM "ms_radius0", OM "ms_radius_scale", nullptr,
+	OM "sheen_weight", OM "sheen_color", OM "sheen_roughness",
+	nullptr, nullptr,
+	OM "coat_weight", OM "coat_color", OM "coat_roughness", OM "coat_ior",
+	OM "emission_weight", OM "emission_color",
+	OM "opacity_color", OM "overall_color", OM "overallaffectsemission",
+	OM "bump_input", OM "coat_bump_input",
+	OM "refl_fresnel_mode"
+};
+#undef OM
 
 // An id of the table, or one that names no port when the material has none.
 static maxon::Id PortId(const maxon::Char* name)
@@ -512,7 +537,31 @@ static maxon::Result<maxon::Bool> BuildStandardSurface(MaterialExporter& exporte
 	ColorInput baseColor = read.ColorWithTexture(PortId(ports.baseColor), cinema::Vector(0.5), "Base Color") iferr_return;
 	const maxon::Float64 baseWeight = read.Number(PortId(ports.baseWeight), 1.0) iferr_return;
 	const NumberInput diffuseRoughness = read.NumberWithTexture(PortId(ports.diffuseRoughness), 0.0, "Diffuse Roughness") iferr_return;
-	const NumberInput metalness = read.NumberWithTexture(PortId(ports.metalness), 0.0, "Metalness") iferr_return;
+	NumberInput metalness = read.NumberWithTexture(PortId(ports.metalness), 0.0, "Metalness") iferr_return;
+	if (ports.fresnelMode)
+	{
+		// The old Material: Metalness counts in its Fresnel type "Metalness" (2) only; "IOR" (3, the default) is the Standard
+		// Material's; "IOR (Advanced)" (0, an IOR per channel) and "Color + Edge Tint" (1) are read as "IOR".
+		const maxon::Int mode = read.Integer(PortId(ports.fresnelMode), 3) iferr_return;
+		if (mode != 2)
+		{
+			metalness.value = 0.0;
+			metalness.texture = NodeOutput();
+		}
+		if (mode == 0 || mode == 1)
+		{
+			exporter.Warn(FormatString("Material \"@\": the old Material's Fresnel type \"@\" is not translated; its reflection is read with the IOR.", material->GetName(),
+				mode == 0 ? "IOR (Advanced)"_s : "Color + Edge Tint"_s));
+		}
+		const maxon::Float64 translucency = read.Number(maxon::Id(RS_NODE "material.transl_weight"), 0.0) iferr_return;
+		const maxon::Float64 layer2 = read.Number(maxon::Id(RS_NODE "material.ms_weight1"), 0.0) iferr_return;
+		const maxon::Float64 layer3 = read.Number(maxon::Id(RS_NODE "material.ms_weight2"), 0.0) iferr_return;
+		const maxon::Float64 sssAmountOld = read.Number(maxon::Id(RS_NODE "material.ms_amount"), 0.0) iferr_return;
+		if (translucency > 0.0)
+			exporter.Warn(FormatString("Material \"@\": the old Material's translucency is not translated.", material->GetName()));
+		if (sssAmountOld > 0.0 && (layer2 > 0.0 || layer3 > 0.0))
+			exporter.Warn(FormatString("Material \"@\": the old Material's second and third subsurface layers are not translated; its first is.", material->GetName()));
+	}
 
 	const NumberInput reflWeight = read.NumberWithTexture(PortId(ports.reflWeight), 1.0, "Reflection Weight") iferr_return;
 	const ColorInput reflColor = read.ColorWithTexture(PortId(ports.reflColor), cinema::Vector(1.0), "Reflection Color") iferr_return;
@@ -961,6 +1010,110 @@ static maxon::Result<maxon::Bool> BuildSprite(MaterialExporter& exporter, NodeGr
 	return true;
 }
 
+// The Material Blender (0.3.0, F13 W17): its base material, then each of its six layers mixed over what is below by the layer's
+// blend colour (its mean as Blender's Mix Shader takes one number; a colour that is not grey is approximated so), or added
+// times the blend colour where the layer is additive. A layer or the base that is no material node this file reads is named
+// and left out.
+static maxon::Result<maxon::Bool> BuildMaterialBlender(MaterialExporter& exporter, NodeGraph& graph, cinema::BaseMaterial* material, const maxon::GraphNode& blender,
+	NodeOutput& surface, maxon::Int depth)
+{
+	iferr_scope;
+	const maxon::GraphNode inputs = blender.GetInputs() iferr_return;
+	const maxon::GraphNode basePort = inputs.FindChild(maxon::Id(RS_NODE "materialblender.basecolor")) iferr_return;
+	const maxon::GraphNode base = RedshiftNodes::SourceNode(basePort) iferr_return;
+	NodeOutput below;
+	if (base.IsValid())
+	{
+		const maxon::Bool built = BuildSurfaceNode(exporter, graph, material, base, below, depth + 1) iferr_return;
+		if (!built)
+		{
+			const maxon::String kind = RedshiftNodes::ShortName(base) iferr_return;
+			exporter.Warn(FormatString("Material \"@\": the \"@\" node at the base of its Material Blender is not translated; the base is black.", material->GetName(), kind));
+		}
+	}
+	if (!below.IsValid())
+	{
+		const maxon::Int black = graph.Add("ShaderNodeBsdfDiffuse") iferr_return;
+		graph.SetInput(black, "Color", cinema::Vector(0.0));
+		below = NodeOutput { black, "BSDF"_s };
+	}
+	for (maxon::Int layer = 1; layer <= 6; ++layer)
+	{
+		maxon::Id layerId;
+		layerId.Init(FormatString("@materialblender.layercolor@", maxon::String(RS_NODE), layer)) iferr_return;
+		const maxon::GraphNode layerPort = inputs.FindChild(layerId) iferr_return;
+		const maxon::GraphNode layerNode = RedshiftNodes::SourceNode(layerPort) iferr_return;
+		if (!layerNode.IsValid())
+			continue;
+		NodeOutput shown;
+		const maxon::Bool built = BuildSurfaceNode(exporter, graph, material, layerNode, shown, depth + 1) iferr_return;
+		if (!built || !shown.IsValid())
+		{
+			const maxon::String kind = RedshiftNodes::ShortName(layerNode) iferr_return;
+			exporter.Warn(FormatString("Material \"@\": the \"@\" node of layer @ of its Material Blender is not translated; the layer is left out.", material->GetName(), kind, layer));
+			continue;
+		}
+		maxon::Id blendId;
+		blendId.Init(FormatString("@materialblender.blendcolor@", maxon::String(RS_NODE), layer)) iferr_return;
+		maxon::Id additiveId;
+		additiveId.Init(FormatString("@materialblender.additivemode@", maxon::String(RS_NODE), layer)) iferr_return;
+		const maxon::GraphNode additivePort = inputs.FindChild(additiveId) iferr_return;
+		RedshiftReader read(exporter, graph, material, inputs);
+		const ColorInput blend = read.ColorWithTexture(blendId, cinema::Vector(0.0), "Material Blender") iferr_return;
+		maxon::Bool additive = false;
+		if (additivePort.IsValid())
+		{
+			additive = read.Switch(additiveId, false) iferr_return;
+		}
+		// The blend colour as one number: its mean.
+		NodeOutput factor;
+		if (blend.texture.IsValid())
+		{
+			const maxon::Int mean = graph.Add("ShaderNodeVectorMath") iferr_return;
+			graph.SetProperty(mean, "operation", "DOT_PRODUCT"_s);
+			graph.Link(blend.texture, mean, "Vector") iferr_return;
+			graph.SetInput(mean, "Vector_001", cinema::Vector(1.0 / 3.0));
+			factor = NodeOutput { mean, "Value"_s };
+		}
+		const maxon::Float64 constant = (blend.value.x + blend.value.y + blend.value.z) / 3.0;
+		if (!factor.IsValid() && constant <= 0.0)
+			continue;
+		if (additive)
+		{
+			// The layer added times its blend colour: a Mix Shader with a black (no) shader scales it.
+			const maxon::Int none = graph.Add("ShaderNodeMixShader") iferr_return;
+			if (factor.IsValid())
+			{
+				graph.Link(factor, none, "Fac") iferr_return;
+			}
+			else
+			{
+				graph.SetInput(none, "Fac", constant);
+			}
+			graph.Link(shown, none, 2) iferr_return;
+			const maxon::Int add = graph.Add("ShaderNodeAddShader") iferr_return;
+			graph.Link(below, add, maxon::Int(0)) iferr_return;
+			graph.Link(NodeOutput { none, "Shader"_s }, add, 1) iferr_return;
+			below = NodeOutput { add, "Shader"_s };
+			continue;
+		}
+		const maxon::Int mix = graph.Add("ShaderNodeMixShader") iferr_return;
+		if (factor.IsValid())
+		{
+			graph.Link(factor, mix, "Fac") iferr_return;
+		}
+		else
+		{
+			graph.SetInput(mix, "Fac", constant);
+		}
+		graph.Link(below, mix, 1) iferr_return;
+		graph.Link(shown, mix, 2) iferr_return;
+		below = NodeOutput { mix, "Shader"_s };
+	}
+	surface = below;
+	return true;
+}
+
 // A material node: the Standard Material, OpenPBR, Incandescent, Sprite, or a Store To AOV node
 // in front of one of them. False for any other.
 static maxon::Result<maxon::Bool> BuildSurfaceNode(MaterialExporter& exporter, NodeGraph& graph, cinema::BaseMaterial* material, const maxon::GraphNode& start,
@@ -989,6 +1142,10 @@ static maxon::Result<maxon::Bool> BuildSurfaceNode(MaterialExporter& exporter, N
 		return BuildStandardSurface(exporter, graph, material, node, STANDARD_PORTS, surface);
 	if (name == "openpbrmaterial"_s)
 		return BuildStandardSurface(exporter, graph, material, node, OPENPBR_PORTS, surface);
+	if (name == "material"_s)
+		return BuildStandardSurface(exporter, graph, material, node, OLD_MATERIAL_PORTS, surface);
+	if (name == "materialblender"_s)
+		return BuildMaterialBlender(exporter, graph, material, node, surface, depth);
 	if (name == "incandescent"_s)
 		return BuildIncandescent(exporter, graph, material, node, surface);
 	if (name == "sprite"_s)

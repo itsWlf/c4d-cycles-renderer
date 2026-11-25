@@ -489,7 +489,7 @@ void IprController::SetCameraLock(maxon::Bool locked)
 	if (camera)
 	{
 		_lockedCamera = CameraValues::Read(camera);
-		iferr (_lockedImager = ImagerChain::Read(camera))
+		iferr (_lockedImager = ImagerChain::Read(camera, _exportSettings.redshiftEffects))
 			_lockedImager = ImagerChain();
 		_hasLockedCamera = true;
 	}
@@ -987,7 +987,7 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 		if (!object)
 			return maxon::OK;
 		camera = CameraValues::Read(object);
-		imager = ImagerChain::Read(object) iferr_return;
+		imager = ImagerChain::Read(object, _exportSettings.redshiftEffects) iferr_return;
 	}
 
 	// The camera's effects (the Imager tab of its Cycles Camera tag) are an item of their own, sent
@@ -1003,7 +1003,11 @@ maxon::Result<void> IprController::SyncCamera(cinema::BaseDocument* doc)
 		};
 		effects->kind = IprTask::KIND::SCENE;
 		effects->scene = NewObj(SceneWriter, false) iferr_return;
-		const maxon::Bool written = ExportImager(*effects->scene, imager, DocumentColors(doc), _exportSettings.blenderVersion) iferr_return;
+		ImagerTarget target;
+		target.blenderVersion = _exportSettings.blenderVersion;
+		target.eevee = _exportSettings.eevee;
+		target.viewport = true;
+		const maxon::Bool written = ExportImager(*effects->scene, imager, DocumentColors(doc), target) iferr_return;
 		if (!written)
 			effects->scene->RemoveItem(ImagerItemId());
 		for (const maxon::String& warning : effects->scene->GetWarnings())

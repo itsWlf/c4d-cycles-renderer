@@ -82,9 +82,16 @@ private:
 	/// The Blender output for @p source, or invalid (named in a warning) when it cannot be translated.
 	/// @p depth counts the nodes on the way from the material, against graphs that loop.
 	maxon::Result<NodeOutput> Translate(const Source& source, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
-	/// A Texture node as an Image Texture, on its UV map or on @p vector (Blender UV coordinates a
-	/// projection node computes), with the node's own tiling and offset.
+	/// A Texture node as an Image Texture, on its UV map, on the texture tag's projection or on @p vector (Blender UV
+	/// coordinates a projection node computes), with the node's own rotation, offset and scale and then the tag's offset and
+	/// length (measured, 0.3.0 F13 W18), its colour space (the node's, not @p colorData's, where it names one), colour
+	/// multiplier, offset and gamma.
 	maxon::Result<NodeOutput> TextureSampler(const maxon::GraphNode& node, maxon::Bool colorData, const maxon::Char* what, const Term* vector = nullptr);
+	/// The UV coordinates of the material as the texture tag it sits on places them (MaterialExporter::GetCurrentMapping):
+	/// its projection, offset and length, repeated into 0..1 when the tag tiles; the UV map itself for plain UVW mapping and
+	/// for a cubic projection. For the nodes
+	/// that read UV coordinates besides the Texture node (Ramp, Brick, Flakes, Maxon Noise).
+	maxon::Result<Term> MaterialUv();
 	/// What is wired into @p port of a projection node, sampled at @p vector when it is a Texture
 	/// node; anything else is translated as it is and named as not projected.
 	maxon::Result<Term> Projected(const maxon::GraphNode& rsNode, const maxon::Char* port, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth,
@@ -139,6 +146,9 @@ private:
 	/// Rec.709 moved by the node's ranges at the random numbers of their seeds.
 	maxon::Result<Term> JitterColor(const maxon::GraphNode& rsNode, const Term& color, const maxon::Char* what, const maxon::Char* label);
 	maxon::Result<NodeOutput> Brick(const Source& source, maxon::Bool colorData, const maxon::Char* what, maxon::Int depth);
+	/// The Maxon Noise node as a look-alike (redshift_noise.cpp, 0.3.0 F13 W14): per noise type the scenes use, Blender's Noise
+	/// or Voronoi Texture with the type's measured mean, spread and feature size; invalid (named) for another type.
+	maxon::Result<NodeOutput> MaxonNoise(const Source& source, const maxon::Char* what, maxon::Int depth);
 	maxon::Result<NodeOutput> Flakes(const Source& source, const maxon::Char* what);
 	/// The flakes: per Voronoi cell of the node's pattern, whether it is a flake (x), a random
 	/// number (y) and the cell's random vector (the colour of Blender's Voronoi), and the fade with distance.

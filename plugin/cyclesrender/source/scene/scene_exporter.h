@@ -15,6 +15,7 @@
 #include "environment_export.h"
 #include "light_export.h"
 #include "proxy_export.h"
+#include "redshift_camera.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -41,6 +42,7 @@ struct ExportSettings
 	maxon::Float64 shutter = 0.5;                      ///< time the shutter is open, in frames
 	maxon::Float64 shutterCentre = 0.0;                ///< middle of that time relative to the frame, in frames (motion blur "Position")
 	cinema::BaseObject* camera = nullptr;              ///< render through this camera; nullptr: the render view's
+	RedshiftTranslation redshiftEffects;               ///< which of a Redshift camera's and RS Post-Effects' effects are translated (Render Settings, Scene Translation)
 	maxon::Bool writeCamera = true;                    ///< false: leave the camera item out (the IPR sends it separately)
 	/// The IPR's record of what Blender holds: a mesh made from what Blender's copy was made from is
 	/// not exported again (SceneWriter::KeepMesh; the preference "Skip Unchanged Meshes"). nullptr:
@@ -547,7 +549,8 @@ private:
 	/// light's list, the displacement of a Redshift Object tag, Redshift's Sun & Sky and Volume objects, the fog of
 	/// Cinema 4D's Environment object, a material on a volume that renders (@p inherited: its texture tags).
 	maxon::Result<void> NoteUntranslated(const cinema::BaseObject* op, const Inherited& inherited, maxon::Bool renders);
-	/// A Sky object (camera and light) or a Background object (camera only) as a candidate for the world (Write()), noted fixed.
+	/// A Sky object (camera and light), a Background object (camera only) or an Environment object with fog (the fog
+	/// only, since 0.3.0) as a candidate for the world (Write()), noted fixed.
 	maxon::Result<void> AddWorldSource(WORLDPART kind, cinema::BaseObject* op, const cinema::Matrix& mg, const Inherited& inherited);
 	/// The display colour an object without a material renders in, for the mesh @p op of a leaf whose object in the
 	/// document is @p owner; false when it renders in the default grey (MaterialExporter::GetDisplayColorMaterialId).

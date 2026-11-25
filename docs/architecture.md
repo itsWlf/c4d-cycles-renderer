@@ -100,7 +100,10 @@ plugin/cyclesrender/            the Cinema 4D module
                                 the SDK's headers do not list: one home for them
       mesh_export, light_export, environment_export
                                 one kind of item each; environment_export also the Cycles Environment
-                                object's world and which of its settings come from the node table
+                                object's world and which of its settings come from the node table, and
+                                the Environment object's fog as a world volume
+      light_falloff             a standard light's falloff and photometric intensity: the light node tree
+                                Cycles gets, the power and custom distance Eevee gets
       camera_export             the camera: Cinema 4D's projections (the fixed views with their own
                                 axes, oblique ones slanted), its spherical camera, the Cycles Camera tag,
                                 clipping; or the free view of the IPR; and the way back, the ray through
@@ -118,9 +121,14 @@ plugin/cyclesrender/            the Cinema 4D module
                                 name
       imager_export             the camera's exposure and the Imager tab of its Cycles Camera tag as the
                                 `compositor` item: the render, an Exposure node (the Color tab's and a Redshift
-                                camera's stops), per layer Blender's effect and a Mix by its opacity, the output
-      redshift_camera           what a Redshift camera does to the picture beyond what a camera is: its
-                                exposure ("EV Only", "Filmic") as stops, and what of it is not translated
+                                camera's stops), per layer Blender's effect and a Mix by its opacity, the output;
+                                a layer for the other engine left out
+      imager_built              the Imager's effects the plugin builds of several of Blender's nodes: Edges,
+                                Tone Mapping, White Balance, Lens Vignetting, Lens Glare
+      redshift_camera           what a Redshift camera and RS Post-Effects do to the picture beyond what a camera
+                                is: its exposure ("EV Only", "Filmic") as stops, its tone mapping, white point,
+                                vignetting and the bloom, streak, flare and colour controls as Imager layers, and
+                                what of it is not translated
       scene_dump                development aid: a listing of what would be exported
     materials/
       material_export           which translator a material goes to; the classic material as a Principled
@@ -128,7 +136,11 @@ plugin/cyclesrender/            the Cinema 4D module
       baked_files               the files of baked shaders: reused within a session, owned by documents,
                                 deleted when the documents are closed and no Blender reads them; its
                                 message plugin also calls ipr_add's FollowAddedCameras
-      shader_translate          a Cinema 4D shader as Blender nodes, or baked to a texture
+      shader_translate          a Cinema 4D shader as Blender nodes, or baked to a texture; with it
+                                shader_blend (the Fusion and Layer blend modes), shader_layer (the Layer
+                                shader's layers and effect layers), shader_lighting (Cel, Lumas, Ambient
+                                Occlusion: shaders that read the lighting, different graphs for Cycles
+                                and Eevee)
       node_graph                a Blender node graph under construction (a material's, the world's, the
                                 compositor's)
       redshift_material         the Redshift Standard Material, option by option
@@ -138,6 +150,10 @@ plugin/cyclesrender/            the Cinema 4D module
                                 of picture as Redshift's without its own random numbers and noises
       redshift_scene_data       the Redshift nodes that read the scene by a name: the user data nodes, the
                                 Vertex Attribute and the Point Attribute node, as Attribute nodes
+      redshift_noise            Maxon Noise as a look-alike: per noise type Blender's Noise or Voronoi
+                                Texture with the type's measured mean, spread and feature size
+      redshift_legacy           the legacy "RS Shader Graph" material: its Xpresso graph copied into a
+                                Redshift node graph, which the node-material translation then reads
       exchange_material         other node materials through Cinema 4D's material exchange (approximation)
       cycles_node_material      a material of Cycles nodes, written node for node
       cycles_curves             the curves of RGB Curves, Vector Curves and Float Curve: a Cinema 4D spline
@@ -345,6 +361,10 @@ Each decision is stated with its reason, so that it can be revisited when the re
 
 38. **The camera's exposure exists in two places for now, made by one mechanism** (0.3.0, F13 W6; the maintainer, 2026-11-25, has not decided where it lives and wanted both built to try: an Imager layer "Exposure", and a tab "Color" on the Cycles Camera tag for base colour correction). Both, and a Redshift camera's own exposure, are Blender's compositor Exposure node: the Color tab's stops plus the Redshift camera's as the tree's first node, before every layer and whatever the Imager's switch says; the layer as an effect of the chain (a plain compositor node, the layer source `IMAGERLAYER_SOURCE_NODE` that F10 had reserved, made by `tools/make_effects.py` like Blender's bundled effects). Chosen by measurement (`docs/reference/blender.md`, "The compositor", "Exposure"): one mechanism in Cycles and Eevee, final frames and the IPR, so the two controls give the same pixels and treat the passes (as rendered) and Blender's own file (the composite as its `Combined`) alike, and a changed value never restarts the render. *Rejected:* Cycles' Film Exposure (Eevee has none, and it is the Render Settings' own), the view's exposure (applied after the plugin reads the picture), a factor applied by the plugin or the bridge outside Blender (Blender's file would lack it). The first node stays while a tree exists, at 0 too, so a changed exposure is a value. Which place stays is the maintainer's to decide after trying both; a later tone mapping (W7) has to come after this node and must not apply the exposure again.
 
+39. **What Redshift does to its picture becomes Imager layers the plugin makes, before the user's own** (0.3.0, F13 W7 and W8; the maintainer, 2026-11-25: Redshift's camera effects and RS Post-Effects as Imager effects a user can add by hand, translated by themselves for a Redshift scene, also for a camera without a Cycles Camera tag; a switch to turn the translation off, in a new Render Settings tab "Scene Translation"). (a) *Layers, not a second mechanism.* The translation reads the Redshift camera and the RS Post-Effects video post (the camera's group switch "Render Settings", "Off", "Override" decides which) and appends layers of the Imager's own effects to the chain `ImagerChain::Read` builds, after the camera's exposure node and before the tag's layers, in the order Redshift applies them (measured: `docs/reference/c4d-sdk.md`, "The Redshift camera's effects"). So a translated effect and the same effect added by hand are one code path and give one picture (tested), they reach final frames, the IPR and Blender's own file (F6) alike, and the user's layers act on Redshift's look as they would on Redshift's picture. They are not stored in the tag: the scene stays Redshift's, and a change in Redshift's settings is followed at the next export. (b) *Effects the plugin builds of several Blender nodes* (the layer source `IMAGERLAYER_SOURCE_BUILT`; settings in the generated table, `tools/make_effects.py` `BUILT_EFFECTS`; nodes in `scene/imager_built.cpp`) where no single node or bundled group does it: Tone Mapping, White Balance and Lens Vignetting (Redshift's formulas, measured exact; Blender's Vignette preset fitted to one lens was within 2 % there and far off at another), Lens Glare (the Glare node whose Strength stops at 1, with an Intensity that does not: Redshift's bloom adds up to 4 times its light), Edges (a filter on passes). *Rejected:* a group of a .blend file shipped with the bridge (it would put Blender data and knowledge of these effects into the bridge, which stays a builder of any graph). (c) *Before the view only.* The compositor runs before the view the plugin's picture gets: what Redshift does after its view (the colour controls' contrast and curves, the LUT) is not built after an imitation of Redshift's view; the colour controls' exposure goes in as a look-alike factor, the rest is named. (d) *One switch for all of it, the exposure included* (Render Settings, "Scene Translation", "Redshift", "Camera and Post Effects", on by default): a user who wants Redshift's picture without Redshift's effects wants it without its exposure too, and one switch keeps saved scenes as built. Below it, at the maintainer's wish of the same day ("One single switch for all, but a dropdown with individual switches for each effect"), a folded group with one switch per translated effect (1520 to 1527, `RedshiftTranslation`); the single switch wins. The tab is where the switch for Redshift's view in Basic documents (W1) goes. (e) *Passes for an effect:* the `compositor` item names the view-layer passes its tree reads (`view_layer`), and the bridge keeps them on while it has the tree, so a render setting never switches off what an effect needs and the user's own pass list is unchanged; the IPR with Cycles has none (Blender's viewport gives Cycles' compositor no passes, measured), so an Edges layer follows the picture there and says so.
+
+40. **Where an engine cannot do what Cinema 4D does, the plugin sends that engine a different description, and the bridge stays generic** (0.3.0, F13 W29, W33, W28). A light's falloff is a light node tree, which Cycles evaluates and Eevee ignores: for Eevee the same light gets a power matched along the falloff and a custom distance instead. The Cel and Lumas shaders read the lighting: Eevee through Shader to RGB (the maintainer's choice, with shadows), Cycles, which has no Shader to RGB, from the lights' directions written into the material. The Environment object's fog is a world volume in Cycles and nothing in Eevee, whose world volume does not follow a surface's distance. The plugin knows the engine of every export (`ExportSettings::eevee`, `MaterialExporter::IsEevee`), and the IPR exports whole when its engine changes, so nothing of the other engine lingers in Blender. *Rejected:* one description for both engines with the bridge choosing per engine (the bridge would have to know what a Cinema 4D falloff or a Cel shader is); and Shader to RGB for a Cel shader without its "Shadows" (measured: Cinema 4D shows no shadows there, Shader to RGB would add them, and the lights' directions are exact in both engines). Every approximation is named in the console for the engine it concerns.
+
 ## Final frames
 
 `CyclesVideoPost` (`videopost/cycles_videopost.cpp`) is what Cinema 4D calls.
@@ -515,8 +535,8 @@ A dockable dialog opened by the command "Cycles Render IPR" (`ipr/ipr_dialog.cpp
    - *Baked*, for any other shader that depends only on the UV coordinates: Cinema 4D renders it over the UV square into a float EXR, once per session, and again only when its settings, a texture file inside it or the document's colour settings change, or, for a shader that changes over time by itself, at another frame. Final renders and the IPR share the files. They live in a folder of the Cinema 4D session and are deleted when every document they were made for is closed and no Blender reads them any more, and at the end of the session (`materials/baked_files.h`).
    - *Neither*: the channel falls back to its plain value and the user is told.
 2. **A material of Cycles nodes** is written node for node, value for value and wire for wire. Nothing in Cinema 4D evaluates these nodes.
-3. **A Redshift material** whose output is a Standard Material node is read port by port.
-   The nodes wired into its inputs are translated node by node where Blender has the same thing (`materials/redshift_nodes`); four whose random numbers and noises are Redshift's own become look-alikes that say so (`materials/redshift_lookalikes`): their per-object numbers vary by keys the exporter sends with each object that wears such a material (an object's `properties`, an instancer's per-copy `floats`), so that Blender varies them with the same objects as Redshift; any other node is named in the console and the input's own value is used.
+3. **A Redshift material** whose output is a Standard Material node (or OpenPBR, Incandescent, Sprite, the old Material, a Material Blender of these) is read port by port, its textures placed as the texture tag it sits on says. The legacy "RS Shader Graph" material, an Xpresso graph of Redshift shader nodes, is copied into a Redshift node graph first and read the same way (`materials/redshift_legacy`).
+   The nodes wired into its inputs are translated node by node where Blender has the same thing (`materials/redshift_nodes`); five whose random numbers and noises are Redshift's own become look-alikes (Maxon Noise since 0.3.0, `materials/redshift_noise`) that say so (`materials/redshift_lookalikes`): their per-object numbers vary by keys the exporter sends with each object that wears such a material (an object's `properties`, an instancer's per-copy `floats`), so that Blender varies them with the same objects as Redshift; any other node is named in the console and the input's own value is used.
 4. **Any other node material** is asked to describe itself as a Standard Surface, the route Cinema 4D's own FBX and USD exporters take.
 5. **A Cycles Native Material** is sent as the bytes it holds.
 

@@ -23,7 +23,8 @@ enum class WORLDPART
 	SKY,                 ///< a Sky object, with the material of its texture tags
 	DOME,                ///< a Redshift dome light
 	ENVIRONMENT,         ///< a Cycles Environment object
-	BACKGROUND           ///< Cinema 4D's Background object: seen by the camera only, behind every other environment
+	BACKGROUND,          ///< Cinema 4D's Background object: seen by the camera only, behind every other environment
+	FOG                  ///< Cinema 4D's Environment object with its fog on: the world's fog only (0.3.0, F13 W28)
 } MAXON_ENUM_LIST(WORLDPART);
 
 struct WorldPart

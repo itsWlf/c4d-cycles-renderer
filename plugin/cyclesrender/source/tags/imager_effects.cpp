@@ -223,6 +223,7 @@ maxon::Int32 AddImagerLayer(cinema::BaseContainer& data, const ImagerEffect& eff
 	data.SetString(ImagerLayerId(layer, IMAGERLAYER_NAME), maxon::String(effect.label));
 	data.SetBool(ImagerLayerId(layer, IMAGERLAYER_ENABLED), true);
 	data.SetFloat(ImagerLayerId(layer, IMAGERLAYER_OPACITY), 1.0);
+	data.SetInt32(ImagerLayerId(layer, IMAGERLAYER_ENGINE), IMAGERLAYER_ENGINE_BOTH);
 	for (maxon::Int32 i = 0; i < effect.settingCount; ++i)
 		data.SetData(ImagerLayerId(layer, effect.settings[i].number), GetImagerDefault(effect.settings[i]));
 

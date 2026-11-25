@@ -10,6 +10,7 @@
 
 #include "../tags/imager_effects.h"
 #include "document_colors.h"
+#include "redshift_camera.h"
 #include "scene_writer.h"
 
 namespace cyclesrender
@@ -34,6 +35,7 @@ struct ImagerChain
 		maxon::String name;										///< the layer's name, for the warnings
 		maxon::Float64 opacity = 1.0;					///< 0 to 1
 		maxon::Int firstValue = 0;						///< its values in `values`: one per setting of the effect, in the table's order
+		maxon::Int32 engine = 0;							///< IMAGERLAYER_ENGINE_BOTH, _CYCLES or _EEVEE: where it applies
 	};
 
 	struct Value
@@ -56,22 +58,48 @@ struct ImagerChain
 	maxon::Bool IsEmpty() const { return layers.IsEmpty() && unknown.IsEmpty() && exposure == 0.0 && notes.IsEmpty(); }
 	maxon::Result<void> CopyFrom(const ImagerChain& other);
 
+	/// One value of a layer the plugin makes itself (a translated effect), by the setting's identifier.
+	struct Given
+	{
+		const maxon::Char* identifier;
+		maxon::Float64 number[3];
+		const maxon::Char* option;			///< a menu's option, Blender's name; nullptr for a number
+	};
+
+	/// Appends a layer of the table's effect @p effectName of source @p source (IMAGERLAYER_SOURCE_...), applied
+	/// in both engines at full opacity: the table's defaults, and @p given for the settings it names. Does nothing
+	/// when the table has no such effect (an error of the plugin's own: none is ever asked for that is not there).
+	maxon::Result<void> AppendLayer(const maxon::Char* effectName, maxon::Int32 source, const maxon::String& name,
+		std::initializer_list<Given> given);
+
 	/// Reads the exposure and the Imager tab of @p camera. Empty for a camera without exposure and
 	/// without a layer that is switched on (no Cycles Camera tag, or its Imager tab switched off).
-	static maxon::Result<ImagerChain> Read(const cinema::BaseObject* camera);
+	/// What Redshift does to the picture of this camera is translated first, as far as @p redshift says (the
+	/// Render Settings' "Scene Translation" > "Redshift"; all of it by default): its exposure, and as layers
+	/// before the tag's own (scene/redshift_camera.h, ReadRedshiftEffects).
+	static maxon::Result<ImagerChain> Read(const cinema::BaseObject* camera, const RedshiftTranslation& redshift = RedshiftTranslation());
+};
+
+/// What renders the picture the `compositor` item is for.
+struct ImagerTarget
+{
+	maxon::Int32 blenderVersion = 0;	///< the Blender in use, a BlenderVersionCode()
+	maxon::Bool eevee = false;				///< Eevee renders (else Cycles): a layer for the other engine is left out
+	maxon::Bool viewport = false;			///< the IPR's viewport (else a final frame): what its compositor is given differs
 };
 
 //----------------------------------------------------------------------------------------
 /// Writes @p chain as the `compositor` item: the rendered picture, then the camera's exposure (an
 /// Exposure node, there at 0 stops too, so that another exposure is another value and never another
 /// graph), then per layer the effect and a Mix by the layer's opacity, then the output.
-/// What the Blender in use (@p blenderVersion, a BlenderVersionCode()) does not have is left out and
+/// A layer for the other engine than @p target's is left out, as if it were switched off.
+/// What the Blender in use (@p target's blenderVersion) does not have is left out and
 /// named in a warning: an effect, a setting that is not at its default, a menu's option.
 /// @return  False when nothing was written (no exposure and no layer this Blender has): the picture
 ///          is the render.
 ///          In a request of some items only, the caller then names the item for removal.
 //----------------------------------------------------------------------------------------
-maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& chain, const DocumentColors& colors, maxon::Int32 blenderVersion);
+maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& chain, const DocumentColors& colors, const ImagerTarget& target);
 
 } // namespace cyclesrender
 

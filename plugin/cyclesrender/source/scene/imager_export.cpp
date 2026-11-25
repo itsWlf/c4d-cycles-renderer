@@ -7,6 +7,7 @@
 
 #include "../materials/node_graph.h"
 #include "../tags/camera_tag.h"
+#include "imager_built.h"
 #include "imager_export.h"
 #include "redshift_camera.h"
 
@@ -29,16 +30,63 @@ maxon::Result<void> ImagerChain::CopyFrom(const ImagerChain& other)
 	return maxon::OK;
 }
 
-maxon::Result<ImagerChain> ImagerChain::Read(const cinema::BaseObject* camera)
+maxon::Result<void> ImagerChain::AppendLayer(const maxon::Char* effectName, maxon::Int32 source, const maxon::String& name,
+	std::initializer_list<Given> given)
+{
+	iferr_scope;
+	const ImagerEffect* const effect = FindImagerEffect(maxon::String(effectName), source);
+	if (!effect)
+		return maxon::OK;
+	Layer layer;
+	layer.effect = effect;
+	layer.name = name;
+	layer.firstValue = values.GetCount();
+	for (maxon::Int32 s = 0; s < effect->settingCount; ++s)
+	{
+		const ImagerSetting& setting = effect->settings[s];
+		Value value;
+		value.option = setting.defaultOption;
+		for (maxon::Int i = 0; i < 3; ++i)
+			value.number[i] = setting.value[i];
+		for (const Given& item : given)
+		{
+			if (maxon::String(item.identifier) != maxon::String(setting.identifier))
+				continue;
+			if (setting.kind == 'm' && item.option)
+			{
+				for (maxon::Int32 o = 0; o < GetImagerOptionCount(setting); ++o)
+				{
+					if (GetImagerOption(setting, o) == maxon::String(item.option))
+						value.option = o;
+				}
+			}
+			else
+			{
+				for (maxon::Int i = 0; i < 3; ++i)
+					value.number[i] = item.number[i];
+			}
+		}
+		values.Append(value) iferr_return;
+	}
+	layers.Append(std::move(layer)) iferr_return;
+	return maxon::OK;
+}
+
+maxon::Result<ImagerChain> ImagerChain::Read(const cinema::BaseObject* camera, const RedshiftTranslation& redshift)
 {
 	iferr_scope;
 	ImagerChain chain;
 	if (!camera)
 		return chain;
-	// A Redshift camera's own exposure counts with a tag and without one; the Color tab's multiplies with it.
-	RedshiftExposure redshift = ReadRedshiftExposure(camera) iferr_return;
-	chain.exposure = redshift.stops;
-	chain.notes = std::move(redshift.notes);
+	if (redshift.exposure)
+	{
+		// A Redshift camera's own exposure counts with a tag and without one; the Color tab's multiplies with it.
+		RedshiftExposure exposure = ReadRedshiftExposure(camera) iferr_return;
+		chain.exposure = exposure.stops;
+		chain.notes = std::move(exposure.notes);
+	}
+	// Then what Redshift does to the picture after it (tone mapping, bloom ...), as layers before the tag's own.
+	ReadRedshiftEffects(camera, chain, redshift) iferr_return;
 	const cinema::BaseTag* const tag = FindCameraTag(camera);
 	if (!tag)
 		return chain;
@@ -68,6 +116,8 @@ maxon::Result<ImagerChain> ImagerChain::Read(const cinema::BaseObject* camera)
 		values.effect = effect;
 		values.name = name;
 		values.opacity = maxon::Clamp01(data.GetFloat(ImagerLayerId(layer, IMAGERLAYER_OPACITY), 1.0));
+		// A layer saved before the engine existed applies in both, as it did.
+		values.engine = data.GetInt32(ImagerLayerId(layer, IMAGERLAYER_ENGINE), IMAGERLAYER_ENGINE_BOTH);
 		values.firstValue = chain.values.GetCount();
 		for (maxon::Int32 s = 0; s < effect->settingCount; ++s)
 		{
@@ -121,15 +171,69 @@ static maxon::String VersionText(maxon::Int32 code)
 	return FormatString("@.@", code / 100, code % 100);
 }
 
-maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& chain, const DocumentColors& colors, maxon::Int32 blenderVersion)
+// The node of a bundled group or of a plain node, with the layer's values set (@p values: one per setting of
+// @p effect). What the Blender in use lacks is left out and named.
+static maxon::Result<NodeOutput> AddEffectNode(SceneWriter& writer, NodeGraph& graph, const ImagerEffect& effect, const ImagerChain::Value* values,
+	const DocumentColors& colors, maxon::Int32 blenderVersion)
 {
 	iferr_scope;
+	// Blender's node group of that name, from its own bundled assets; or a plain node of that type.
+	const maxon::Bool plain = effect.source == IMAGERLAYER_SOURCE_NODE;
+	const maxon::Int node = graph.Add(plain ? effect.name : "CompositorNodeGroup") iferr_return;
+	if (!plain)
+		graph.SetGroup(node, maxon::String(effect.name));
+	for (maxon::Int32 s = 0; s < effect.settingCount; ++s)
+	{
+		const ImagerSetting& setting = effect.settings[s];
+		const ImagerChain::Value& value = values[s];
+		if (setting.since > blenderVersion)
+		{
+			if (!IsDefault(setting, value))
+				writer.Warn(FormatString("Imager: \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ renders without it.", maxon::String(setting.label),
+					maxon::String(effect.label), VersionText(setting.since), VersionText(blenderVersion)));
+			continue;
+		}
+		switch (setting.kind)
+		{
+			case 'f': graph.SetInput(node, setting.identifier, value.number[0]); break;
+			case 'i': graph.SetInputJson(node, setting.identifier, maxon::String::IntToString(maxon::Int64(value.number[0]))); break;
+			case 'b': graph.SetInputJson(node, setting.identifier, value.number[0] != 0.0 ? "true"_s : "false"_s); break;
+			case 'm':
+			{
+				if (GetImagerOptionSince(setting, value.option) > blenderVersion)
+				{
+					writer.Warn(FormatString("Imager: \"@\" for \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ uses its own choice.",
+						GetImagerOption(setting, value.option), maxon::String(setting.label), maxon::String(effect.label),
+						VersionText(GetImagerOptionSince(setting, value.option)), VersionText(blenderVersion)));
+					break;
+				}
+				graph.SetInputJson(node, setting.identifier, JsonQuoted(GetImagerOption(setting, value.option)));
+				break;
+			}
+			case 'c':
+				// A colour as Cinema 4D's renderers calculate with it, like a light's.
+				graph.SetInput(node, setting.identifier, colors.Input(cinema::Vector(value.number[0], value.number[1], value.number[2])));
+				break;
+			default:
+				// A vector: the bridge takes as many numbers as the socket has (two for a place in the picture).
+				graph.SetInput(node, setting.identifier, cinema::Vector(value.number[0], value.number[1], value.number[2]));
+				break;
+		}
+	}
+	return NodeOutput{ node, maxon::String(effect.imageOut) };
+}
+
+maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& chain, const DocumentColors& colors, const ImagerTarget& target)
+{
+	iferr_scope;
+	const maxon::Int32 blenderVersion = target.blenderVersion;
 	for (const maxon::String& name : chain.unknown)
 		writer.Warn(FormatString("Imager: the effect of the layer \"@\" is not known to this version of the plugin; it is left out.", name));
 	for (const maxon::String& note : chain.notes)
 		writer.Warn(note);
 
 	NodeGraph graph;
+	maxon::BaseArray<maxon::String> passes;
 	const maxon::Int render = graph.Add("CompositorNodeRLayers") iferr_return;
 	NodeOutput picture = { render, "Image"_s };
 	// The camera's exposure, on the scene-linear picture before every layer (Blender's Exposure node multiplies by
@@ -142,56 +246,27 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 	for (const ImagerChain::Layer& layer : chain.layers)
 	{
 		const ImagerEffect& effect = *layer.effect;
+		// A layer meant for the other engine is no part of this picture (and no warning: it is as asked).
+		if ((layer.engine == IMAGERLAYER_ENGINE_CYCLES && target.eevee) || (layer.engine == IMAGERLAYER_ENGINE_EEVEE && !target.eevee))
+			continue;
 		if (effect.since > blenderVersion)
 		{
 			writer.Warn(FormatString("Imager: the effect \"@\" (layer \"@\") needs Blender @ or newer; Blender @ renders without it.", maxon::String(effect.label),
 				layer.name, VersionText(effect.since), VersionText(blenderVersion)));
 			continue;
 		}
-		// Blender's node group of that name, from its own bundled assets; or a plain node of that type.
-		const maxon::Bool plain = effect.source == IMAGERLAYER_SOURCE_NODE;
-		const maxon::Int node = graph.Add(plain ? effect.name : "CompositorNodeGroup") iferr_return;
-		if (!plain)
-			graph.SetGroup(node, maxon::String(effect.name));
-		for (maxon::Int32 s = 0; s < effect.settingCount; ++s)
+		NodeOutput result;
+		if (effect.source == IMAGERLAYER_SOURCE_BUILT)
 		{
-			const ImagerSetting& setting = effect.settings[s];
-			const ImagerChain::Value& value = chain.values[layer.firstValue + s];
-			if (setting.since > blenderVersion)
-			{
-				if (!IsDefault(setting, value))
-					writer.Warn(FormatString("Imager: \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ renders without it.", maxon::String(setting.label),
-						maxon::String(effect.label), VersionText(setting.since), VersionText(blenderVersion)));
-				continue;
-			}
-			switch (setting.kind)
-			{
-				case 'f': graph.SetInput(node, setting.identifier, value.number[0]); break;
-				case 'i': graph.SetInputJson(node, setting.identifier, maxon::String::IntToString(maxon::Int64(value.number[0]))); break;
-				case 'b': graph.SetInputJson(node, setting.identifier, value.number[0] != 0.0 ? "true"_s : "false"_s); break;
-				case 'm':
-				{
-					if (GetImagerOptionSince(setting, value.option) > blenderVersion)
-					{
-						writer.Warn(FormatString("Imager: \"@\" for \"@\" of the effect \"@\" needs Blender @ or newer; Blender @ uses its own choice.",
-							GetImagerOption(setting, value.option), maxon::String(setting.label), maxon::String(effect.label),
-							VersionText(GetImagerOptionSince(setting, value.option)), VersionText(blenderVersion)));
-						break;
-					}
-					graph.SetInputJson(node, setting.identifier, JsonQuoted(GetImagerOption(setting, value.option)));
-					break;
-				}
-				case 'c':
-					// A colour as Cinema 4D's renderers calculate with it, like a light's.
-					graph.SetInput(node, setting.identifier, colors.Input(cinema::Vector(value.number[0], value.number[1], value.number[2])));
-					break;
-				default:
-					// A vector: the bridge takes as many numbers as the socket has (two for a place in the picture).
-					graph.SetInput(node, setting.identifier, cinema::Vector(value.number[0], value.number[1], value.number[2]));
-					break;
-			}
+			// Several of Blender's nodes, made by the plugin (imager_built.cpp).
+			ImagerBuildContext context{ graph, render, colors, target, writer, passes };
+			result = BuildImagerEffect(context, effect, &chain.values[layer.firstValue], layer.name, picture) iferr_return;
 		}
-		graph.Link(picture, node, effect.imageIn) iferr_return;
+		else
+		{
+			result = AddEffectNode(writer, graph, effect, &chain.values[layer.firstValue], colors, blenderVersion) iferr_return;
+			graph.Link(picture, result.node, effect.imageIn) iferr_return;
+		}
 		// The opacity: a Mix of what came before (A) and the effect's result (B). It is there at
 		// 100 % too, so that another opacity is another value and never another graph: the bridge
 		// then sets it on the tree it has, and the render's samples stay.
@@ -200,7 +275,7 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 		graph.SetProperty(mix, "blend_type", "MIX"_s);
 		graph.SetInput(mix, "Factor_Float", layer.opacity);
 		graph.Link(picture, mix, "A_Color") iferr_return;
-		graph.Link({ node, maxon::String(effect.imageOut) }, mix, "B_Color") iferr_return;
+		graph.Link(result, mix, "B_Color") iferr_return;
 		picture = { mix, "Result_Color"_s };
 		++count;
 	}
@@ -213,6 +288,14 @@ maxon::Result<maxon::Bool> ExportImager(SceneWriter& writer, const ImagerChain& 
 
 	JsonWriter& json = writer.BeginItem("compositor", ImagerItemId());
 	graph.Write(json);
+	// The passes the tree reads: the bridge keeps them on while it has the tree.
+	if (!passes.IsEmpty())
+	{
+		json.BeginArray("view_layer");
+		for (const maxon::String& pass : passes)
+			json.String(nullptr, pass);
+		json.EndArray();
+	}
 	writer.EndItem();
 	return true;
 }

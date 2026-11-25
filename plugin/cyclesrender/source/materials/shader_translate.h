@@ -5,6 +5,7 @@
 #define CYCLESRENDER_SHADER_TRANSLATE_H__
 
 #include "c4d.h"
+#include "lib_layershader.h"
 
 #include "node_graph.h"
 
@@ -17,9 +18,9 @@ class MaterialExporter;
 /// Three ways, tried in this order:
 ///
 /// 1. Native: shaders with an exact counterpart become nodes: bitmap, colour, checkerboard,
-///    gradient (along U or V), colorizer, fresnel, fusion and layer (for the blend modes
-///    Blender computes the same way), vertex map, MoGraph colour. They stay sharp at any distance and cost nothing
-///    when they change.
+///    gradient (along U or V), colorizer, fresnel, falloff, fusion and layer (every blend mode but Alpha Mask,
+///    each measured against the Standard renderer: shader_blend.cpp), vertex map, MoGraph colour. They stay
+///    sharp at any distance and cost nothing when they change.
 /// 2. Baked: any other shader that depends only on the UV coordinates (noise, filter, tiles,
 ///    the gradient's other types, ...) is rendered by Cinema 4D into a texture, once, and
 ///    again only when it changes (MaterialExporter::GetBakedImageId).
@@ -69,8 +70,26 @@ private:
 	maxon::Result<NodeOutput> GradientShader(cinema::BaseShader* shader);
 	maxon::Result<NodeOutput> Colorizer(cinema::BaseShader* shader, maxon::Bool colorData);
 	maxon::Result<NodeOutput> Fresnel(cinema::BaseShader* shader);
+	maxon::Result<NodeOutput> FalloffShader(cinema::BaseShader* shader);
+	/// The shaders that read the lighting and the surroundings (shader_lighting.cpp).
+	maxon::Result<NodeOutput> Cel(cinema::BaseShader* shader);
+	maxon::Result<NodeOutput> Lumas(cinema::BaseShader* shader);
+	maxon::Result<NodeOutput> AmbientOcclusion(cinema::BaseShader* shader);
+	/// How much the document's lights light the shaded point: for the Cel shader (@p cel) the largest of
+	/// max(0, N . L) over the lights, whatever their brightness, as one number; else the sum of their
+	/// brightness and colour times max(0, N . L), as a colour. With @p shadows in Eevee: from a Diffuse BSDF
+	/// through Shader to RGB, the lights' shadows included; otherwise (and always in Cycles, which has no
+	/// Shader to RGB) from the lights' directions, without shadows.
+	maxon::Result<NodeOutput> LightTerm(maxon::Bool cel, maxon::Bool shadows);
 	maxon::Result<NodeOutput> Fusion(cinema::BaseShader* shader, maxon::Bool colorData);
+	/// The Layer shader as nodes (shader_layer.cpp): its shader layers with their blend modes, and the effect
+	/// layers Brightness/Contrast, HSL, Posterize, Clamp and Clip; a layer that cannot be translated is left out
+	/// and named. A stack that can be baked is baked whole instead.
 	maxon::Result<NodeOutput> Layer(cinema::BaseShader* shader, maxon::Bool colorData);
+	/// An effect layer applied to @p below; invalid when it is not translated (@p what says why).
+	maxon::Result<NodeOutput> EffectLayer(cinema::LayerShaderLayer* layer, const NodeOutput& below, maxon::String& what);
+	/// Names a layer of a Layer shader that is left out.
+	void NoteLayer(const maxon::String& what);
 	maxon::Result<NodeOutput> MeshAttribute(cinema::BaseShader* shader);
 
 	/// A Color Ramp node set up like the gradient in parameter @p id, fed by @p factor.
@@ -78,14 +97,32 @@ private:
 	maxon::Result<NodeOutput> Ramp(cinema::BaseShader* shader, maxon::Int32 id, const NodeOutput& factor);
 	/// One of U and V of the texture coordinates as a number, in Blender's convention (V = 0 at the bottom).
 	maxon::Result<NodeOutput> Coordinate(maxon::Bool v);
-	/// Mixes @p top over @p bottom with one of the layer shader's blend modes. Invalid for modes Blender computes differently.
+	/// Mixes @p top over @p bottom (black when invalid) with one of the Layer shader's blend modes (the Fusion
+	/// shader's are the same, FusionBlendMode), as the Standard renderer computes it, by @p amount times
+	/// @p mask when that is valid (shader_blend.cpp). Invalid for Alpha Mask and for Levr below an amount of 1.
 	maxon::Result<NodeOutput> Blend(maxon::Int32 layerBlendMode, const NodeOutput& bottom, const NodeOutput& top, maxon::Float64 amount, const NodeOutput& mask);
+	/// A Mix node in colour mode: @p blendType (Blender's) of @p a (black when invalid) and @p b, by
+	/// @p factor or, when that is invalid, by @p amount; @p clampResult holds the result to 0..1.
+	maxon::Result<NodeOutput> MixColors(const maxon::Char* blendType, const NodeOutput& a, const NodeOutput& b, const NodeOutput& factor,
+		maxon::Float64 amount, maxon::Bool clampResult = false);
+	/// The blend modes Blender has no Mix node for, at full strength: Soft Light, Saturation, Luminance, Levr,
+	/// Dodge, Burn, Darken, Lighten.
+	maxon::Result<NodeOutput> SoftLight(const NodeOutput& a, const NodeOutput& b);
+	maxon::Result<NodeOutput> HslMix(const NodeOutput& a, const NodeOutput& b, maxon::Bool lightness);
+	maxon::Result<NodeOutput> Levr(const NodeOutput& a, const NodeOutput& b);
+	/// Dodge and Burn: @p a with its HSL lightness screened or burnt by @p b's.
+	maxon::Result<NodeOutput> HslLightness(const NodeOutput& a, const NodeOutput& b, maxon::Bool dodge);
+	/// Darken and Lighten: the whole colour whose mean is lower (@p darker) or higher.
+	maxon::Result<NodeOutput> ByMean(const NodeOutput& a, const NodeOutput& b, maxon::Bool darker);
+	/// A colour output of black.
+	maxon::Result<NodeOutput> Black();
 	maxon::Result<NodeOutput> Invert(const NodeOutput& color);
 	maxon::Result<NodeOutput> Brightness(const NodeOutput& color);
 
 	MaterialExporter& _exporter;
 	NodeGraph& _graph;
 	maxon::String _materialName;
+	const maxon::Char* _channel = "";      ///< the channel being translated, for the warnings of a Layer shader
 	NodeOutput _uv;
 	maxon::Bool _box = false;
 	maxon::Bool _clip = false;

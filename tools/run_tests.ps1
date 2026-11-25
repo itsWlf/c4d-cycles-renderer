@@ -183,7 +183,7 @@ $c4dTests = @(
   @{ Name = "coords"; Covers = @("${P}scene/coords.*", "${P}scene/camera_export.*") },
   @{ Name = "meshes"; Covers = @("${P}scene/mesh_export.*", "${B}scene/meshes.py") },
   @{ Name = "cameras"; Covers = @("${P}scene/camera_export.*", "${B}scene/cameras.py") },
-  @{ Name = "lights"; Covers = @("${P}scene/light_export.*", "${B}scene/lights.py", "${P}scene/document_colors.*") },
+  @{ Name = "lights"; Covers = @("${P}scene/light_export.*", "${P}scene/light_falloff.*", "${B}scene/lights.py", "${P}scene/document_colors.*") },
   @{ Name = "materials"; Covers = @("${P}materials/material_export.*", "${P}materials/shader_translate.*", "${P}materials/node_graph.*", "${B}scene/materials.py", "${P}scene/document_colors.*") },
   @{ Name = "sky_orientation"; Covers = @("${P}scene/environment_export.*", "${B}scene/world.py", "${P}scene/document_colors.*") },
   @{ Name = "settings"; Settings = @{ g_cyclesRenderCapture = "<file>" }
@@ -222,7 +222,11 @@ $c4dTests = @(
   @{ Name = "fire_vdb"; Covers = @("${P}scene/volume_export.*", "${B}scene/volumes.py", "${P}tags/object_tag.*") },
   @{ Name = "redshift_material"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_material.*", "${P}materials/redshift_nodes.*", "${P}materials/node_graph.*", "${P}ipr/ipr_controller.*") },
-  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_scene_data.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py") },
+  @{ Name = "redshift_nodes"; Covers = @("${P}materials/redshift_nodes.*", "${P}materials/redshift_scene_data.*", "${P}materials/redshift_material.*", "${P}materials/node_graph.*", "${P}scene/coords.*", "${B}scene/materials.py",
+                                       "${P}materials/material_export.*", "${P}materials/cycles_node_material.*", "${P}materials/redshift_lookalikes.*") },
+  @{ Name = "redshift_noise"; Covers = @("${P}materials/redshift_noise.*", "${P}materials/redshift_lookalikes.*", "${P}materials/redshift_nodes.*") },
+  @{ Name = "redshift_legacy"; Covers = @("${P}materials/redshift_legacy.*", "${P}materials/redshift_material.*", "${P}materials/material_export.*",
+                                        "${P}scene/redshift_ids.h", "${P}materials/baked_files.*") },
   @{ Name = "redshift_lookalikes"; Settings = @{ g_cyclesRenderIprTest = "true" }
      Covers = @("${P}materials/redshift_lookalikes.*", "${P}materials/redshift_nodes.*", "${P}materials/redshift_material.*", "${P}materials/material_export.*",
                 "${P}scene/scene_exporter.*", "${B}scene/objects.py", "${B}scene/instancers.py", "${B}scene/materials.py", "${P}scene/redshift_ids.h") },
@@ -244,6 +248,12 @@ $c4dTests = @(
   @{ Name = "display_colour"; Covers = @("${P}scene/scene_exporter.*", "${P}materials/material_export.*", "${P}scene/document_colors.*", "tests/c4d/lib/redshift_basic.py") },
   # Cinema 4D's Background object (0.3.0, F13 W31): what the camera sees, against the Standard renderer; it lights nothing.
   @{ Name = "background_object"; Covers = @("${P}scene/environment_export.*", "${P}scene/scene_exporter.*", "${B}scene/world.py") },
+  # The Falloff shader and every blend mode of the Fusion and Layer shaders as nodes, against the Standard renderer (0.3.0, F13 W30, W32).
+  @{ Name = "shader_layers"; Covers = @("${P}materials/shader_translate.*", "${P}materials/shader_blend.*", "${P}materials/shader_layer.*", "${B}scene/materials.py") },
+  # The Cel shader (Eevee exactly through Shader to RGB, a look-alike in Cycles) and the Lumas shader, against the Standard renderer (0.3.0, F13 W33).
+  # The fog of Cinema 4D's Environment object as a world volume, against the Standard renderer (0.3.0, F13 W28).
+  @{ Name = "environment_fog"; Covers = @("${P}scene/environment_export.*", "${P}scene/scene_exporter.*", "${B}scene/world.py") },
+  @{ Name = "toon"; Covers = @("${P}materials/shader_lighting.*", "${P}materials/shader_translate.*", "${P}materials/shader_layer.*", "${P}scene/light_falloff.*", "${B}scene/materials.py") },
   # What renders in Redshift or the Standard renderer and is not translated is named in the console (0.3.0, F13 W0).
   @{ Name = "untranslated_notes"; Covers = @("${P}scene/scene_exporter.*", "${P}materials/redshift_material.*", "${P}scene/redshift_ids.h") },
   # Objects as sources (0.3.0, F12): the Texture Coordinate node's link to an object of the scene, its axes in the picture
@@ -274,6 +284,20 @@ $c4dTests = @(
      Covers = @("${P}tags/imager_*", "${P}tags/camera_tag.*", "${P}scene/imager_export.*", "${P}scene/redshift_camera.*", "${R}description/tcyclescamera.*",
                 "${R}strings_en-US/description/tcyclescamera.str", "${P}ipr/ipr_controller.*", "${B}scene/compositor.py", "${B}final/__init__.py",
                 "${B}viewport/__init__.py", "tools/make_effects.py", "tools/dump_blender_effects.py") },
+  # The engine of an Imager layer (0.3.0, F13): a layer for the other engine changes nothing, final frames and the IPR.
+  @{ Name = "imager_engine"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}tags/imager_*", "${P}scene/imager_export.*", "${R}description/tcyclescamera.*", "${P}ipr/ipr_controller.*",
+                "${P}scene/scene_exporter.*") },
+  # The Imager effect "Edges" (0.3.0, F13): lines on the outline and creases of a known cube from depth, normals and the
+  # picture, Cycles and Eevee, final frames and the IPR (the picture's edges in the IPR with Cycles).
+  @{ Name = "imager_edges"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}scene/imager_built.*", "${P}scene/imager_export.*", "${P}tags/imager_effects*", "${B}scene/compositor.py", "${B}server.py",
+                "${B}final/__init__.py", "${B}viewport/__init__.py", "tools/make_effects.py", "tools/dump_blender_effects.py") },
+  # Redshift's camera effects and RS Post-Effects translated into Imager layers, against Redshift (0.3.0, F13 W7, W8): tone
+  # mapping, white point, vignetting, colour controls' exposure, bloom, streak, the order, by hand = translated, the switch.
+  @{ Name = "redshift_effects"; Settings = @{ g_cyclesRenderIprTest = "true"; g_cyclesRenderCapture = "<file>" }
+     Covers = @("${P}scene/redshift_camera.*", "${P}scene/imager_built.*", "${P}scene/imager_export.*", "${P}tags/imager_effects*",
+                "${P}videopost/render_settings_*", "${R}description/vpcyclesrender.*", "tools/make_settings.py", "tools/make_effects.py", "${B}scene/compositor.py") },
   # A Redshift camera's exposure ("EV Only", "Filmic", the shutter type "Movie", the Units Mode), against Redshift (0.3.0, F13 W6).
   @{ Name = "redshift_camera"; Settings = @{ g_cyclesRenderCapture = "<file>" }
      Covers = @("${P}scene/redshift_camera.*", "${P}scene/imager_export.*", "${P}scene/camera_export.*", "${P}scene/light_export.*", "${P}scene/redshift_ids.h",

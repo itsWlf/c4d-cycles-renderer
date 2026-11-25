@@ -18,6 +18,7 @@
 #include "../ids.h"
 #include "exchange_material.h"
 #include "../nodespace/cycles_nodes.h"
+#include "redshift_legacy.h"
 #include "redshift_material.h"
 #include "shader_translate.h"
 
@@ -131,10 +132,13 @@ private:
 	maxon::Result<void> BumpAndNormal();
 	maxon::Result<void> Displacement();
 	maxon::Result<void> Coordinates();
-	maxon::Result<NodeOutput> TextureSpacePoint(const maxon::Float64 scale[3], const maxon::Float64 shift[3]);
 
 	maxon::Bool Uses(maxon::Int32 channelSwitch) const { return GetBoolParameter(_material, channelSwitch, false); }
 	void NotTranslated(const maxon::Char* what)
+	{
+		_exporter.GetWriter().Warn(FormatString("Material \"@\": @ is not translated yet.", _material->GetName(), what));
+	}
+	void NotTranslated(const maxon::String& what)
 	{
 		_exporter.GetWriter().Warn(FormatString("Material \"@\": @ is not translated yet.", _material->GetName(), what));
 	}
@@ -567,165 +571,207 @@ maxon::Result<void> ClassicMaterialGraph::Displacement()
 // out[k] = (tag space point)[k] * scale[k] + shift[k], with the components in Cinema 4D's
 // order (X, Y up, Z). Blender's object coordinates are Cinema 4D's local ones with Y and Z
 // swapped, in metres.
-maxon::Result<NodeOutput> ClassicMaterialGraph::TextureSpacePoint(const maxon::Float64 scale[3], const maxon::Float64 shift[3])
+static maxon::Result<NodeOutput> TextureSpacePoint(NodeGraph& graph, const TextureMapping& mapping, cinema::BaseDocument* doc,
+	const maxon::Float64 scale[3], const maxon::Float64 shift[3])
 {
 	iferr_scope;
 
-	const maxon::Float64 unit = Coords::FromDocument(_exporter.GetDocument()).GetScale();
-	const cinema::Matrix inverse = ~_mapping.ml;
+	const maxon::Float64 unit = Coords::FromDocument(doc).GetScale();
+	const cinema::Matrix inverse = ~mapping.ml;
 	// What one metre along Blender's X, Y and Z is in the tag's axes.
 	const cinema::Vector alongX = inverse.sqmat * (cinema::Vector(1.0, 0.0, 0.0) / unit);
 	const cinema::Vector alongY = inverse.sqmat * (cinema::Vector(0.0, 0.0, 1.0) / unit);
 	const cinema::Vector alongZ = inverse.sqmat * (cinema::Vector(0.0, 1.0, 0.0) / unit);
 
-	const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-	const maxon::Int combine = _graph.Add("ShaderNodeCombineXYZ") iferr_return;
+	const maxon::Int coordinates = graph.Add("ShaderNodeTexCoord") iferr_return;
+	const maxon::Int combine = graph.Add("ShaderNodeCombineXYZ") iferr_return;
 	const maxon::Char* const sockets[3] = { "X", "Y", "Z" };
 	for (maxon::Int k = 0; k < 3; ++k)
 	{
-		const maxon::Int dot = _graph.Add("ShaderNodeVectorMath") iferr_return;
-		_graph.SetProperty(dot, "operation", "DOT_PRODUCT"_s);
-		_graph.Link(NodeOutput { coordinates, "Object"_s }, dot, "Vector") iferr_return;
-		_graph.SetInput(dot, "Vector_001", cinema::Vector(alongX[k], alongY[k], alongZ[k]) * scale[k]);
-		const maxon::Int add = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(add, "operation", "ADD"_s);
-		_graph.Link(NodeOutput { dot, "Value"_s }, add, "Value") iferr_return;
-		_graph.SetInput(add, "Value_001", inverse.off[k] * scale[k] + shift[k]);
-		_graph.Link(NodeOutput { add, "Value"_s }, combine, sockets[k]) iferr_return;
+		const maxon::Int dot = graph.Add("ShaderNodeVectorMath") iferr_return;
+		graph.SetProperty(dot, "operation", "DOT_PRODUCT"_s);
+		graph.Link(NodeOutput { coordinates, "Object"_s }, dot, "Vector") iferr_return;
+		graph.SetInput(dot, "Vector_001", cinema::Vector(alongX[k], alongY[k], alongZ[k]) * scale[k]);
+		const maxon::Int add = graph.Add("ShaderNodeMath") iferr_return;
+		graph.SetProperty(add, "operation", "ADD"_s);
+		graph.Link(NodeOutput { dot, "Value"_s }, add, "Value") iferr_return;
+		graph.SetInput(add, "Value_001", inverse.off[k] * scale[k] + shift[k]);
+		graph.Link(NodeOutput { add, "Value"_s }, combine, sockets[k]) iferr_return;
 	}
 	return NodeOutput { combine, "Vector"_s };
 }
 
-// Where the textures of this material are looked up: the texture tag's projection, then its
-// offset and length (tiles). The result is a UV pair in Blender's convention (V up).
+// The texture tag's projection (before its offset and length). The result is a UV pair in Blender's
+// convention (V up), or for the cubic projection a point for Blender's box projection of images.
 //
-//   UVW          the mesh's UV coordinates
+//   UVW          the mesh's UV coordinates (left invalid: the image's own default)
 //   flat         the tag's XY plane: -1..1 becomes 0..1
 //   cylindrical  around the tag's Y axis; height -1..1 becomes 0..1
 //   spherical    around the tag's Y axis; pole to pole
 //   cubic        flat from six sides (Blender's box projection of images)
+maxon::Result<ProjectedUv> ProjectTextureTag(NodeGraph& graph, const TextureMapping& mapping, cinema::BaseDocument* doc, maxon::Bool redshift)
+{
+	iferr_scope;
+
+	ProjectedUv projected;
+	projected.clip = !mapping.tile;
+	const maxon::Float64 lengthX = maxon::Abs(mapping.lengthX) > 1e-9 ? mapping.lengthX : 1.0;
+	const maxon::Float64 lengthY = maxon::Abs(mapping.lengthY) > 1e-9 ? mapping.lengthY : 1.0;
+
+	if (mapping.projection == TEXTURETAG_PROJECTION_UVW)
+		return projected;
+	if (mapping.projection == TEXTURETAG_PROJECTION_FLAT)
+	{
+		const maxon::Float64 scale[3] = { 0.5, 0.5, 0.0 };
+		const maxon::Float64 shift[3] = { 0.5, 0.5, 0.0 };
+		projected.uv = TextureSpacePoint(graph, mapping, doc, scale, shift) iferr_return;
+		return projected;
+	}
+	if (mapping.projection == TEXTURETAG_PROJECTION_CUBIC)
+	{
+		// The cube's sides are 2 units of the tag's axes; tiles shrink them around the centre.
+		const maxon::Float64 scale[3] = { 0.5 / lengthX, 0.5 / lengthY, 0.5 / lengthX };
+		const maxon::Float64 shift[3] = { 0.5, 0.5, 0.5 };
+		const NodeOutput point = TextureSpacePoint(graph, mapping, doc, scale, shift) iferr_return;
+		// Back to Blender's order of axes, which is what its box projection goes by.
+		const maxon::Int separate = graph.Add("ShaderNodeSeparateXYZ") iferr_return;
+		graph.Link(point, separate, "Vector") iferr_return;
+		const maxon::Int combine = graph.Add("ShaderNodeCombineXYZ") iferr_return;
+		graph.Link(NodeOutput { separate, "X"_s }, combine, "X") iferr_return;
+		graph.Link(NodeOutput { separate, "Z"_s }, combine, "Y") iferr_return;
+		graph.Link(NodeOutput { separate, "Y"_s }, combine, "Z") iferr_return;
+		projected.uv = NodeOutput { combine, "Vector"_s };
+		projected.box = true;
+		if (mapping.offsetX != 0.0 || mapping.offsetY != 0.0)
+			projected.untranslated = "the offset of a cubic projection"_s;
+		return projected;
+	}
+	if (mapping.projection == TEXTURETAG_PROJECTION_CYLINDRICAL || mapping.projection == TEXTURETAG_PROJECTION_SPHERICAL)
+	{
+		const maxon::Float64 scale[3] = { 1.0, 1.0, 1.0 };
+		const maxon::Float64 shift[3] = { 0.0, 0.0, 0.0 };
+		const NodeOutput point = TextureSpacePoint(graph, mapping, doc, scale, shift) iferr_return;
+		const maxon::Int separate = graph.Add("ShaderNodeSeparateXYZ") iferr_return;
+		graph.Link(point, separate, "Vector") iferr_return;
+
+		// U: the angle around the Y axis, as a fraction of the full turn. Measured against the
+		// Standard renderer: U is 0 towards +X and grows towards -Z (the side facing a default camera).
+		const maxon::Int angle = graph.Add("ShaderNodeMath") iferr_return;
+		graph.SetProperty(angle, "operation", "ARCTAN2"_s);
+		graph.Link(NodeOutput { separate, "Z"_s }, angle, "Value") iferr_return;
+		graph.Link(NodeOutput { separate, "X"_s }, angle, "Value_001") iferr_return;
+		const maxon::Int turn = graph.Add("ShaderNodeMath") iferr_return;
+		graph.SetProperty(turn, "operation", "MULTIPLY"_s);
+		graph.Link(NodeOutput { angle, "Value"_s }, turn, "Value") iferr_return;
+		graph.SetInput(turn, "Value_001", (redshift ? -SPHERICAL_U_DIRECTION : SPHERICAL_U_DIRECTION) / maxon::PI2);
+		const maxon::Int shifted = graph.Add("ShaderNodeMath") iferr_return;
+		graph.SetProperty(shifted, "operation", "ADD"_s);
+		graph.Link(NodeOutput { turn, "Value"_s }, shifted, "Value") iferr_return;
+		graph.SetInput(shifted, "Value_001", redshift ? 0.0 : SPHERICAL_U_START);
+		const maxon::Int wrap = graph.Add("ShaderNodeMath") iferr_return;
+		graph.SetProperty(wrap, "operation", "FRACT"_s);
+		graph.Link(NodeOutput { shifted, "Value"_s }, wrap, "Value") iferr_return;
+
+		NodeOutput v;
+		if (mapping.projection == TEXTURETAG_PROJECTION_CYLINDRICAL)
+		{
+			const maxon::Int height = graph.Add("ShaderNodeMath") iferr_return;
+			graph.SetProperty(height, "operation", "MULTIPLY_ADD"_s);
+			graph.Link(NodeOutput { separate, "Y"_s }, height, "Value") iferr_return;
+			graph.SetInput(height, "Value_001", 0.5);
+			graph.SetInput(height, "Value_002", 0.5);
+			v = NodeOutput { height, "Value"_s };
+		}
+		else
+		{
+			// V up = 1 - (angle from the +Y pole) / pi = 0.5 + asin(y / length) / pi
+			const maxon::Int length = graph.Add("ShaderNodeVectorMath") iferr_return;
+			graph.SetProperty(length, "operation", "LENGTH"_s);
+			graph.Link(point, length, "Vector") iferr_return;
+			const maxon::Int ratio = graph.Add("ShaderNodeMath") iferr_return;
+			graph.SetProperty(ratio, "operation", "DIVIDE"_s);
+			graph.Link(NodeOutput { separate, "Y"_s }, ratio, "Value") iferr_return;
+			graph.Link(NodeOutput { length, "Value"_s }, ratio, "Value_001") iferr_return;
+			const maxon::Int latitude = graph.Add("ShaderNodeMath") iferr_return;
+			graph.SetProperty(latitude, "operation", "ARCSINE"_s);
+			graph.Link(NodeOutput { ratio, "Value"_s }, latitude, "Value") iferr_return;
+			const maxon::Int height = graph.Add("ShaderNodeMath") iferr_return;
+			graph.SetProperty(height, "operation", "MULTIPLY_ADD"_s);
+			graph.Link(NodeOutput { latitude, "Value"_s }, height, "Value") iferr_return;
+			graph.SetInput(height, "Value_001", 1.0 / maxon::PI);
+			graph.SetInput(height, "Value_002", 0.5);
+			v = NodeOutput { height, "Value"_s };
+		}
+		const maxon::Int combine = graph.Add("ShaderNodeCombineXYZ") iferr_return;
+		graph.Link(NodeOutput { wrap, "Value"_s }, combine, "X") iferr_return;
+		graph.Link(v, combine, "Y") iferr_return;
+		projected.uv = NodeOutput { combine, "Vector"_s };
+		return projected;
+	}
+	projected.untranslated = "this projection of its texture tag (UVW mapping is used)"_s;
+	return projected;
+}
+
+maxon::Result<NodeOutput> TileTextureTag(NodeGraph& graph, const NodeOutput& uv, const TextureMapping& mapping)
+{
+	iferr_scope;
+
+	const maxon::Float64 lengthX = maxon::Abs(mapping.lengthX) > 1e-9 ? mapping.lengthX : 1.0;
+	const maxon::Float64 lengthY = maxon::Abs(mapping.lengthY) > 1e-9 ? mapping.lengthY : 1.0;
+	if (mapping.offsetX == 0.0 && mapping.offsetY == 0.0 && lengthX == 1.0 && lengthY == 1.0)
+		return uv;
+	NodeOutput at = uv;
+	if (!at.IsValid())
+	{
+		const maxon::Int coordinates = graph.Add("ShaderNodeTexCoord") iferr_return;
+		at = NodeOutput { coordinates, "UV"_s };
+	}
+	// Offset and length are given with V running down: u' = (u - offsetX) / lengthX and the
+	// same for v. Written for Blender's V, which runs up: V' = V / lengthY + 1 - (1 - offsetY) / lengthY.
+	const maxon::Int place = graph.Add("ShaderNodeVectorMath") iferr_return;
+	graph.SetProperty(place, "operation", "MULTIPLY_ADD"_s);
+	graph.Link(at, place, "Vector") iferr_return;
+	graph.SetInput(place, "Vector_001", cinema::Vector(1.0 / lengthX, 1.0 / lengthY, 1.0));
+	graph.SetInput(place, "Vector_002", cinema::Vector(-mapping.offsetX / lengthX, 1.0 - (1.0 - mapping.offsetY) / lengthY, 0.0));
+	return NodeOutput { place, "Vector"_s };
+}
+
+// Where the textures of this material are looked up: the texture tag's projection, then its
+// offset and length (tiles): ProjectTextureTag, TileTextureTag.
 maxon::Result<void> ClassicMaterialGraph::Coordinates()
 {
 	iferr_scope;
 
 	if (_mapping.IsPlain())
 		return maxon::OK;
-
-	const maxon::Float64 lengthX = maxon::Abs(_mapping.lengthX) > 1e-9 ? _mapping.lengthX : 1.0;
-	const maxon::Float64 lengthY = maxon::Abs(_mapping.lengthY) > 1e-9 ? _mapping.lengthY : 1.0;
-	NodeOutput uv;
-	maxon::Bool box = false;
-
-	if (_mapping.projection == TEXTURETAG_PROJECTION_UVW)
+	const ProjectedUv projected = ProjectTextureTag(_graph, _mapping, _exporter.GetDocument()) iferr_return;
+	if (projected.untranslated.IsPopulated())
+		NotTranslated(projected.untranslated);
+	if (projected.box)
 	{
-		const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
-		uv = NodeOutput { coordinates, "UV"_s };
-	}
-	else if (_mapping.projection == TEXTURETAG_PROJECTION_FLAT)
-	{
-		const maxon::Float64 scale[3] = { 0.5, 0.5, 0.0 };
-		const maxon::Float64 shift[3] = { 0.5, 0.5, 0.0 };
-		uv = TextureSpacePoint(scale, shift) iferr_return;
-	}
-	else if (_mapping.projection == TEXTURETAG_PROJECTION_CUBIC)
-	{
-		// The cube's sides are 2 units of the tag's axes; tiles shrink them around the centre.
-		const maxon::Float64 scale[3] = { 0.5 / lengthX, 0.5 / lengthY, 0.5 / lengthX };
-		const maxon::Float64 shift[3] = { 0.5, 0.5, 0.5 };
-		const NodeOutput point = TextureSpacePoint(scale, shift) iferr_return;
-		// Back to Blender's order of axes, which is what its box projection goes by.
-		const maxon::Int separate = _graph.Add("ShaderNodeSeparateXYZ") iferr_return;
-		_graph.Link(point, separate, "Vector") iferr_return;
-		const maxon::Int combine = _graph.Add("ShaderNodeCombineXYZ") iferr_return;
-		_graph.Link(NodeOutput { separate, "X"_s }, combine, "X") iferr_return;
-		_graph.Link(NodeOutput { separate, "Z"_s }, combine, "Y") iferr_return;
-		_graph.Link(NodeOutput { separate, "Y"_s }, combine, "Z") iferr_return;
-		_shaders.SetCoordinates(NodeOutput { combine, "Vector"_s }, true, !_mapping.tile);
-		if (_mapping.offsetX != 0.0 || _mapping.offsetY != 0.0)
-			NotTranslated("the offset of a cubic projection");
+		_shaders.SetCoordinates(projected.uv, true, projected.clip);
 		return maxon::OK;
 	}
-	else if (_mapping.projection == TEXTURETAG_PROJECTION_CYLINDRICAL || _mapping.projection == TEXTURETAG_PROJECTION_SPHERICAL)
+	NodeOutput uv = TileTextureTag(_graph, projected.uv, _mapping) iferr_return;
+	if (!uv.IsValid())
 	{
-		const maxon::Float64 scale[3] = { 1.0, 1.0, 1.0 };
-		const maxon::Float64 shift[3] = { 0.0, 0.0, 0.0 };
-		const NodeOutput point = TextureSpacePoint(scale, shift) iferr_return;
-		const maxon::Int separate = _graph.Add("ShaderNodeSeparateXYZ") iferr_return;
-		_graph.Link(point, separate, "Vector") iferr_return;
-
-		// U: the angle around the Y axis, as a fraction of the full turn. Measured against the
-		// Standard renderer: U is 0 towards +X and grows towards -Z (the side facing a default camera).
-		const maxon::Int angle = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(angle, "operation", "ARCTAN2"_s);
-		_graph.Link(NodeOutput { separate, "Z"_s }, angle, "Value") iferr_return;
-		_graph.Link(NodeOutput { separate, "X"_s }, angle, "Value_001") iferr_return;
-		const maxon::Int turn = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(turn, "operation", "MULTIPLY"_s);
-		_graph.Link(NodeOutput { angle, "Value"_s }, turn, "Value") iferr_return;
-		_graph.SetInput(turn, "Value_001", SPHERICAL_U_DIRECTION / maxon::PI2);
-		const maxon::Int shifted = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(shifted, "operation", "ADD"_s);
-		_graph.Link(NodeOutput { turn, "Value"_s }, shifted, "Value") iferr_return;
-		_graph.SetInput(shifted, "Value_001", SPHERICAL_U_START);
-		const maxon::Int wrap = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(wrap, "operation", "FRACT"_s);
-		_graph.Link(NodeOutput { shifted, "Value"_s }, wrap, "Value") iferr_return;
-
-		NodeOutput v;
-		if (_mapping.projection == TEXTURETAG_PROJECTION_CYLINDRICAL)
-		{
-			const maxon::Int height = _graph.Add("ShaderNodeMath") iferr_return;
-			_graph.SetProperty(height, "operation", "MULTIPLY_ADD"_s);
-			_graph.Link(NodeOutput { separate, "Y"_s }, height, "Value") iferr_return;
-			_graph.SetInput(height, "Value_001", 0.5);
-			_graph.SetInput(height, "Value_002", 0.5);
-			v = NodeOutput { height, "Value"_s };
-		}
-		else
-		{
-			// V up = 1 - (angle from the +Y pole) / pi = 0.5 + asin(y / length) / pi
-			const maxon::Int length = _graph.Add("ShaderNodeVectorMath") iferr_return;
-			_graph.SetProperty(length, "operation", "LENGTH"_s);
-			_graph.Link(point, length, "Vector") iferr_return;
-			const maxon::Int ratio = _graph.Add("ShaderNodeMath") iferr_return;
-			_graph.SetProperty(ratio, "operation", "DIVIDE"_s);
-			_graph.Link(NodeOutput { separate, "Y"_s }, ratio, "Value") iferr_return;
-			_graph.Link(NodeOutput { length, "Value"_s }, ratio, "Value_001") iferr_return;
-			const maxon::Int latitude = _graph.Add("ShaderNodeMath") iferr_return;
-			_graph.SetProperty(latitude, "operation", "ARCSINE"_s);
-			_graph.Link(NodeOutput { ratio, "Value"_s }, latitude, "Value") iferr_return;
-			const maxon::Int height = _graph.Add("ShaderNodeMath") iferr_return;
-			_graph.SetProperty(height, "operation", "MULTIPLY_ADD"_s);
-			_graph.Link(NodeOutput { latitude, "Value"_s }, height, "Value") iferr_return;
-			_graph.SetInput(height, "Value_001", 1.0 / maxon::PI);
-			_graph.SetInput(height, "Value_002", 0.5);
-			v = NodeOutput { height, "Value"_s };
-		}
-		const maxon::Int combine = _graph.Add("ShaderNodeCombineXYZ") iferr_return;
-		_graph.Link(NodeOutput { wrap, "Value"_s }, combine, "X") iferr_return;
-		_graph.Link(v, combine, "Y") iferr_return;
-		uv = NodeOutput { combine, "Vector"_s };
-	}
-	else
-	{
-		NotTranslated("this projection of its texture tag (UVW mapping is used)");
 		const maxon::Int coordinates = _graph.Add("ShaderNodeTexCoord") iferr_return;
 		uv = NodeOutput { coordinates, "UV"_s };
 	}
-
-	// Offset and length are given with V running down: u' = (u - offsetX) / lengthX and the
-	// same for v. Written for Blender's V, which runs up: V' = V / lengthY + 1 - (1 - offsetY) / lengthY.
-	if (_mapping.offsetX != 0.0 || _mapping.offsetY != 0.0 || lengthX != 1.0 || lengthY != 1.0)
-	{
-		const maxon::Int place = _graph.Add("ShaderNodeVectorMath") iferr_return;
-		_graph.SetProperty(place, "operation", "MULTIPLY_ADD"_s);
-		_graph.Link(uv, place, "Vector") iferr_return;
-		_graph.SetInput(place, "Vector_001", cinema::Vector(1.0 / lengthX, 1.0 / lengthY, 1.0));
-		_graph.SetInput(place, "Vector_002", cinema::Vector(-_mapping.offsetX / lengthX, 1.0 - (1.0 - _mapping.offsetY) / lengthY, 0.0));
-		uv = NodeOutput { place, "Vector"_s };
-	}
-	_shaders.SetCoordinates(uv, box, !_mapping.tile);
+	_shaders.SetCoordinates(uv, false, projected.clip);
 	return maxon::OK;
+}
+
+maxon::Result<ProjectedUv> MaterialExporter::GetCurrentProjection(NodeGraph& graph, const maxon::String& materialName)
+{
+	iferr_scope;
+	if (_projected)
+		return _currentProjection;
+	_currentProjection = ProjectTextureTag(graph, _currentMapping, _doc, true) iferr_return;
+	_projected = true;
+	if (_currentProjection.untranslated.IsPopulated())
+		Warn(FormatString("Material \"@\": @ is not translated yet.", materialName, _currentProjection.untranslated));
+	return _currentProjection;
 }
 
 //----------------------------------------------------------------------------------------
@@ -1235,12 +1281,8 @@ maxon::Result<void> MaterialExporter::WriteLayers(const maxon::BaseArray<Materia
 			// A Redshift material is read from its Standard Material node; any other node
 			// material, as Cinema 4D describes it to other programs.
 			// A material of Cycles nodes goes to Blender as it is.
-			// The texture tag's placement is read for classic materials only.
-			if (!layers[i].mapping.IsPlain())
-			{
-				Warn(FormatString("Material \"@\": the projection, offset and tiles of its texture tag are translated for classic materials only; "
-					"this one is placed as with UVW mapping, no offset and no tiles.", material->GetName()));
-			}
+			// The texture tag's placement is read for classic and Redshift materials (since 0.3.0, F13 W18:
+			// Redshift's Texture node and the nodes that read UV coordinates take it, GetCurrentProjection).
 			NodeOutput layerDisplacement;
 			CyclesMaterialSettings layerSettings;
 			maxon::Bool described = BuildCyclesNodeSurface(*this, graph, material, layerSurface, layerDisplacement, layerSettings) iferr_return;
@@ -1256,7 +1298,25 @@ maxon::Result<void> MaterialExporter::WriteLayers(const maxon::BaseArray<Materia
 			}
 			if (!described)
 			{
+				// The texture tag's mapping, for the Redshift translation while it writes this layer (GetCurrentMapping).
+				_currentMapping = layers[i].mapping;
+				_projected = false;
+				finally
+				{
+					_currentMapping = TextureMapping();
+					_projected = false;
+				};
 				described = BuildRedshiftSurface(*this, graph, material, layerSurface) iferr_return;
+				if (!described)
+				{
+					// The legacy "RS Shader Graph" (0.3.0, F13 W17): its Xpresso graph read as a Redshift node graph.
+					described = BuildRedshiftShaderGraph(*this, graph, material, layerSurface) iferr_return;
+				}
+			}
+			if (!described && !layers[i].mapping.IsPlain())
+			{
+				Warn(FormatString("Material \"@\": the projection, offset and tiles of its texture tag are translated for classic and Redshift materials only; "
+					"this one is placed as with UVW mapping, no offset and no tiles.", material->GetName()));
 			}
 			if (!described)
 			{

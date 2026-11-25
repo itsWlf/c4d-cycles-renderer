@@ -442,6 +442,32 @@ PAGE = [
         ]),
     ]),
 
+    # How scenes made for other renderers are translated (0.3.0, F13; the maintainer, 2026-11-25: a tab of its own
+    # for settings of this kind, one section per renderer). Read by the plugin, never sent: path None. The Redshift
+    # section is where the switch for Redshift's ACES view in Basic documents (W1 of internal/f13/parity-report.md)
+    # belongs when it is built: ids 1511 to 1519 are kept for it (1520 to 1527 are the effects' own switches below).
+    group(2210, "CYCLES_TAB_TRANSLATION", "Scene Translation", [
+        group(2211, "CYCLES_GROUP_REDSHIFT", "Redshift", [
+            # On: a Redshift camera's exposure, tone mapping, white point, saturation and vignetting and the RS
+            # Post-Effects' bloom, streak, flare and colour controls (as the camera takes them) become the first
+            # layers of the camera's Imager (scene/redshift_camera.cpp). Off: none of it, and no console line about it.
+            B(1510, "CYCLES_REDSHIFT_EFFECTS", "Camera and Post Effects", True, None),
+            # One switch per translated effect, Redshift's names (the maintainer, 2026-11-25: "One single switch for all,
+            # but a dropdown with individual switches for each effect if the user desires for it"). An effect is
+            # translated when 1510 and its own switch are on; off, it is neither translated nor named.
+            group(2212, "CYCLES_GROUP_REDSHIFT_EFFECTS", "Effects", [
+                row(B(1520, "CYCLES_REDSHIFT_EXPOSURE", "Exposure", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1)),
+                    B(1521, "CYCLES_REDSHIFT_WHITE_POINT", "White Point", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1))),
+                row(B(1522, "CYCLES_REDSHIFT_VIGNETTING", "Vignetting", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1)),
+                    B(1523, "CYCLES_REDSHIFT_TONE_MAPPING", "Tone-Mapping", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1))),
+                row(B(1524, "CYCLES_REDSHIFT_BLOOM", "Bloom", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1)),
+                    B(1525, "CYCLES_REDSHIFT_STREAK", "Streak", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1))),
+                row(B(1526, "CYCLES_REDSHIFT_FLARE", "Flare", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1)),
+                    B(1527, "CYCLES_REDSHIFT_COLOR_CONTROLS", "Color Controls", True, None, enable=("CYCLES_REDSHIFT_EFFECTS", 1))),
+            ], open=False),
+        ]),
+    ]),
+
     group(2006, "CYCLES_GROUP_PASSES", "AOVs", [
         group(2195, "CYCLES_GROUP_PASSES_DATA", "Data", passes(DATA_PASSES)),
         group(2196, "CYCLES_GROUP_PASSES_LIGHT", "Light", passes(LIGHT_PASSES)),

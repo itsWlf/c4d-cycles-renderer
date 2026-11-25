@@ -61,6 +61,18 @@ static const maxon::Int32 REDSHIFT_UNITS_LUMINOUS_EXITANCE = 6;
 /// orslight.h from the 2025 SDK on; not in the 2024 SDK).
 static const maxon::Int32 REDSHIFT_CAMERA_CONTRIBUTION = 10042;
 
+/// The legacy Redshift material "RS Shader Graph" (Redshift's Mrsgraph; the redshift Python module lists it) and the nodes
+/// of its Xpresso graph: a Redshift shader node (GVrsshader), whose parameter REDSHIFT_GV_SHADER_CLASS names its class
+/// ("StandardMaterial", "TextureSampler", ...), the Output node (GVrsoutput), and a node that holds a Cinema 4D shader in its
+/// parameter REDSHIFT_GV_C4D_SHADER_LINK. Measured in RS_Parity_Realism and RS_Parity_Sweeps with Cinema 4D 2027 (0.3.0, F13
+/// W17, internal/f13/probe_w17.py); in no SDK.
+static const maxon::Int32 REDSHIFT_SHADER_GRAPH_MATERIAL = 1036224;
+static const maxon::Int32 REDSHIFT_GV_SHADER = 1036227;
+static const maxon::Int32 REDSHIFT_GV_SHADER_CLASS = 1001;
+static const maxon::Int32 REDSHIFT_GV_OUTPUT = 1036746;
+static const maxon::Int32 REDSHIFT_GV_C4D_SHADER = 1036762;
+static const maxon::Int32 REDSHIFT_GV_C4D_SHADER_LINK = 1000;
+
 } // namespace cyclesrender
 
 #endif // CYCLESRENDER_REDSHIFT_IDS_H__

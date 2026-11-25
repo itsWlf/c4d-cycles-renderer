@@ -10,6 +10,7 @@
 #include "xcolor.h"
 #include "xmg_color.h"
 #include "xslacolorizer.h"
+#include "xslafalloff.h"
 #include "xslafresnel.h"
 #include "xslafusion.h"
 #include "xslagradient.h"
@@ -28,7 +29,7 @@ static const maxon::Int MAX_RAMP_STOPS = 32;
 // Shaders whose result depends on more than the UV coordinates: the view, the mesh, the scene.
 // A tree containing one of them cannot be baked into a texture.
 static const maxon::Int32 NOT_BAKEABLE[] = { Xfresnel, Xvertexmap, Xmgcolor, Xmgmultishader, Xfalloff, Xlumas, Xproximal, Xnormaldirection,
-	Xambientocclusion, Xsss, Xthinfilm, Xspectral, Xterrainmask };
+	Xambientocclusion, Xsss, Xthinfilm, Xspectral, Xterrainmask, Xcel };
 
 maxon::Bool ShaderTranslator::CanBake(cinema::BaseShader* shader)
 {
@@ -57,6 +58,7 @@ maxon::Result<NodeOutput> ShaderTranslator::Translate(cinema::BaseShader* shader
 
 	if (!shader)
 		return NodeOutput();
+	_channel = channel;
 	const NodeOutput result = Any(shader, colorData) iferr_return;
 	if (!result.IsValid())
 	{
@@ -91,6 +93,10 @@ maxon::Result<NodeOutput> ShaderTranslator::Native(cinema::BaseShader* shader, m
 		case Xgradient: return GradientShader(shader);
 		case Xcolorizer: return Colorizer(shader, colorData);
 		case Xfresnel: return Fresnel(shader);
+		case Xfalloff: return FalloffShader(shader);
+		case Xcel: return Cel(shader);
+		case Xlumas: return Lumas(shader);
+		case Xambientocclusion: return AmbientOcclusion(shader);
 		case Xfusion: return Fusion(shader, colorData);
 		case Xlayer: return Layer(shader, colorData);
 		case Xvertexmap:
@@ -278,12 +284,12 @@ maxon::Result<NodeOutput> ShaderTranslator::Ramp(cinema::BaseShader* shader, max
 	if (count < 1 || count > MAX_RAMP_STOPS)
 		return NodeOutput();
 
-	// A Color Ramp has one interpolation for all its stops and no bias between them.
+	// A Color Ramp has one interpolation for all its stops and no bias between them (a knot's bias: below).
 	maxon::BaseArray<maxon::GradientKnot> knots;
 	for (maxon::Int32 i = 0; i < count; ++i)
 	{
 		const maxon::GradientKnot knot = gradient->GetKnot(i);
-		if (knot.interpolation != gradient->GetKnot(0).interpolation || (count > 1 && maxon::Abs(knot.bias - 0.5) > 1e-4))
+		if (knot.interpolation != gradient->GetKnot(0).interpolation)
 			return NodeOutput();
 		knots.Append(knot) iferr_return;
 	}
@@ -306,14 +312,32 @@ maxon::Result<NodeOutput> ShaderTranslator::Ramp(cinema::BaseShader* shader, max
 	ramp.BeginObject();
 	ramp.String("interpolation", maxon::String(interpolation));
 	ramp.BeginArray("elements");
-	for (const maxon::GradientKnot& knot : knots)
+	maxon::Int stops = 0;
+	for (maxon::Int i = 0; i < knots.GetCount(); ++i)
 	{
+		const maxon::GradientKnot& knot = knots[i];
 		// A knot is a colour parameter like any other (measured with a stepped gradient in "Basic" mode).
 		const cinema::Vector color = _exporter.GetColors().Input(cinema::Vector(knot.col.r, knot.col.g, knot.col.b) * knot.brightness);
 		const maxon::Float64 element[5] = { knot.pos, color.x, color.y, color.z, 1.0 };
 		ramp.Floats(nullptr, element, 5);
+		++stops;
+		// A knot's bias is where, between it and the next knot, the colour is halfway (measured in the Standard
+		// renderer: 0.75 put the half value at three quarters, and the last knot's bias does nothing; the segment
+		// is stretched on both sides of it). A stop of the mean colour there is exact for linear knots and close
+		// for smooth ones.
+		if (i + 1 < knots.GetCount() && maxon::Abs(knot.bias - 0.5) > 1e-4 && knots[0].interpolation != maxon::GRADIENT_INTERPOLATION_TYPE::NONE)
+		{
+			const maxon::GradientKnot& next = knots[i + 1];
+			const cinema::Vector nextColor = _exporter.GetColors().Input(cinema::Vector(next.col.r, next.col.g, next.col.b) * next.brightness);
+			const cinema::Vector middle = (color + nextColor) * 0.5;
+			const maxon::Float64 extra[5] = { knot.pos + maxon::Clamp01(knot.bias) * (next.pos - knot.pos), middle.x, middle.y, middle.z, 1.0 };
+			ramp.Floats(nullptr, extra, 5);
+			++stops;
+		}
 	}
 	ramp.EndArray();
+	if (stops > MAX_RAMP_STOPS)
+		return NodeOutput();
 	ramp.EndObject();
 
 	const maxon::Int node = _graph.Add("ShaderNodeValToRGB") iferr_return;
@@ -388,51 +412,49 @@ maxon::Result<NodeOutput> ShaderTranslator::Fresnel(cinema::BaseShader* shader)
 	return Ramp(shader, SLA_FRESNEL_GRADIENT, NodeOutput { facing, "Value"_s });
 }
 
-maxon::Result<NodeOutput> ShaderTranslator::Blend(maxon::Int32 layerBlendMode, const NodeOutput& bottom, const NodeOutput& top, maxon::Float64 amount, const NodeOutput& mask)
+maxon::Result<NodeOutput> ShaderTranslator::FalloffShader(cinema::BaseShader* shader)
 {
 	iferr_scope;
 
-	// Only the modes whose formula is the same in Blender's Mix node.
-	const maxon::Char* type = nullptr;
-	switch (layerBlendMode)
+	// Measured with the Standard renderer (internal/f13/probe_w30.py, a ball under a parallel camera, 116 normals
+	// per case): the gradient's position is (1 + N . V) / 2, N the surface's normal and V the shader's vector made
+	// unit length, in the shader's space: World as it is, Object in the object's axes (a turned ball followed its
+	// axes), Camera in the camera's (a turned camera followed it). Within 0.011 of a smooth gradient's ease for a
+	// vector along an axis, 0.03 for a slanted one. "Use Bump" is not followed.
+	cinema::Vector vector = GetVectorParameter(shader, SLA_FALLOFF_VECTOR, cinema::Vector(0.0, 1.0, 0.0));
+	if (vector.GetLength() < 1e-9)
+		return NodeOutput();
+	vector.Normalize();
+	const maxon::Int32 space = GetIntParameter(shader, SLA_FALLOFF_SPACE, SLA_FALLOFF_SPACE_OBJECT);
+	const maxon::Int geometry = _graph.Add("ShaderNodeNewGeometry") iferr_return;
+	NodeOutput normal { geometry, "Normal"_s };
+	// Cinema 4D's axes x, y, z are Blender's x, z, y, in the world and an object alike. The Vector Transform node's
+	// camera space is Cinema 4D's own, x right, y up, z ahead, in Cycles and Eevee alike (measured).
+	cinema::Vector direction(vector.x, vector.z, vector.y);
+	if (space == SLA_FALLOFF_SPACE_OBJECT || space == SLA_FALLOFF_SPACE_CAMERA)
 	{
-		case cinema::BlendNormal: type = "MIX"; break;
-		case cinema::BlendMultiply: type = "MULTIPLY"; break;
-		case cinema::BlendScreen: type = "SCREEN"; break;
-		case cinema::BlendDarken: type = "DARKEN"; break;
-		case cinema::BlendLighten: type = "LIGHTEN"; break;
-		case cinema::BlendAdd: type = "ADD"; break;
-		case cinema::BlendSubtract: type = "SUBTRACT"; break;
-		case cinema::BlendDifference: type = "DIFFERENCE"; break;
-		case cinema::BlendExclusion: type = "EXCLUSION"; break;
-		default: return NodeOutput();
+		const maxon::Int transform = _graph.Add("ShaderNodeVectorTransform") iferr_return;
+		_graph.SetProperty(transform, "vector_type", "NORMAL"_s);
+		_graph.SetProperty(transform, "convert_from", "WORLD"_s);
+		_graph.SetProperty(transform, "convert_to", space == SLA_FALLOFF_SPACE_CAMERA ? "CAMERA"_s : "OBJECT"_s);
+		_graph.Link(normal, transform, "Vector") iferr_return;
+		const maxon::Int unit = _graph.Add("ShaderNodeVectorMath") iferr_return;
+		_graph.SetProperty(unit, "operation", "NORMALIZE"_s);
+		_graph.Link(NodeOutput { transform, "Vector"_s }, unit, "Vector") iferr_return;
+		normal = NodeOutput { unit, "Vector"_s };
+		if (space == SLA_FALLOFF_SPACE_CAMERA)
+			direction = vector;
 	}
-	const maxon::Int mix = _graph.Add("ShaderNodeMix") iferr_return;
-	_graph.SetProperty(mix, "data_type", "RGBA"_s);
-	_graph.SetProperty(mix, "blend_type", maxon::String(type));
-	_graph.SetProperty(mix, "clamp_factor", true);
-	if (bottom.IsValid())
-	{
-		_graph.Link(bottom, mix, "A_Color") iferr_return;
-	}
-	else
-	{
-		_graph.SetInput(mix, "A_Color", cinema::Vector(0.0));
-	}
-	_graph.Link(top, mix, "B_Color") iferr_return;
-	if (mask.IsValid())
-	{
-		const maxon::Int scale = _graph.Add("ShaderNodeMath") iferr_return;
-		_graph.SetProperty(scale, "operation", "MULTIPLY"_s);
-		_graph.Link(mask, scale, "Value") iferr_return;
-		_graph.SetInput(scale, "Value_001", amount);
-		_graph.Link(NodeOutput { scale, "Value"_s }, mix, "Factor_Float") iferr_return;
-	}
-	else
-	{
-		_graph.SetInput(mix, "Factor_Float", amount);
-	}
-	return NodeOutput { mix, "Result_Color"_s };
+	const maxon::Int dot = _graph.Add("ShaderNodeVectorMath") iferr_return;
+	_graph.SetProperty(dot, "operation", "DOT_PRODUCT"_s);
+	_graph.Link(normal, dot, "Vector") iferr_return;
+	_graph.SetInput(dot, "Vector_001", direction);
+	const maxon::Int position = _graph.Add("ShaderNodeMath") iferr_return;
+	_graph.SetProperty(position, "operation", "MULTIPLY_ADD"_s);
+	_graph.Link(NodeOutput { dot, "Value"_s }, position, "Value") iferr_return;
+	_graph.SetInput(position, "Value_001", 0.5);
+	_graph.SetInput(position, "Value_002", 0.5);
+	return Ramp(shader, SLA_FALLOFF_GRADIENT, NodeOutput { position, "Value"_s });
 }
 
 // The Fusion shader's blend modes, in the Layer shader's numbering.
@@ -449,6 +471,16 @@ static maxon::Int32 FusionBlendMode(maxon::Int32 mode)
 		case SLA_FUSION_MODE_SUBTRACT: return cinema::BlendSubtract;
 		case SLA_FUSION_MODE_DIFFERENCE: return cinema::BlendDifference;
 		case SLA_FUSION_MODE_EXCLUSION: return cinema::BlendExclusion;
+		case SLA_FUSION_MODE_OVERLAY: return cinema::BlendOverlay;
+		case SLA_FUSION_MODE_HARD_LIGHT: return cinema::BlendHardLight;
+		case SLA_FUSION_MODE_SOFT_LIGHT: return cinema::BlendSoftLight;
+		case SLA_FUSION_MODE_DODGE: return cinema::BlendDodge;
+		case SLA_FUSION_MODE_BURN: return cinema::BlendBurn;
+		case SLA_FUSION_MODE_HUE: return cinema::BlendHue;
+		case SLA_FUSION_MODE_SAT: return cinema::BlendSat;
+		case SLA_FUSION_MODE_COLOR: return cinema::BlendColor;
+		case SLA_FUSION_MODE_LUMINANCE: return cinema::BlendLuminance;
+		case SLA_FUSION_MODE_LEVR: return cinema::BlendLevr;
 		default: return NOTOK;
 	}
 }
@@ -462,8 +494,26 @@ maxon::Result<NodeOutput> ShaderTranslator::Fusion(cinema::BaseShader* shader, m
 	cinema::BaseShader* const blendShader = GetShaderParameter(shader, SLA_FUSION_BLEND_CHANNEL, doc);
 	cinema::BaseShader* const maskShader = GetBoolParameter(shader, SLA_FUSION_USE_MASK, false) ? GetShaderParameter(shader, SLA_FUSION_MASK_CHANNEL, doc) : nullptr;
 	const maxon::Int32 mode = FusionBlendMode(GetIntParameter(shader, SLA_FUSION_MODE, SLA_FUSION_MODE_NORMAL));
+	const maxon::Float64 amount = GetFloatParameter(shader, SLA_FUSION_BLEND, 1.0);
 	if (mode == NOTOK || !blendShader)
 		return NodeOutput();
+	// Nothing of the blend channel shows at an amount of 0 without a mask (measured: every mode is the base
+	// channel mixed with its result by the amount, Levr aside): the base alone, whatever the blend channel holds.
+	if (amount <= 0.0 && !maskShader && mode != cinema::BlendLevr)
+	{
+		NodeOutput result = Any(baseShader, colorData) iferr_return;
+		if (baseShader && !result.IsValid())
+			return NodeOutput();
+		if (!result.IsValid())
+		{
+			result = Black() iferr_return;
+		}
+		if (GetBoolParameter(shader, SLA_FUSION_INVERT_OUTPUT, false))
+		{
+			result = Invert(result) iferr_return;
+		}
+		return result;
+	}
 	// When everything can be baked, one baked texture beats a graph of several.
 	if (CanBake(shader))
 	{
@@ -497,56 +547,10 @@ maxon::Result<NodeOutput> ShaderTranslator::Fusion(cinema::BaseShader* shader, m
 			mask = NodeOutput { invert, "Value"_s };
 		}
 	}
-	NodeOutput result = Blend(mode, base, blend, GetFloatParameter(shader, SLA_FUSION_BLEND, 1.0), mask) iferr_return;
+	NodeOutput result = Blend(mode, base, blend, amount, mask) iferr_return;
 	if (result.IsValid() && GetBoolParameter(shader, SLA_FUSION_INVERT_OUTPUT, false))
 	{
 		result = Invert(result) iferr_return;
-	}
-	return result;
-}
-
-maxon::Result<NodeOutput> ShaderTranslator::Layer(cinema::BaseShader* shader, maxon::Bool colorData)
-{
-	iferr_scope;
-
-	// A graph is only worth building when a layer cannot be baked; otherwise the whole stack
-	// becomes one texture, which also covers the effect layers and every blend mode.
-	if (CanBake(shader))
-		return NodeOutput();
-
-	cinema::LayerShader* const layers = static_cast<cinema::LayerShader*>(shader);
-	// The list starts with the top layer; the stack is built from the bottom.
-	maxon::BaseArray<cinema::LayerShaderLayer*> stack;
-	for (cinema::LayerShaderLayer* layer = layers->GetFirstLayer(); layer; layer = layer->GetNext())
-	{
-		cinema::GeData active;
-		if (layer->GetParameter(LAYER_S_PARAM_ALL_ACTIVE, active) && !active.GetBool())
-			continue;
-		cinema::GeData flags;
-		if (layer->GetType() != cinema::TypeShader || (layer->GetParameter(LAYER_S_PARAM_ALL_FLAGS, flags) && flags.GetInt32() != 0))
-			return NodeOutput();
-		stack.Insert(0, layer) iferr_return;
-	}
-
-	NodeOutput result;
-	for (cinema::LayerShaderLayer* layer : stack)
-	{
-		cinema::GeData mode;
-		cinema::GeData amount;
-		cinema::GeData link;
-		layer->GetParameter(LAYER_S_PARAM_SHADER_MODE, mode);
-		layer->GetParameter(LAYER_S_PARAM_SHADER_BLEND, amount);
-		layer->GetParameter(LAYER_S_PARAM_SHADER_LINK, link);
-		cinema::BaseLink* const shaderLink = static_cast<cinema::BaseLink*>(link.GetVoid());
-		cinema::BaseList2D* const linked = shaderLink ? shaderLink->GetLink(_exporter.GetDocument(), Xbase) : nullptr;
-		if (!linked)
-			continue;
-		const NodeOutput color = Any(static_cast<cinema::BaseShader*>(linked), colorData) iferr_return;
-		if (!color.IsValid())
-			return NodeOutput();
-		result = Blend(mode.GetInt32(), result, color, amount.GetFloat(), NodeOutput()) iferr_return;
-		if (!result.IsValid())
-			return NodeOutput();
 	}
 	return result;
 }

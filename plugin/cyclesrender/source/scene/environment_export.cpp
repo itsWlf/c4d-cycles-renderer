@@ -10,6 +10,7 @@
 #include "maxon/url.h"
 #include "drsfile.h"
 #include "mmaterial.h"
+#include "oenvironment.h"
 #include "orslight.h"
 #include "ttexture.h"
 #include "xbitmap.h"
@@ -19,6 +20,7 @@
 #include "../ids.h"
 #include "../sdk_compat.h"
 #include "../materials/cycles_node_material.h"
+#include "coords.h"
 #include "environment_export.h"
 #include "light_export.h"
 #include "parameters.h"
@@ -650,6 +652,61 @@ static maxon::Result<NodeOutput> AddWorldFog(MaterialExporter& materials, NodeGr
 	return NodeOutput { shader, "Volume"_s };
 }
 
+// Cinema 4D's Environment object's fog (0.3.0, F13 W28). Measured with the Standard renderer (internal/f13/probe_w28.py,
+// a plane glowing with a colour 1 to 300 m from the camera): a pixel whose surface lies at the distance d from the
+// camera (along the ray: a corner of a wide view counts its own distance) shows surface x (1 - t) + strength x fog x t,
+// t = min(1, d / Distance); the strength scales the fog's colour only, the surface fades by t alone (a black plane at
+// strength 1, 0.3 and 0.1 gave the fog colour times the strength times t, a white one 1 - t plus that, the strength
+// counting before a Basic document's colour conversion as a channel's brightness does; a lit plane
+// the same); with "Affect Background" the background is strength x fog, without it untouched. Here a world volume seen
+// by camera rays only (Light Path, so light reaching surfaces is not dimmed), a pure absorber of density 1 / (D - d)
+// with an emission of strength x fog x that density: its transmittance is 1 - d / D and what it adds strength x fog x
+// d / D, exactly the blend, with d Camera Data's View Distance. Past D the density stays at 1000 / D. Eevee gets none:
+// its world volume does not follow a surface's distance (measured: every surface vanished into the fog's colour).
+static maxon::Result<NodeOutput> AddEnvironmentFog(MaterialExporter& materials, NodeGraph& graph, const cinema::BaseObject* environment)
+{
+	iferr_scope;
+	const Coords coords = Coords::FromDocument(materials.GetDocument());
+	const maxon::Float64 distance = maxon::Max(coords.Length(GetFloatParameter(environment, ENVIRONMENT_FOGDISTANCE, 10000.0)), 1e-3);
+	const maxon::Float64 strength = maxon::Max(0.0, GetFloatParameter(environment, ENVIRONMENT_FOGSTRENGTH, 1.0));
+	const maxon::Int camera = graph.Add("ShaderNodeCameraData") iferr_return;
+	const maxon::Int rest = graph.Add("ShaderNodeMath") iferr_return;
+	graph.SetProperty(rest, "operation", "SUBTRACT"_s);
+	graph.SetInput(rest, "Value", distance);
+	graph.Link(NodeOutput { camera, "View Distance"_s }, rest, "Value_001") iferr_return;
+	const maxon::Int nearest = graph.Add("ShaderNodeMath") iferr_return;
+	graph.SetProperty(nearest, "operation", "MAXIMUM"_s);
+	graph.Link(NodeOutput { rest, "Value"_s }, nearest, "Value") iferr_return;
+	graph.SetInput(nearest, "Value_001", distance * 0.001);
+	const maxon::Int density = graph.Add("ShaderNodeMath") iferr_return;
+	graph.SetProperty(density, "operation", "DIVIDE"_s);
+	graph.SetInput(density, "Value", 1.0);
+	graph.Link(NodeOutput { nearest, "Value"_s }, density, "Value_001") iferr_return;
+	const maxon::Int path = graph.Add("ShaderNodeLightPath") iferr_return;
+	const maxon::Int seen = graph.Add("ShaderNodeMath") iferr_return;
+	graph.SetProperty(seen, "operation", "MULTIPLY"_s);
+	graph.Link(NodeOutput { density, "Value"_s }, seen, "Value") iferr_return;
+	graph.Link(NodeOutput { path, "Is Camera Ray"_s }, seen, "Value_001") iferr_return;
+	const maxon::Int shader = graph.Add("ShaderNodeVolumePrincipled") iferr_return;
+	graph.SetInputJson(shader, "Density Attribute", JsonQuoted(maxon::String()));
+	graph.SetInputJson(shader, "Color Attribute", JsonQuoted(maxon::String()));
+	graph.SetInputJson(shader, "Temperature Attribute", JsonQuoted(maxon::String()));
+	graph.SetInput(shader, "Color", cinema::Vector(0.0));
+	graph.SetInput(shader, "Absorption Color", cinema::Vector(0.0));
+	graph.Link(NodeOutput { seen, "Value"_s }, shader, "Density") iferr_return;
+	// The strength counts before the document's colour conversion, as a channel's brightness does (measured in a
+	// Basic document: white at strength 0.3 added 0.073 = the sRGB decoding of 0.3, times t).
+	graph.SetInput(shader, "Emission Color", materials.GetColors().Input(GetVectorParameter(environment, ENVIRONMENT_FOG, cinema::Vector(1.0)) * strength));
+	graph.Link(NodeOutput { seen, "Value"_s }, shader, "Emission Strength") iferr_return;
+	graph.SetInput(shader, "Blackbody Intensity", 0.0);
+	if (!GetBoolParameter(environment, ENVIRONMENT_AFFECTBACKGROUND, true))
+	{
+		materials.Warn(FormatString("Environment \"@\": its fog's \"Affect Background\" off is not translated; the background is fogged as with it on.",
+			environment->GetName()));
+	}
+	return NodeOutput { shader, "Volume"_s };
+}
+
 // Whether a Redshift light switched on (its green check) is among @p op, the objects after it and below them.
 static maxon::Bool HasRedshiftLight(const cinema::BaseObject* op)
 {
@@ -713,6 +770,11 @@ maxon::Result<void> ExportWorldItem(MaterialExporter& materials, const WorldPart
 	if (fog.kind == WORLDPART::ENVIRONMENT && fog.object)
 	{
 		const NodeOutput volume = AddWorldFog(materials, graph, fog.object) iferr_return;
+		graph.Link(volume, output, "Volume") iferr_return;
+	}
+	else if (fog.kind == WORLDPART::FOG && fog.object && !materials.IsEevee())
+	{
+		const NodeOutput volume = AddEnvironmentFog(materials, graph, fog.object) iferr_return;
 		graph.Link(volume, output, "Volume") iferr_return;
 	}
 

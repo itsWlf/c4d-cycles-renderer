@@ -11,6 +11,10 @@ The plugin describes the tree as it describes a material: nodes and links in Ble
   then shows the change at the next redraw without starting the render's samples anew (measured,
   docs/reference/blender.md, "The compositor"); another tree is attached only when the structure
   differs.
+- `view_layer` names render passes the tree reads (view layer properties such as `use_pass_z`):
+  they are switched on before the tree is built (the Render Layers node has an output only for a
+  pass that is on) and kept on while the tree is attached, also when a `settings` request switches
+  them off (`after_settings`); with the tree they go back to what they were.
 
 The final driver and the viewport driver read `active()` to know whether a composite exists.
 Nothing here knows about Cinema 4D.
@@ -32,12 +36,14 @@ ASSET_FILE = os.path.join("assets", "nodes", "compositing_nodes_essentials.blend
 class _State:
     """What the bridge has attached to the scene."""
 
-    def __init__(self, item_id, tree, signature, appended, precision):
+    def __init__(self, item_id, tree, signature, appended, precision, item=None, passes=None):
         self.item_id = item_id
         self.tree = tree
         self.signature = signature      # the structure the tree was built from
         self.appended = appended        # {name of a node group appended for it: the asset asked for, or None}
         self.precision = precision      # the scene's compositor precision before it was attached
+        self.item = item                # the item it was built from (built again when a pass it reads went)
+        self.passes = passes or {}      # {view layer property switched on for it: its value before}
 
 
 def active(scene):
@@ -49,10 +55,16 @@ def build_compositor(scene, item, blobs):
     """A `compositor` item: the tree built anew, or only its values set when its structure is the
     one already attached."""
     nodes, links = item.get("nodes", ()), item.get("links", ())
-    signature = _signature(nodes, links)
+    wanted = list(item.get("view_layer", ()))
+    signature = _signature(nodes, links, wanted)
     state = getattr(scene, "compositor", None)
+    # The passes the tree reads, on before its nodes are made (a pass that is off has no output to link).
+    passes = dict(state.passes) if state is not None else {}
+    _use_passes(scene, wanted, passes)
     if state is not None and state.signature == signature and _alive(state.tree):
         state.item_id = item["id"]
+        state.item = item
+        state.passes = passes
         made = {node.name: node for node in state.tree.nodes}
         for spec in nodes:
             node = made.get(spec["name"])
@@ -121,9 +133,62 @@ def build_compositor(scene, item, blobs):
     blender_scene.render.compositor_precision = 'FULL'
     if state is not None and _alive(state.tree) and state.tree != tree:
         bpy.data.node_groups.remove(state.tree)
-    scene.compositor = _State(item["id"], tree, signature, appended, precision)
+    scene.compositor = _State(item["id"], tree, signature, appended, precision, item, passes)
     scene.compositor_action = "built"
     _remove_unused_groups(scene.compositor)
+
+
+def _view_layer():
+    return bpy.context.view_layer or bpy.context.scene.view_layers[0]
+
+
+def _use_passes(scene, wanted, passes):
+    """Switch on the view layer properties in `wanted`; `passes` records each one this switched on
+    (with its value before) and loses the ones no longer wanted, which go back to that value."""
+    layer = _view_layer()
+    for name in list(passes):
+        if name not in wanted:
+            try:
+                setattr(layer, name, passes.pop(name))
+            except (AttributeError, TypeError):
+                pass
+    for name in wanted:
+        try:
+            current = getattr(layer, name)
+        except AttributeError:
+            scene.warn(f"Blender {bpy.app.version_string} has no render pass \"{name}\" for the compositor; the effect that reads it gets nothing.")
+            continue
+        if not current:
+            setattr(layer, name, True)
+            passes.setdefault(name, False)
+
+
+def after_settings(scene):
+    """A `settings` request has set the view layer's passes: those the tree reads are switched on
+    again, and the tree is built anew when one had gone (its links to it went with it). A pass the
+    settings switch on themselves is theirs from now on."""
+    state = getattr(scene, "compositor", None)
+    if state is None or not state.item or not state.item.get("view_layer"):
+        return False
+    layer = _view_layer()
+    gone = False
+    for name in state.item["view_layer"]:
+        try:
+            current = getattr(layer, name)
+        except AttributeError:
+            continue
+        if current and name not in state.passes:
+            continue
+        if current:
+            # On through the settings now: no longer the tree's to switch off.
+            state.passes.pop(name, None)
+            continue
+        gone = True
+    if not gone:
+        return False
+    state.signature = None
+    build_compositor(scene, state.item, ())
+    return True
 
 
 def remove_compositor(scene, item_id):
@@ -148,6 +213,7 @@ def detach(scene, removed=False):
         blender_scene.render.compositor_precision = state.precision
     except TypeError:
         pass
+    _use_passes(scene, (), state.passes)
     if removed:
         return
     if _alive(state.tree):
@@ -171,11 +237,11 @@ def _alive(tree):
         return False
 
 
-def _signature(nodes, links):
+def _signature(nodes, links, passes=()):
     """What decides whether a tree can be kept: its nodes with their types, groups and properties,
-    and its links. The values of its inputs do not count."""
+    its links and the passes it reads. The values of its inputs do not count."""
     return json.dumps([[[spec.get("name"), spec.get("type"), spec.get("group"), spec.get("props", {})] for spec in nodes],
-                       [list(link) for link in links]], sort_keys=True)
+                       [list(link) for link in links], sorted(passes)], sort_keys=True)
 
 
 def _set_inputs(scene, node, spec, item_id):
